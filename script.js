@@ -1111,15 +1111,17 @@ class FlowchartViewer {
     showNodeEditPopup(d) {
         this.nodeBeingEdited = d;
         
-        let displayName = d.data.name;
-        if (this.isLeafNode(d) && this.isGreenNode(d)) {
-            if (!displayName.endsWith(' (Simplify?)')) {
-                displayName = displayName + ' (Simplify?)';
-            }
-        } else {
-            if (displayName.endsWith(' (Simplify?)')) {
-                displayName = displayName.substring(0, displayName.length - ' (Simplify?)'.length);
-            }
+        // Get the display name without prefixes/suffixes
+        let displayName = d.data.name || '';
+        
+        // Remove "Assumption: " prefix if present
+        if (displayName.startsWith('Assumption: ')) {
+            displayName = displayName.substring('Assumption: '.length);
+        }
+        
+        // Remove " (Simplify?)" suffix if present
+        if (displayName.endsWith(' (Simplify?)')) {
+            displayName = displayName.substring(0, displayName.length - ' (Simplify?)'.length);
         }
         
         this.nodeEditInput.value = displayName;
@@ -1365,7 +1367,6 @@ class FlowchartViewer {
             greenBtn.style.borderRadius = '5px';
             greenBtn.style.padding = '6px 16px';
             greenBtn.style.cursor = 'pointer';
-            // Prevent blur event from firing when clicking the button
             greenBtn.onmousedown = (e) => e.preventDefault();
             greenBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
@@ -1373,11 +1374,20 @@ class FlowchartViewer {
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
+                    // Remove "Assumption: " prefix if present
+                    let name = this.nodeBeingEdited.data.name || '';
+                    if (name.startsWith('Assumption: ')) {
+                        name = name.substring('Assumption: '.length);
+                    }
+                    // Remove " (Simplify?)" suffix if present
+                    if (name.endsWith(' (Simplify?)')) {
+                        name = name.substring(0, name.length - ' (Simplify?)'.length);
+                    }
+                    this.nodeBeingEdited.data.name = name;
                     this.nodeBeingEdited.data.color = '#00a67e';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    // Keep the popup open and update the displayed name
                     this.showNodeEditPopup(this.nodeBeingEdited);
                     this.autosave();
                 }
@@ -1398,16 +1408,21 @@ class FlowchartViewer {
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
-                    this.nodeBeingEdited.data.color = '#e75480';
-                    if (!/^Assumption:\s/.test(this.nodeBeingEdited.data.name)) {
-                        this.nodeBeingEdited.data.name = 'Assumption: ' + (this.nodeBeingEdited.data.name || '');
+                    // Remove existing "Assumption: " prefix if present
+                    let name = this.nodeBeingEdited.data.name || '';
+                    if (name.startsWith('Assumption: ')) {
+                        name = name.substring('Assumption: '.length);
                     }
+                    // Remove " (Simplify?)" suffix if present
+                    if (name.endsWith(' (Simplify?)')) {
+                        name = name.substring(0, name.length - ' (Simplify?)'.length);
+                    }
+                    this.nodeBeingEdited.data.name = 'Assumption: ' + name;
+                    this.nodeBeingEdited.data.color = '#e75480';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this.showNodeEditPopup(this.nodeBeingEdited);
-                    this.nodeEditInput.value = this.nodeBeingEdited.data.name;
-                    setTimeout(() => { try { this.nodeEditInput.select(); } catch (e) {} }, 0);
                     this.autosave();
                 }
             };
@@ -1427,6 +1442,16 @@ class FlowchartViewer {
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
+                    // Remove "Assumption: " prefix if present
+                    let name = this.nodeBeingEdited.data.name || '';
+                    if (name.startsWith('Assumption: ')) {
+                        name = name.substring('Assumption: '.length);
+                    }
+                    // Remove " (Simplify?)" suffix if present
+                    if (name.endsWith(' (Simplify?)')) {
+                        name = name.substring(0, name.length - ' (Simplify?)'.length);
+                    }
+                    this.nodeBeingEdited.data.name = name;
                     this.nodeBeingEdited.data.color = '#0074d9';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1451,6 +1476,16 @@ class FlowchartViewer {
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
+                    // Remove "Assumption: " prefix if present
+                    let name = this.nodeBeingEdited.data.name || '';
+                    if (name.startsWith('Assumption: ')) {
+                        name = name.substring('Assumption: '.length);
+                    }
+                    // Remove " (Simplify?)" suffix if present
+                    if (name.endsWith(' (Simplify?)')) {
+                        name = name.substring(0, name.length - ' (Simplify?)'.length);
+                    }
+                    this.nodeBeingEdited.data.name = name;
                     this.nodeBeingEdited.data.color = '#ffcc00';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1509,6 +1544,56 @@ class FlowchartViewer {
         this.nodeEditPopup.style.display = 'block';
     }
 
+    saveNodeEdit() {
+        if (!this.nodeBeingEdited) return;
+        const originalData = this.nodeBeingEdited.data;
+        const wasPlaceholder = this.isPlaceholderNodeData(originalData);
+        const isRootPlaceholder = this.isRootPlaceholderNode(this.nodeBeingEdited);
+        let newName = this.nodeEditInput.value.trim();
+        
+        // Remove any "Assumption: " prefix the user might have typed
+        if (newName.startsWith('Assumption: ')) {
+            newName = newName.substring('Assumption: '.length);
+        }
+        // Remove any " (Simplify?)" suffix the user might have typed
+        if (newName.endsWith(' (Simplify?)')) {
+            newName = newName.substring(0, newName.length - ' (Simplify?)'.length);
+        }
+        
+        // Add "Assumption: " prefix for pink nodes
+        if (originalData && originalData.color === '#e75480') {
+            newName = 'Assumption: ' + newName;
+        }
+        
+        // Add " (Simplify?)" suffix for green leaf nodes
+        if (this.isLeafNode(this.nodeBeingEdited) && this.isGreenNode(this.nodeBeingEdited)) {
+            newName = newName + ' (Simplify?)';
+        }
+
+        const nameChanged = newName !== originalData.name;
+        const needsWrap = isRootPlaceholder && originalData.color !== this.getPlaceholderColor();
+
+        if (nameChanged || needsWrap) {
+            this.pushUndo();
+            if (wasPlaceholder) {
+                this.markNodeAsReal(originalData);
+            }
+            originalData.name = newName;
+            if (needsWrap) {
+                this.rootData = this.wrapRootWithPlaceholder(this.rootData);
+            }
+            this.ensureRightmostPlaceholderNodes(this.rootData);
+            this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+            const editedRef = this.nodeBeingEdited;
+            this.renderFlowchart(this.rootData);
+            if (!this.nodeBeingEdited) {
+                this.nodeBeingEdited = editedRef;
+            }
+        }
+        this.autosave();
+        this.hideContextMenu();
+    }
+
     moveNodeInSiblings(d, direction) {
         if (!d.parent) return;
         const siblings = d.parent.data.children;
@@ -1540,56 +1625,6 @@ class FlowchartViewer {
         if (nodeActionBtns) nodeActionBtns.remove();
         const siblingBtns = document.getElementById('node-sibling-btns');
         if (siblingBtns) siblingBtns.remove();
-    }
-
-    saveNodeEdit() {
-        if (!this.nodeBeingEdited) return;
-        const originalData = this.nodeBeingEdited.data;
-        const wasPlaceholder = this.isPlaceholderNodeData(originalData);
-        const isRootPlaceholder = this.isRootPlaceholderNode(this.nodeBeingEdited);
-        let newName = this.nodeEditInput.value.trim();
-        
-        if (originalData && originalData.color === '#e75480') {
-            if (!/^Assumption:\s/.test(newName)) {
-                newName = 'Assumption: ' + newName;
-            }
-        }
-        
-        if (this.isLeafNode(this.nodeBeingEdited) && this.isGreenNode(this.nodeBeingEdited)) {
-            if (!newName.endsWith(' (Simplify?)')) {
-                newName = newName + ' (Simplify?)';
-            }
-        } else {
-            if (newName.endsWith(' (Simplify?)')) {
-                newName = newName.substring(0, newName.length - ' (Simplify?)'.length);
-            }
-        }
-
-        const nameChanged = newName !== originalData.name;
-        const needsWrap = isRootPlaceholder && originalData.color !== this.getPlaceholderColor();
-
-        if (nameChanged || needsWrap) {
-            this.pushUndo();
-            if (wasPlaceholder) {
-                this.markNodeAsReal(originalData);
-            }
-            originalData.name = newName;
-            if (needsWrap) {
-                this.rootData = this.wrapRootWithPlaceholder(this.rootData);
-            }
-            this.ensureRightmostPlaceholderNodes(this.rootData);
-            this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
-            // Snapshot nodeBeingEdited reference before renderFlowchart can clear it
-            const editedRef = this.nodeBeingEdited;
-            this.renderFlowchart(this.rootData);
-            // Restore reference in case renderFlowchart triggered hideNodeEditPopup
-            if (!this.nodeBeingEdited) {
-                this.nodeBeingEdited = editedRef;
-            }
-        }
-        // Always persist regardless of whether name changed
-        this.autosave();
-        this.hideContextMenu();
     }
 
     exportAsJSON() {
