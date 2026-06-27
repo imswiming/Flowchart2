@@ -23,6 +23,10 @@ class FlowchartViewer {
         this.closeStorageBtn = document.getElementById('close-storage-btn');
         this.newFlowchartBtn = document.getElementById('new-flowchart-btn');
 
+        // AI Export/Import
+        this.aiExportBtn = document.getElementById('ai-export-btn');
+        this.aiImportBtn = document.getElementById('ai-import-btn');
+
         this.selectedConnection = null;
         this.connectionMoveStep = 10;
         this.connectionControlsRow = document.getElementById('connection-controls-row');
@@ -89,6 +93,10 @@ class FlowchartViewer {
         this.openBtn.addEventListener('click', () => this.showStoragePopup());
         this.closeStorageBtn.addEventListener('click', () => this.storagePopup.style.display = 'none');
         this.newFlowchartBtn.addEventListener('click', () => this.createNewFlowchart());
+
+        // AI Export/Import event listeners
+        this.aiExportBtn.addEventListener('click', () => this.exportToAi());
+        this.aiImportBtn.addEventListener('click', () => this.importFromAi());
 
         // Node edit popup handlers
         this.nodeEditForm.addEventListener('submit', (e) => {
@@ -1667,6 +1675,282 @@ class FlowchartViewer {
         }
         return walk(this.rootData).join('\n');
     }
+
+    // ===== AI EXPORT (Auto-copy to clipboard) =====
+    exportToAi() {
+        const treeString = this.convertToTreeDiagram();
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(treeString).then(() => {
+            this.showNotification('AI tree copied to clipboard!');
+        }).catch(() => {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = treeString;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                this.showNotification('AI tree copied to clipboard!');
+            } catch (err) {
+                this.showNotification('Failed to copy. Please copy manually.');
+            }
+            document.body.removeChild(textarea);
+        });
+    }
+
+    convertToTreeDiagram() {
+        // Get the actual tree data (skip placeholder root if it has a real child)
+        let treeData = this.rootData;
+        if (this.isPlaceholderNodeData(treeData) && treeData.children && treeData.children.length > 0) {
+            // If the root is a placeholder with one real child, use that child as the actual root
+            const realChildren = treeData.children.filter(child => !this.isPlaceholderNodeData(child) && child.name && child.name.trim());
+            if (realChildren.length === 1) {
+                treeData = realChildren[0];
+            }
+        }
+
+        const lines = [];
+        const prefixMap = {
+            '#00a67e': '(solution) ',
+            '#e75480': '(assumption) '
+        };
+
+        const getLabel = (node) => {
+            let name = node.name || '';
+            // Remove "(Simplify?)" suffix for display
+            if (name.endsWith(' (Simplify?)')) {
+                name = name.substring(0, name.length - ' (Simplify?)'.length);
+            }
+            const prefix = prefixMap[node.color] || '';
+            return prefix + name;
+        };
+
+        const buildTree = (node, depth = 0) => {
+            const label = getLabel(node);
+            if (label && label.trim()) {
+                const indent = '    '.repeat(depth);
+                lines.push(`${indent}- ${label}`);
+            }
+
+            if (node.children && node.children.length > 0) {
+                // Filter out empty/placeholder children
+                const realChildren = node.children.filter(child => 
+                    !this.isPlaceholderNodeData(child) && child.name && child.name.trim()
+                );
+                
+                realChildren.forEach(child => {
+                    buildTree(child, depth + 1);
+                });
+            }
+        };
+
+        buildTree(treeData);
+        return lines.join('\n');
+    }
+
+    // ===== AI IMPORT (Auto-read from clipboard) =====
+    importFromAi() {
+        // Try to read from clipboard
+        navigator.clipboard.readText().then(text => {
+            if (!text || !text.trim()) {
+                this.showNotification('Clipboard is empty. Copy a tree diagram first.');
+                return;
+            }
+            this.processAiTree(text);
+        }).catch(() => {
+            // Fallback: prompt user to paste
+            const text = prompt('Paste the AI tree diagram:');
+            if (text && text.trim()) {
+                this.processAiTree(text);
+            } else {
+                this.showNotification('No text provided.');
+            }
+        });
+    }
+
+    processAiTree(text) {
+        try {
+            const tree = this.parseTreeDiagram(text);
+            if (!tree) {
+                this.showNotification('Failed to parse the tree diagram. Please check the format.');
+                return;
+            }
+
+            // Apply colors based on prefixes
+            const applyColors = (node) => {
+                let name = node.name || '';
+                let color = '#00a67e'; // Default green
+                
+                if (name.startsWith('(solution) ')) {
+                    name = name.substring('(solution) '.length);
+                    color = '#00a67e';
+                } else if (name.startsWith('(assumption) ')) {
+                    name = name.substring('(assumption) '.length);
+                    color = '#e75480';
+                }
+                
+                node.name = name;
+                node.color = color;
+                
+                if (node.children) {
+                    node.children.forEach(child => applyColors(child));
+                }
+            };
+
+            applyColors(tree);
+
+            // Save current state
+            if (this.rootData) {
+                this.pushUndo();
+            }
+
+            // Ensure rightmost placeholder nodes
+            this.rootData = this.wrapRootWithPlaceholder(tree);
+            this.ensureRightmostPlaceholderNodes(this.rootData);
+            
+            // Clear custom connections
+            this.customConnections = [];
+            
+            // Render the flowchart
+            this.renderFlowchart(this.rootData);
+            this.autosave();
+            
+            this.showNotification('Flowchart generated from AI tree!');
+            
+        } catch (error) {
+            this.showNotification('Error parsing tree: ' + error.message);
+        }
+    }
+
+    parseTreeDiagram(text) {
+        const lines = text.split('\n')
+            .filter(line => line.trim())
+            .map(line => line.replace(/\r$/, ''));
+
+        if (lines.length === 0) return null;
+
+        // Parse indented list with dashes or asterisks
+        const nodeStack = [];
+        let root = null;
+
+        // Determine the indentation unit (2 spaces or 4 spaces)
+        let indentUnit = 4; // default
+        let indentCounts = {};
+        
+        // First pass: count how many lines use each indent level
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            
+            const leadingSpaces = line.length - line.trimLeft().length;
+            if (leadingSpaces > 0) {
+                // Check if this line has a bullet point
+                const bulletMatch = trimmed.match(/^[\*\-]\s/);
+                if (bulletMatch) {
+                    // Try dividing by 2 and 4
+                    const by2 = leadingSpaces / 2;
+                    const by4 = leadingSpaces / 4;
+                    
+                    if (by2 > 0 && by2 < 20 && Number.isInteger(by2)) {
+                        indentCounts[2] = (indentCounts[2] || 0) + 1;
+                    }
+                    if (by4 > 0 && by4 < 20 && Number.isInteger(by4)) {
+                        indentCounts[4] = (indentCounts[4] || 0) + 1;
+                    }
+                }
+            }
+        }
+
+        // Choose the most common indent unit
+        if (indentCounts[2] && (!indentCounts[4] || indentCounts[2] > indentCounts[4])) {
+            indentUnit = 2;
+        } else if (indentCounts[4]) {
+            indentUnit = 4;
+        }
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            
+            // Calculate depth from leading spaces
+            const leadingSpaces = line.length - line.trimLeft().length;
+            
+            let depth = 0;
+            if (leadingSpaces > 0) {
+                // Try with the detected indent unit
+                if (leadingSpaces % indentUnit === 0) {
+                    depth = Math.floor(leadingSpaces / indentUnit);
+                } else {
+                    // Try dividing by 2 as fallback
+                    depth = Math.floor(leadingSpaces / 2);
+                }
+                // Ensure depth is reasonable (not too deep)
+                if (depth > 20) depth = Math.floor(leadingSpaces / 4);
+            }
+            
+            // Remove the bullet point (dash or asterisk) and any leading/trailing spaces
+            let name = trimmed;
+            if (name.startsWith('- ')) {
+                name = name.substring(2);
+            } else if (name.startsWith('-')) {
+                name = name.substring(1);
+            } else if (name.startsWith('* ')) {
+                name = name.substring(2);
+            } else if (name.startsWith('*')) {
+                name = name.substring(1);
+            }
+            name = name.trim();
+
+            if (!name) continue;
+
+            const node = { name };
+
+            if (depth === 0 || !root) {
+                root = node;
+                nodeStack.length = 0;
+                nodeStack.push(node);
+            } else {
+                // Pop stack until we find the parent at the right depth
+                while (nodeStack.length > depth + 1) {
+                    nodeStack.pop();
+                }
+                
+                // If we need to add levels, use the last parent
+                while (nodeStack.length < depth + 1) {
+                    // If we don't have enough parents, use the last one
+                    // This handles cases where the indentation jumps more than 1 level
+                    if (nodeStack.length > 0) {
+                        // If we're at the right depth, break
+                        if (nodeStack.length === depth + 1) break;
+                        // Otherwise, duplicate the last parent
+                        const lastParent = nodeStack[nodeStack.length - 1];
+                        // Create a virtual parent if needed
+                        // But we should already have a parent at the right level
+                        break;
+                    }
+                }
+                
+                const parent = nodeStack[nodeStack.length - 1];
+                if (!parent) {
+                    // If no parent, treat as new root
+                    root = node;
+                    nodeStack.length = 0;
+                    nodeStack.push(node);
+                    continue;
+                }
+                if (!parent.children) parent.children = [];
+                parent.children.push(node);
+                nodeStack.push(node);
+            }
+        }
+
+        return root;
+    }
+
+    // ===== END AI IMPORT/EXPORT =====
 
     showExportPopup() {
         // Always snapshot current state before exporting
