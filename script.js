@@ -1829,13 +1829,13 @@ class FlowchartViewer {
         const lines = text.split('\n')
             .filter(line => line.trim())
             .map(line => line.replace(/\r$/, ''));
-
+    
         if (lines.length === 0) return null;
-
+    
         // Parse indented list with dashes or asterisks
-        const nodeStack = [];
         let root = null;
-
+        const stack = []; // Stack of {node, depth}
+        
         // Determine the indentation unit (2 spaces or 4 spaces)
         let indentUnit = 4; // default
         let indentCounts = {};
@@ -1863,14 +1863,15 @@ class FlowchartViewer {
                 }
             }
         }
-
+    
         // Choose the most common indent unit
         if (indentCounts[2] && (!indentCounts[4] || indentCounts[2] > indentCounts[4])) {
             indentUnit = 2;
         } else if (indentCounts[4]) {
             indentUnit = 4;
         }
-
+    
+        // Second pass: actually parse the tree
         for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed) continue;
@@ -1903,50 +1904,42 @@ class FlowchartViewer {
                 name = name.substring(1);
             }
             name = name.trim();
-
+    
             if (!name) continue;
-
+    
             const node = { name };
-
-            if (depth === 0 || !root) {
+    
+            // Handle root node
+            if (depth === 0) {
                 root = node;
-                nodeStack.length = 0;
-                nodeStack.push(node);
-            } else {
-                // Pop stack until we find the parent at the right depth
-                while (nodeStack.length > depth + 1) {
-                    nodeStack.pop();
-                }
-                
-                // If we need to add levels, use the last parent
-                while (nodeStack.length < depth + 1) {
-                    // If we don't have enough parents, use the last one
-                    // This handles cases where the indentation jumps more than 1 level
-                    if (nodeStack.length > 0) {
-                        // If we're at the right depth, break
-                        if (nodeStack.length === depth + 1) break;
-                        // Otherwise, duplicate the last parent
-                        const lastParent = nodeStack[nodeStack.length - 1];
-                        // Create a virtual parent if needed
-                        // But we should already have a parent at the right level
-                        break;
-                    }
-                }
-                
-                const parent = nodeStack[nodeStack.length - 1];
-                if (!parent) {
-                    // If no parent, treat as new root
-                    root = node;
-                    nodeStack.length = 0;
-                    nodeStack.push(node);
-                    continue;
-                }
-                if (!parent.children) parent.children = [];
-                parent.children.push(node);
-                nodeStack.push(node);
+                stack.length = 0;
+                stack.push({ node, depth: 0 });
+                continue;
             }
+    
+            // Pop stack until we find the parent at the right depth
+            while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
+                stack.pop();
+            }
+    
+            // If stack is empty, this is a new root
+            if (stack.length === 0) {
+                root = node;
+                stack.push({ node, depth: 0 });
+                continue;
+            }
+    
+            // Get the parent from the stack
+            const parent = stack[stack.length - 1].node;
+            if (!parent.children) {
+                parent.children = [];
+            }
+            parent.children.push(node);
+            
+            // Add the current node to the stack
+            stack.push({ node, depth });
         }
-
+    
         return root;
     }
 
