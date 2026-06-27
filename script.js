@@ -1365,6 +1365,8 @@ class FlowchartViewer {
             greenBtn.style.borderRadius = '5px';
             greenBtn.style.padding = '6px 16px';
             greenBtn.style.cursor = 'pointer';
+            // Prevent blur event from firing when clicking the button
+            greenBtn.onmousedown = (e) => e.preventDefault();
             greenBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
                     this.pushUndo();
@@ -1375,6 +1377,7 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
+                    // Keep the popup open and update the displayed name
                     this.showNodeEditPopup(this.nodeBeingEdited);
                     this.autosave();
                 }
@@ -1388,6 +1391,7 @@ class FlowchartViewer {
             pinkBtn.style.borderRadius = '5px';
             pinkBtn.style.padding = '6px 16px';
             pinkBtn.style.cursor = 'pointer';
+            pinkBtn.onmousedown = (e) => e.preventDefault();
             pinkBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
                     this.pushUndo();
@@ -1416,6 +1420,7 @@ class FlowchartViewer {
             blueBtn.style.borderRadius = '5px';
             blueBtn.style.padding = '6px 16px';
             blueBtn.style.cursor = 'pointer';
+            blueBtn.onmousedown = (e) => e.preventDefault();
             blueBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
                     this.pushUndo();
@@ -1439,6 +1444,7 @@ class FlowchartViewer {
             yellowBtn.style.borderRadius = '5px';
             yellowBtn.style.padding = '6px 16px';
             yellowBtn.style.cursor = 'pointer';
+            yellowBtn.onmousedown = (e) => e.preventDefault();
             yellowBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
                     this.pushUndo();
@@ -1462,6 +1468,7 @@ class FlowchartViewer {
             emptyBtn.style.borderRadius = '5px';
             emptyBtn.style.padding = '6px 16px';
             emptyBtn.style.cursor = 'pointer';
+            emptyBtn.onmousedown = (e) => e.preventDefault();
             emptyBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
                     this.pushUndo();
