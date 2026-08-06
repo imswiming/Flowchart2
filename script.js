@@ -222,6 +222,21 @@ class FlowchartViewer {
         return node.data.color === '#00a67e';
     }
 
+    hasVisibleChildren(node) {
+        return Boolean(
+            node.data.children &&
+            node.data.children.some(child => !this.isPlaceholderNodeData(child) && (child.name || '').trim())
+        );
+    }
+
+    toggleNodeCollapse(d) {
+        if (!d || !d.data || !d.data.children || d.data.children.length === 0) return;
+        this.pushUndo();
+        d.data._collapsed = !Boolean(d.data._collapsed);
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
     // Update all leaf node names with "(Simplify?)" suffix if they're green
     updateSimplifyPrefixes(node) {
         if (!node) return;
@@ -468,9 +483,14 @@ class FlowchartViewer {
                 .scaleExtent([this.minZoom, this.maxZoom])
                 .on('zoom', (event) => {
                     this.transform = event.transform;
-                    d3.select('#flowchart g').attr('transform', this.transform);
+                    const flowGroup = d3.select('#flowchart g').node();
+                    if (flowGroup) {
+                        d3.select(flowGroup).attr('transform', this.transform);
+                    }
                     this.hideContextMenu();
-                    this.hideNodeEditPopup(true);
+                    if (this.nodeBeingEdited && !this._suppressPopupHide) {
+                        this.hideNodeEditPopup(false);
+                    }
                 });
         }
 
@@ -1117,7 +1137,9 @@ class FlowchartViewer {
     }
 
     showNodeEditPopup(d) {
+        if (!d || !d.data) return;
         this.nodeBeingEdited = d;
+        this._suppressPopupHide = false;
         
         // Get the display name without prefixes/suffixes
         let displayName = d.data.name || '';
@@ -1214,7 +1236,7 @@ class FlowchartViewer {
                 this.hideNodeEditPopup();
                 this.duplicateNodeToParentSiblings(d);
             };
-            
+
             const deleteNodeBtn = document.createElement('button');
             deleteNodeBtn.textContent = 'Delete Node';
             deleteNodeBtn.style.background = '#f0f0f0';
@@ -1351,9 +1373,22 @@ class FlowchartViewer {
                 this.moveNodeInSiblings(d, 1);
             };
 
+            const collapseBtn = document.createElement('button');
+            collapseBtn.id = 'node-collapse-btn';
+            collapseBtn.style.background = '#f8f8f8';
+            collapseBtn.style.border = '1px solid #aaa';
+            collapseBtn.style.borderRadius = '5px';
+            collapseBtn.style.padding = '6px 12px';
+            collapseBtn.style.cursor = 'pointer';
+            collapseBtn.onclick = () => {
+                this.hideNodeEditPopup();
+                this.toggleNodeCollapse(d);
+            };
+
             nodeMoveBtns.appendChild(moveBtn);
             nodeMoveBtns.appendChild(moveLeftBtn);
             nodeMoveBtns.appendChild(moveRightBtn);
+            nodeMoveBtns.appendChild(collapseBtn);
             this.nodeEditPopup.insertBefore(nodeMoveBtns, this.nodeEditPopup.firstChild);
         }
         
@@ -1378,25 +1413,32 @@ class FlowchartViewer {
             greenBtn.onmousedown = (e) => e.preventDefault();
             greenBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
+                    this._suppressPopupHide = true;
                     this.pushUndo();
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
-                    // Remove "Assumption: " prefix if present
-                    let name = this.nodeBeingEdited.data.name || '';
+                    const currentNode = this.nodeBeingEdited;
+                    let name = currentNode.data.name || '';
                     if (name.startsWith('Assumption: ')) {
                         name = name.substring('Assumption: '.length);
                     }
-                    // Remove " (Simplify?)" suffix if present
                     if (name.endsWith(' (Simplify?)')) {
                         name = name.substring(0, name.length - ' (Simplify?)'.length);
                     }
-                    this.nodeBeingEdited.data.name = name;
-                    this.nodeBeingEdited.data.color = '#00a67e';
+                    currentNode.data.name = name;
+                    currentNode.data.color = '#00a67e';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    this.showNodeEditPopup(this.nodeBeingEdited);
+                    let refreshed = null;
+                    d3.hierarchy(this.rootData).each(node => {
+                        if (node.data === currentNode.data) refreshed = node;
+                    });
+                    if (refreshed) {
+                        this.showNodeEditPopup(refreshed);
+                    }
+                    this._suppressPopupHide = false;
                     this.autosave();
                 }
             };
@@ -1412,25 +1454,32 @@ class FlowchartViewer {
             pinkBtn.onmousedown = (e) => e.preventDefault();
             pinkBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
+                    this._suppressPopupHide = true;
                     this.pushUndo();
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
-                    // Remove existing "Assumption: " prefix if present
-                    let name = this.nodeBeingEdited.data.name || '';
+                    const currentNode = this.nodeBeingEdited;
+                    let name = currentNode.data.name || '';
                     if (name.startsWith('Assumption: ')) {
                         name = name.substring('Assumption: '.length);
                     }
-                    // Remove " (Simplify?)" suffix if present
                     if (name.endsWith(' (Simplify?)')) {
                         name = name.substring(0, name.length - ' (Simplify?)'.length);
                     }
-                    this.nodeBeingEdited.data.name = 'Assumption: ' + name;
-                    this.nodeBeingEdited.data.color = '#e75480';
+                    currentNode.data.name = 'Assumption: ' + name;
+                    currentNode.data.color = '#e75480';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    this.showNodeEditPopup(this.nodeBeingEdited);
+                    let refreshed = null;
+                    d3.hierarchy(this.rootData).each(node => {
+                        if (node.data === currentNode.data) refreshed = node;
+                    });
+                    if (refreshed) {
+                        this.showNodeEditPopup(refreshed);
+                    }
+                    this._suppressPopupHide = false;
                     this.autosave();
                 }
             };
@@ -1446,25 +1495,32 @@ class FlowchartViewer {
             blueBtn.onmousedown = (e) => e.preventDefault();
             blueBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
+                    this._suppressPopupHide = true;
                     this.pushUndo();
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
-                    // Remove "Assumption: " prefix if present
-                    let name = this.nodeBeingEdited.data.name || '';
+                    const currentNode = this.nodeBeingEdited;
+                    let name = currentNode.data.name || '';
                     if (name.startsWith('Assumption: ')) {
                         name = name.substring('Assumption: '.length);
                     }
-                    // Remove " (Simplify?)" suffix if present
                     if (name.endsWith(' (Simplify?)')) {
                         name = name.substring(0, name.length - ' (Simplify?)'.length);
                     }
-                    this.nodeBeingEdited.data.name = name;
-                    this.nodeBeingEdited.data.color = '#0074d9';
+                    currentNode.data.name = name;
+                    currentNode.data.color = '#0074d9';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    this.showNodeEditPopup(this.nodeBeingEdited);
+                    let refreshed = null;
+                    d3.hierarchy(this.rootData).each(node => {
+                        if (node.data === currentNode.data) refreshed = node;
+                    });
+                    if (refreshed) {
+                        this.showNodeEditPopup(refreshed);
+                    }
+                    this._suppressPopupHide = false;
                     this.autosave();
                 }
             };
@@ -1480,25 +1536,32 @@ class FlowchartViewer {
             yellowBtn.onmousedown = (e) => e.preventDefault();
             yellowBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
+                    this._suppressPopupHide = true;
                     this.pushUndo();
                     if (this.isPlaceholderNodeData(this.nodeBeingEdited.data)) {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
-                    // Remove "Assumption: " prefix if present
-                    let name = this.nodeBeingEdited.data.name || '';
+                    const currentNode = this.nodeBeingEdited;
+                    let name = currentNode.data.name || '';
                     if (name.startsWith('Assumption: ')) {
                         name = name.substring('Assumption: '.length);
                     }
-                    // Remove " (Simplify?)" suffix if present
                     if (name.endsWith(' (Simplify?)')) {
                         name = name.substring(0, name.length - ' (Simplify?)'.length);
                     }
-                    this.nodeBeingEdited.data.name = name;
-                    this.nodeBeingEdited.data.color = '#ffcc00';
+                    currentNode.data.name = name;
+                    currentNode.data.color = '#ffcc00';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    this.showNodeEditPopup(this.nodeBeingEdited);
+                    let refreshed = null;
+                    d3.hierarchy(this.rootData).each(node => {
+                        if (node.data === currentNode.data) refreshed = node;
+                    });
+                    if (refreshed) {
+                        this.showNodeEditPopup(refreshed);
+                    }
+                    this._suppressPopupHide = false;
                     this.autosave();
                 }
             };
@@ -1514,14 +1577,23 @@ class FlowchartViewer {
             emptyBtn.onmousedown = (e) => e.preventDefault();
             emptyBtn.onclick = () => {
                 if (this.nodeBeingEdited) {
+                    this._suppressPopupHide = true;
                     this.pushUndo();
-                    this.nodeBeingEdited.data.color = this.getPlaceholderColor();
-                    this.nodeBeingEdited.data.name = '';
-                    this.nodeBeingEdited.data._isPlaceholder = true;
+                    const currentNode = this.nodeBeingEdited;
+                    currentNode.data.color = this.getPlaceholderColor();
+                    currentNode.data.name = '';
+                    currentNode.data._isPlaceholder = true;
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    this.showNodeEditPopup(this.nodeBeingEdited);
+                    let refreshed = null;
+                    d3.hierarchy(this.rootData).each(node => {
+                        if (node.data === currentNode.data) refreshed = node;
+                    });
+                    if (refreshed) {
+                        this.showNodeEditPopup(refreshed);
+                    }
+                    this._suppressPopupHide = false;
                     this.autosave();
                 }
             };
@@ -1549,6 +1621,17 @@ class FlowchartViewer {
                 btn.style.outline = 'none';
             }
         });
+
+        const collapseBtn = document.getElementById('node-collapse-btn');
+        if (collapseBtn) {
+            if (this.hasVisibleChildren(d)) {
+                collapseBtn.style.display = 'inline-block';
+                collapseBtn.textContent = d.data._collapsed ? 'Unfold Children' : 'Collapse Children';
+            } else {
+                collapseBtn.style.display = 'none';
+            }
+        }
+
         this.nodeEditPopup.style.display = 'block';
     }
 
@@ -1625,6 +1708,7 @@ class FlowchartViewer {
         if (save) this.saveNodeEdit();
         this.nodeEditPopup.style.display = 'none';
         this.nodeBeingEdited = null;
+        this._suppressPopupHide = false;
         const colorBtns = document.getElementById('node-color-btns');
         if (colorBtns) colorBtns.remove();
         const moveBtns = document.getElementById('node-move-btns');
@@ -2248,7 +2332,7 @@ class FlowchartViewer {
         const treeLayout = d3.tree()
             .nodeSize([150, 200]);
 
-        const root = d3.hierarchy(this.rootData);
+        const root = d3.hierarchy(this.rootData, d => d._collapsed ? null : d.children);
         treeLayout(root);
 
         const cornerRadius = 10;
@@ -2479,8 +2563,18 @@ class FlowchartViewer {
             }
             return d.data.color || '#00a67e';
         })
-        .attr('stroke', d => this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim() ? this.getPlaceholderColor() : '#999')
-        .attr('stroke-width', d => this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim() ? '0' : '1.5px');
+        .attr('stroke', d => {
+            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+                return this.getPlaceholderColor();
+            }
+            return d.data._collapsed ? '#ffcc00' : '#999';
+        })
+        .attr('stroke-width', d => {
+            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+                return '0';
+            }
+            return d.data._collapsed ? '3px' : '1.5px';
+        });
 
         node.append('text')
         .attr('text-anchor', 'middle')
@@ -2505,13 +2599,24 @@ class FlowchartViewer {
         .selectAll('tspan')
         .data(d => d._lines.map((line, i, arr) => ({
             line,
-            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4
+            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4,
+            isLast: i === arr.length - 1,
+            collapsed: d.data._collapsed
         })))
         .enter()
         .append('tspan')
         .attr('x', 0)
         .attr('y', d => d.y)
-        .text(d => d.line);
+        .text(d => d.line)
+        .each(function(d) {
+            if (d.isLast && d.collapsed) {
+                d3.select(this.parentNode)
+                    .append('tspan')
+                    .attr('fill', '#ffcc00')
+                    .attr('dx', '6')
+                    .text('▼');
+            }
+        });
 
         const isIdentity = (t) => t.k === 1 && t.x === 0 && t.y === 0;
         if (isIdentity(this.transform)) {
