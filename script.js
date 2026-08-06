@@ -2607,13 +2607,16 @@ class FlowchartViewer {
         .append('tspan')
         .attr('x', 0)
         .attr('y', d => d.y)
-        .text(d => d.line)
-        .each(function(d) {
-            if (d.isLast && d.collapsed) {
-                d3.select(this.parentNode)
-                    .append('tspan')
-                    .attr('fill', '#ffcc00')
-                    .attr('dx', '6')
+        .text(d => d.line);
+
+        node.each(function(d) {
+            if (d.data._collapsed) {
+                const text = d3.select(this).select('text');
+                text.append('tspan')
+                    .attr('x', 0)
+                    .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25)
+                    .attr('fill', '#ffffff')
+                    .attr('font-size', FONT_SIZE + 3)
                     .text('▼');
             }
         });
