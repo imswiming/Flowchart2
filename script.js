@@ -498,7 +498,6 @@ class FlowchartViewer {
         svg.call(this._zoomBehavior.transform, this.transform);
 
         svg.on('dblclick.zoom', null);
-        svg.on('dblclick', () => this.resetZoom());
 
         svg.on('click', (event) => {
             if (event.target === svg.node()) {
@@ -1728,6 +1727,45 @@ class FlowchartViewer {
         });
     }
 
+    getColorMetadataSuffix(color) {
+        if (!color) return '';
+        const normalized = (color || '').toLowerCase();
+        const colorNames = {
+            '#00a67e': 'green',
+            '#e75480': 'pink',
+            '#0074d9': 'blue',
+            '#ffcc00': 'yellow',
+            '#323a4a': 'empty'
+        };
+        const token = colorNames[normalized] || color;
+        if (token === 'green' || token === 'pink') return '';
+        return ` [color=${token}]`;
+    }
+
+    parseColorMetadata(name) {
+        let text = name || '';
+        let color = undefined;
+        const match = text.match(/\s*\[color\s*[:=]\s*([^\]]+)\]$/i);
+        if (match) {
+            const token = (match[1] || '').trim().toLowerCase();
+            const colorMap = {
+                'green': '#00a67e',
+                'pink': '#e75480',
+                'blue': '#0074d9',
+                'yellow': '#ffcc00',
+                'empty': '#323a4a',
+                '#00a67e': '#00a67e',
+                '#e75480': '#e75480',
+                '#0074d9': '#0074d9',
+                '#ffcc00': '#ffcc00',
+                '#323a4a': '#323a4a'
+            };
+            color = colorMap[token];
+            text = text.substring(0, match.index).trimEnd();
+        }
+        return { name: text, color };
+    }
+
     convertToTreeDiagram() {
         // Get the actual tree data (skip placeholder root if it has a real child)
         let treeData = this.rootData;
@@ -1752,7 +1790,8 @@ class FlowchartViewer {
                 name = name.substring(0, name.length - ' (Simplify?)'.length);
             }
             const prefix = prefixMap[node.color] || '';
-            return prefix + name;
+            const colorSuffix = this.getColorMetadataSuffix(node.color);
+            return prefix + name + colorSuffix;
         };
 
         const buildTree = (node, depth = 0) => {
@@ -1806,10 +1845,13 @@ class FlowchartViewer {
                 return;
             }
 
-            // Apply colors based on prefixes
+            // Apply colors based on explicit prefixes or encoded metadata; leave plain nodes uncolored
             const applyColors = (node) => {
                 let name = node.name || '';
-                let color = '#00a67e'; // Default green
+                let color = undefined;
+                const parsed = this.parseColorMetadata(name);
+                name = parsed.name;
+                color = parsed.color;
                 
                 if (name.startsWith('(solution) ')) {
                     name = name.substring('(solution) '.length);
@@ -1820,7 +1862,11 @@ class FlowchartViewer {
                 }
                 
                 node.name = name;
-                node.color = color;
+                if (color) {
+                    node.color = color;
+                } else {
+                    delete node.color;
+                }
                 
                 if (node.children) {
                     node.children.forEach(child => applyColors(child));
@@ -1854,119 +1900,74 @@ class FlowchartViewer {
 
     parseTreeDiagram(text) {
         const lines = text.split('\n')
-            .filter(line => line.trim())
-            .map(line => line.replace(/\r$/, ''));
-    
+            .map(line => line.replace(/\r$/, ''))
+            .filter(line => line.trim());
+
         if (lines.length === 0) return null;
-    
-        // Parse indented list with dashes or asterisks
-        let root = null;
-        const stack = []; // Stack of {node, depth}
-        
-        // Determine the indentation unit (2 spaces or 4 spaces)
-        let indentUnit = 4; // default
-        let indentCounts = {};
-        
-        // First pass: count how many lines use each indent level
+
+        const parsedLines = [];
         for (const line of lines) {
+            const leadingSpaces = line.length - line.trimStart().length;
             const trimmed = line.trim();
-            if (!trimmed) continue;
-            
-            const leadingSpaces = line.length - line.trimLeft().length;
-            if (leadingSpaces > 0) {
-                // Check if this line has a bullet point
-                const bulletMatch = trimmed.match(/^[\*\-]\s/);
-                if (bulletMatch) {
-                    // Try dividing by 2 and 4
-                    const by2 = leadingSpaces / 2;
-                    const by4 = leadingSpaces / 4;
-                    
-                    if (by2 > 0 && by2 < 20 && Number.isInteger(by2)) {
-                        indentCounts[2] = (indentCounts[2] || 0) + 1;
-                    }
-                    if (by4 > 0 && by4 < 20 && Number.isInteger(by4)) {
-                        indentCounts[4] = (indentCounts[4] || 0) + 1;
-                    }
-                }
-            }
+            const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
+            const content = bulletMatch ? bulletMatch[1].trim() : trimmed.trim();
+
+            if (!content) continue;
+            parsedLines.push({ leadingSpaces, content });
         }
-    
-        // Choose the most common indent unit
-        if (indentCounts[2] && (!indentCounts[4] || indentCounts[2] > indentCounts[4])) {
-            indentUnit = 2;
-        } else if (indentCounts[4]) {
-            indentUnit = 4;
-        }
-    
-        // Second pass: actually parse the tree
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            
-            // Calculate depth from leading spaces
-            const leadingSpaces = line.length - line.trimLeft().length;
-            
-            let depth = 0;
-            if (leadingSpaces > 0) {
-                // Try with the detected indent unit
-                if (leadingSpaces % indentUnit === 0) {
-                    depth = Math.floor(leadingSpaces / indentUnit);
-                } else {
-                    // Try dividing by 2 as fallback
-                    depth = Math.floor(leadingSpaces / 2);
+
+        if (parsedLines.length === 0) return null;
+
+        const positiveIndents = parsedLines
+            .map(item => item.leadingSpaces)
+            .filter(count => count > 0);
+
+        let indentUnit = 4;
+        if (positiveIndents.length > 0) {
+            let gcd = positiveIndents[0];
+            for (const indent of positiveIndents.slice(1)) {
+                let a = gcd;
+                let b = indent;
+                while (b) {
+                    const remainder = a % b;
+                    a = b;
+                    b = remainder;
                 }
-                // Ensure depth is reasonable (not too deep)
-                if (depth > 20) depth = Math.floor(leadingSpaces / 4);
+                gcd = a;
             }
-            
-            // Remove the bullet point (dash or asterisk) and any leading/trailing spaces
-            let name = trimmed;
-            if (name.startsWith('- ')) {
-                name = name.substring(2);
-            } else if (name.startsWith('-')) {
-                name = name.substring(1);
-            } else if (name.startsWith('* ')) {
-                name = name.substring(2);
-            } else if (name.startsWith('*')) {
-                name = name.substring(1);
-            }
-            name = name.trim();
-    
-            if (!name) continue;
-    
-            const node = { name };
-    
-            // Handle root node
-            if (depth === 0) {
-                root = node;
-                stack.length = 0;
-                stack.push({ node, depth: 0 });
-                continue;
-            }
-    
-            // Pop stack until we find the parent at the right depth
+            if (gcd > 0) indentUnit = gcd;
+        }
+
+        const root = { name: '' };
+        const stack = [];
+
+        for (const item of parsedLines) {
+            const depth = item.leadingSpaces === 0 ? 0 : Math.round(item.leadingSpaces / indentUnit);
+            const node = { name: item.content };
+
             while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
                 stack.pop();
             }
-    
-            // If stack is empty, this is a new root
+
             if (stack.length === 0) {
-                root = node;
-                stack.push({ node, depth: 0 });
-                continue;
+                root.name = node.name;
+                root.children = root.children || [];
+                if (!root.children.some(child => child.name === node.name)) {
+                    root.children.push(node);
+                }
+                stack.push({ node, depth });
+            } else {
+                const parent = stack[stack.length - 1].node;
+                if (!parent.children) parent.children = [];
+                parent.children.push(node);
+                stack.push({ node, depth });
             }
-    
-            // Get the parent from the stack
-            const parent = stack[stack.length - 1].node;
-            if (!parent.children) {
-                parent.children = [];
-            }
-            parent.children.push(node);
-            
-            // Add the current node to the stack
-            stack.push({ node, depth });
         }
-    
+
+        if (root.children && root.children.length === 1) {
+            return root.children[0];
+        }
+
         return root;
     }
 
@@ -2442,6 +2443,12 @@ class FlowchartViewer {
                     event.stopPropagation();
                     this.showNodeEditPopup(d);
                     this.selectNode(d);
+                }
+            })
+            .on('dblclick', (event, d) => {
+                event.stopPropagation();
+                if (d && d.data && d.data.children && d.data.children.length > 0) {
+                    this.toggleNodeCollapse(d);
                 }
             })
             .on('contextmenu', (event, d) => {
