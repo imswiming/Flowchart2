@@ -1136,6 +1136,20 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    getNodeNameFromInput(color = null) {
+        let name = (this.nodeEditInput.value || '').trim();
+        if (name.startsWith('Assumption: ')) {
+            name = name.substring('Assumption: '.length);
+        }
+        if (name.endsWith(' (Simplify?)')) {
+            name = name.substring(0, name.length - ' (Simplify?)'.length);
+        }
+        if (color === '#e75480') {
+            name = 'Assumption: ' + name;
+        }
+        return name;
+    }
+
     showNodeEditPopup(d) {
         if (!d || !d.data) return;
         this.nodeBeingEdited = d;
@@ -1419,14 +1433,7 @@ class FlowchartViewer {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
                     const currentNode = this.nodeBeingEdited;
-                    let name = currentNode.data.name || '';
-                    if (name.startsWith('Assumption: ')) {
-                        name = name.substring('Assumption: '.length);
-                    }
-                    if (name.endsWith(' (Simplify?)')) {
-                        name = name.substring(0, name.length - ' (Simplify?)'.length);
-                    }
-                    currentNode.data.name = name;
+                    currentNode.data.name = this.getNodeNameFromInput('#00a67e');
                     currentNode.data.color = '#00a67e';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1460,14 +1467,7 @@ class FlowchartViewer {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
                     const currentNode = this.nodeBeingEdited;
-                    let name = currentNode.data.name || '';
-                    if (name.startsWith('Assumption: ')) {
-                        name = name.substring('Assumption: '.length);
-                    }
-                    if (name.endsWith(' (Simplify?)')) {
-                        name = name.substring(0, name.length - ' (Simplify?)'.length);
-                    }
-                    currentNode.data.name = 'Assumption: ' + name;
+                    currentNode.data.name = this.getNodeNameFromInput('#e75480');
                     currentNode.data.color = '#e75480';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1501,14 +1501,7 @@ class FlowchartViewer {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
                     const currentNode = this.nodeBeingEdited;
-                    let name = currentNode.data.name || '';
-                    if (name.startsWith('Assumption: ')) {
-                        name = name.substring('Assumption: '.length);
-                    }
-                    if (name.endsWith(' (Simplify?)')) {
-                        name = name.substring(0, name.length - ' (Simplify?)'.length);
-                    }
-                    currentNode.data.name = name;
+                    currentNode.data.name = this.getNodeNameFromInput('#0074d9');
                     currentNode.data.color = '#0074d9';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1542,14 +1535,7 @@ class FlowchartViewer {
                         this.markNodeAsReal(this.nodeBeingEdited.data);
                     }
                     const currentNode = this.nodeBeingEdited;
-                    let name = currentNode.data.name || '';
-                    if (name.startsWith('Assumption: ')) {
-                        name = name.substring('Assumption: '.length);
-                    }
-                    if (name.endsWith(' (Simplify?)')) {
-                        name = name.substring(0, name.length - ' (Simplify?)'.length);
-                    }
-                    currentNode.data.name = name;
+                    currentNode.data.name = this.getNodeNameFromInput('#ffcc00');
                     currentNode.data.color = '#ffcc00';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
@@ -1640,21 +1626,7 @@ class FlowchartViewer {
         const originalData = this.nodeBeingEdited.data;
         const wasPlaceholder = this.isPlaceholderNodeData(originalData);
         const isRootPlaceholder = this.isRootPlaceholderNode(this.nodeBeingEdited);
-        let newName = this.nodeEditInput.value.trim();
-        
-        // Remove any "Assumption: " prefix the user might have typed
-        if (newName.startsWith('Assumption: ')) {
-            newName = newName.substring('Assumption: '.length);
-        }
-        // Remove any " (Simplify?)" suffix the user might have typed
-        if (newName.endsWith(' (Simplify?)')) {
-            newName = newName.substring(0, newName.length - ' (Simplify?)'.length);
-        }
-        
-        // Add "Assumption: " prefix for pink nodes
-        if (originalData && originalData.color === '#e75480') {
-            newName = 'Assumption: ' + newName;
-        }
+        let newName = this.getNodeNameFromInput(originalData.color);
         
         // Add " (Simplify?)" suffix for green leaf nodes
         if (this.isLeafNode(this.nodeBeingEdited) && this.isGreenNode(this.nodeBeingEdited)) {
@@ -1721,9 +1693,10 @@ class FlowchartViewer {
 
     exportAsJSON() {
         function stripParents(node) {
-            const { name, children, color } = node;
+            const { name, children, color, _collapsed } = node;
             const out = { name };
             if (color) out.color = color;
+            if (_collapsed) out._collapsed = true;
             if (children) out.children = children.map(stripParents);
             return out;
         }
