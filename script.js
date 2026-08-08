@@ -1438,14 +1438,8 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    let refreshed = null;
-                    d3.hierarchy(this.rootData).each(node => {
-                        if (node.data === currentNode.data) refreshed = node;
-                    });
-                    if (refreshed) {
-                        this.showNodeEditPopup(refreshed);
-                    }
                     this._suppressPopupHide = false;
+                    this.hideNodeEditPopup(false);
                     this.autosave();
                 }
             };
@@ -1472,14 +1466,8 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    let refreshed = null;
-                    d3.hierarchy(this.rootData).each(node => {
-                        if (node.data === currentNode.data) refreshed = node;
-                    });
-                    if (refreshed) {
-                        this.showNodeEditPopup(refreshed);
-                    }
                     this._suppressPopupHide = false;
+                    this.hideNodeEditPopup(false);
                     this.autosave();
                 }
             };
@@ -1506,14 +1494,8 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    let refreshed = null;
-                    d3.hierarchy(this.rootData).each(node => {
-                        if (node.data === currentNode.data) refreshed = node;
-                    });
-                    if (refreshed) {
-                        this.showNodeEditPopup(refreshed);
-                    }
                     this._suppressPopupHide = false;
+                    this.hideNodeEditPopup(false);
                     this.autosave();
                 }
             };
@@ -1540,14 +1522,8 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    let refreshed = null;
-                    d3.hierarchy(this.rootData).each(node => {
-                        if (node.data === currentNode.data) refreshed = node;
-                    });
-                    if (refreshed) {
-                        this.showNodeEditPopup(refreshed);
-                    }
                     this._suppressPopupHide = false;
+                    this.hideNodeEditPopup(false);
                     this.autosave();
                 }
             };
@@ -1572,14 +1548,8 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
-                    let refreshed = null;
-                    d3.hierarchy(this.rootData).each(node => {
-                        if (node.data === currentNode.data) refreshed = node;
-                    });
-                    if (refreshed) {
-                        this.showNodeEditPopup(refreshed);
-                    }
                     this._suppressPopupHide = false;
+                    this.hideNodeEditPopup(false);
                     this.autosave();
                 }
             };
