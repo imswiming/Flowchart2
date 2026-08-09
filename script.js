@@ -2722,3 +2722,4 @@ class FlowchartViewer {
 document.addEventListener('DOMContentLoaded', () => {
     new FlowchartViewer();
 });
+
