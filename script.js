@@ -6,6 +6,8 @@ class FlowchartViewer {
         this.zoomOutBtn = document.getElementById('zoom-out');
         this.resetZoomBtn = document.getElementById('reset-zoom');
         this.resetViewBtn = document.getElementById('reset-view');
+        this.orientationBtn = document.getElementById('orientation-btn');
+        this.hamburgerOrientationBtn = document.getElementById('hamburger-orientation');
         this.undoBtn = document.getElementById('undo-btn');
         this.redoBtn = document.getElementById('redo-btn');
         this.exportBtn = document.getElementById('export-btn');
@@ -39,6 +41,9 @@ class FlowchartViewer {
 
         // Zoom/pan variables
         this.transform = d3.zoomIdentity;
+        this.orientation = 'TB';
+        this.lrNodeSpacing = 150;
+        this.tbNodeSpacing = 200;
         this.minZoom = 0.1;
         this.maxZoom = 5;
         this.zoomStep = 0.2;
@@ -83,6 +88,8 @@ class FlowchartViewer {
         this.zoomOutBtn.addEventListener('click', () => this.zoom(1 - this.zoomStep));
         this.resetZoomBtn.addEventListener('click', () => this.resetZoom());
         this.resetViewBtn.addEventListener('click', () => this.resetView());
+        this.orientationBtn.addEventListener('click', () => this.toggleOrientation());
+        this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
         this.undoBtn.addEventListener('click', () => this.undo());
         this.redoBtn.addEventListener('click', () => this.redo());
         this.exportBtn.addEventListener('click', () => this.showExportPopup());
@@ -119,15 +126,17 @@ class FlowchartViewer {
             }
         });
 
-        // On first ever load seed with sample data; otherwise restore last session
+        // On first ever load seed with sample data; otherwise restore the last opened flowchart
         if (this.flowchartList.length > 0) {
-            // Restore the first saved flowchart without overwriting it
-            this.loadFlowchartFromList(0);
+            const initialIndex = this.getPreferredFlowchartIndex();
+            this.loadFlowchartFromList(initialIndex);
         } else {
-            this.renderFlowchart(this.getSampleData());
+            this.renderFlowchart(this.getSampleData(), { fitView: true });
             this.currentSlotIndex = 0;
             this.saveCurrentFlowchart();
         }
+
+        this.updateOrientationButtonLabels();
 
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
@@ -181,6 +190,25 @@ class FlowchartViewer {
         localStorage.setItem('flowchart-list', JSON.stringify(this.flowchartList));
     }
 
+    getPreferredFlowchartIndex() {
+        if (!Array.isArray(this.flowchartList) || this.flowchartList.length === 0) {
+            return 0;
+        }
+
+        const savedIndex = Number(localStorage.getItem('flowchart-last-index'));
+        if (Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < this.flowchartList.length) {
+            return savedIndex;
+        }
+
+        return 0;
+    }
+
+    saveActiveFlowchartIndex() {
+        if (this.currentSlotIndex !== null && this.currentSlotIndex >= 0) {
+            localStorage.setItem('flowchart-last-index', String(this.currentSlotIndex));
+        }
+    }
+
     // Save current flowchart to the list
     saveCurrentFlowchart() {
         // Recover from null index if we have a list
@@ -203,6 +231,7 @@ class FlowchartViewer {
             this.currentSlotIndex = this.flowchartList.length - 1;
         }
         this.saveFlowchartList();
+        this.saveActiveFlowchartIndex();
     }
 
     // Autosave wrapper - call after any edit
@@ -372,7 +401,8 @@ class FlowchartViewer {
             title: `Flowchart ${this.flowchartList.length + 1}`,
             data: JSON.stringify({
                 tree: defaultData,
-                customConnections: []
+                customConnections: [],
+                orientation: 'TB'
             })
         });
         
@@ -385,8 +415,10 @@ class FlowchartViewer {
         
         this.customConnections = [];
         this.rootData = defaultData;
+        this.orientation = 'TB';
         this.transform = d3.zoomIdentity;
         this._zoomBehavior = null;
+        this.updateOrientationButtonLabels();
         
         this.renderFlowchart(this.rootData);
         this.currentSlotIndex = this.flowchartList.length - 1;
@@ -410,8 +442,10 @@ class FlowchartViewer {
             const parsed = JSON.parse(item.data);
             if (parsed.tree) {
                 if (this.rootData) this.pushUndo();
+                this.orientation = parsed.orientation || 'TB';
                 this.transform = d3.zoomIdentity;
                 this._zoomBehavior = null;
+                this.updateOrientationButtonLabels();
                 
                 let treeData = parsed.tree;
                 if (this.isPlaceholderNodeData(treeData) || 
@@ -441,10 +475,10 @@ class FlowchartViewer {
                         })
                         .filter(Boolean);
                     
-                    this.renderFlowchart(this.rootData);
+                    this.renderFlowchart(this.rootData, { fitView: true });
                 }
                 
-                this.renderFlowchart(this.rootData);
+                this.renderFlowchart(this.rootData, { fitView: true });
                 this.currentSlotIndex = index;
                 this.saveCurrentFlowchart();
                 this.autosave();
@@ -529,6 +563,19 @@ class FlowchartViewer {
         this.transform = d3.zoomIdentity;
         this._zoomBehavior = null;
         this.updateFlowchart();
+    }
+
+    toggleOrientation() {
+        this.orientation = this.orientation === 'LR' ? 'TB' : 'LR';
+        this.updateOrientationButtonLabels();
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
+    updateOrientationButtonLabels() {
+        const label = this.orientation === 'LR' ? '↔ Left-Right' : '↕ Top-Down';
+        if (this.orientationBtn) this.orientationBtn.textContent = label;
+        if (this.hamburgerOrientationBtn) this.hamburgerOrientationBtn.textContent = label;
     }
 
     updateFlowchart() {
@@ -1005,7 +1052,20 @@ class FlowchartViewer {
             newName = `${baseName} ${idx++}`;
         }
         const newChild = { name: newName };
-        d.data.children.push(newChild);
+        const children = d.data.children;
+        const placeholderIndex = children.reduce((lastIndex, child, index) => {
+            if (this.isPlaceholderNodeData(child) || !(child.name || '').trim()) {
+                return index;
+            }
+            return lastIndex;
+        }, -1);
+
+        if (placeholderIndex !== -1) {
+            children.splice(placeholderIndex, 0, newChild);
+        } else {
+            children.push(newChild);
+        }
+
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.autosave();
@@ -1675,7 +1735,8 @@ class FlowchartViewer {
                 source: conn.source.name,
                 target: conn.target.name,
                 _offset: conn._offset || 0
-            }))
+            })),
+            orientation: this.orientation
         }, null, 2);
     }
 
@@ -2245,8 +2306,13 @@ class FlowchartViewer {
         }
     }
 
-    renderFlowchart(data) {
-        this.syncTransform();
+    renderFlowchart(data, options = {}) {
+        const { fitView = false } = options;
+        if (fitView) {
+            this.transform = d3.zoomIdentity;
+        } else {
+            this.syncTransform();
+        }
         this.rootData = this.wrapRootWithPlaceholder(data);
         this.ensureRightmostPlaceholderNodes(this.rootData);
         
@@ -2274,10 +2340,18 @@ class FlowchartViewer {
         this.setupZoom(svg, g);
 
         const treeLayout = d3.tree()
-            .nodeSize([150, 200]);
+            .nodeSize(this.orientation === 'LR' ? [this.lrNodeSpacing, 160] : [150, this.tbNodeSpacing]);
 
         const root = d3.hierarchy(this.rootData, d => d._collapsed ? null : d.children);
         treeLayout(root);
+
+        if (this.orientation === 'LR') {
+            root.each(node => {
+                const temp = node.x;
+                node.x = node.y;
+                node.y = temp;
+            });
+        }
 
         const cornerRadius = 10;
         g.append('g')
@@ -2292,6 +2366,35 @@ class FlowchartViewer {
                 const sourceY = snap10(d.source.y);
                 const targetX = snap10(d.target.x);
                 const targetY = snap10(d.target.y);
+
+                if (this.orientation === 'LR') {
+                    const siblings = d.source && Array.isArray(d.source.children) ? d.source.children : [];
+                    const targetIndex = siblings.indexOf(d.target);
+                    const middleIndex = siblings.length > 0 ? Math.floor(siblings.length / 2) : -1;
+                    const parentAndMiddleSameHeight = siblings.length % 2 === 1 &&
+                        targetIndex === middleIndex &&
+                        Math.abs(sourceY - targetY) < 1;
+                    const isStraightLink = siblings.length === 1 && Math.abs(sourceY - targetY) < 1;
+
+                    if (isStraightLink || parentAndMiddleSameHeight) {
+                        return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
+                    }
+
+                    const dir = Math.sign(targetX - sourceX) || 1;
+                    const connectionX = snap10(sourceX + dir * 80);
+                    const yDirection = sourceY < targetY ? 1 : -1;
+                    const curveStartY = sourceY + yDirection * cornerRadius;
+                    const curveEndY = targetY - yDirection * cornerRadius;
+                    return `
+                        M ${sourceX},${sourceY}
+                        L ${connectionX - dir * cornerRadius},${sourceY}
+                        Q ${connectionX},${sourceY} ${connectionX},${curveStartY}
+                        L ${connectionX},${curveEndY}
+                        Q ${connectionX},${targetY} ${connectionX + dir * cornerRadius},${targetY}
+                        L ${targetX},${targetY}
+                    `;
+                }
+
                 const dir = Math.sign(targetX - sourceX) || 1;
                 if (sourceX === targetX) {
                     return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
@@ -2572,7 +2675,7 @@ class FlowchartViewer {
         });
 
         const isIdentity = (t) => t.k === 1 && t.x === 0 && t.y === 0;
-        if (isIdentity(this.transform)) {
+        if (fitView || isIdentity(this.transform)) {
             const bounds = g.node().getBBox();
             const scale = 0.9 / Math.max(bounds.width / width, bounds.height / height);
             const tx = (width - bounds.width * scale) / 2 - bounds.x * scale;
