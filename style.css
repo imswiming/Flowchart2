@@ -384,7 +384,7 @@ body {
         width: 100vw !important;
         min-width: 0 !important;
         display: block !important;
-        background: var(--panel-bg) !important;
+        background: var(--bg) !important;
         overflow: auto !important;
     }
 
