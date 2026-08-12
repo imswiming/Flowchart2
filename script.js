@@ -25,6 +25,11 @@ class FlowchartViewer {
         this.closeStorageBtn = document.getElementById('close-storage-btn');
         this.newFlowchartBtn = document.getElementById('new-flowchart-btn');
 
+        // Show/hide non-root placeholder ("add new") nodes
+        this.showPlaceholders = true;
+        this.togglePlaceholdersBtn = document.getElementById('toggle-placeholders-btn');
+        this.hamburgerTogglePlaceholdersBtn = document.getElementById('hamburger-toggle-placeholders');
+
         // AI Export/Import
         this.aiExportBtn = document.getElementById('ai-export-btn');
         this.aiImportBtn = document.getElementById('ai-import-btn');
@@ -43,7 +48,9 @@ class FlowchartViewer {
         this.transform = d3.zoomIdentity;
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
-        this.tbNodeSpacing = 200;
+        this.tbNodeSpacing = 150;
+        this.tbHorizontalSpacing = 150;
+        this.tbVerticalSpacing = 200;
         this.minZoom = 0.1;
         this.maxZoom = 5;
         this.zoomStep = 0.2;
@@ -100,6 +107,12 @@ class FlowchartViewer {
         this.openBtn.addEventListener('click', () => this.showStoragePopup());
         this.closeStorageBtn.addEventListener('click', () => this.storagePopup.style.display = 'none');
         this.newFlowchartBtn.addEventListener('click', () => this.createNewFlowchart());
+        if (this.togglePlaceholdersBtn) {
+            this.togglePlaceholdersBtn.addEventListener('click', () => this.togglePlaceholders());
+        }
+        if (this.hamburgerTogglePlaceholdersBtn) {
+            this.hamburgerTogglePlaceholdersBtn.addEventListener('click', () => this.togglePlaceholders());
+        }
 
         // AI Export/Import event listeners
         this.aiExportBtn.addEventListener('click', () => this.exportToAi());
@@ -137,6 +150,7 @@ class FlowchartViewer {
         }
 
         this.updateOrientationButtonLabels();
+        this.updateTogglePlaceholdersLabels();
 
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
@@ -146,6 +160,15 @@ class FlowchartViewer {
                     e.preventDefault();
                     this.deleteNode(this.selectedNode);
                     this.deselectNode();
+                }
+                return;
+            }
+
+            // Escape closes the node edit popup (even while the text input is focused).
+            if (e.key === 'Escape' || e.key === 'Esc') {
+                if (this.nodeBeingEdited) {
+                    e.preventDefault();
+                    this.hideNodeEditPopup(true);
                 }
                 return;
             }
@@ -578,6 +601,19 @@ class FlowchartViewer {
         if (this.hamburgerOrientationBtn) this.hamburgerOrientationBtn.textContent = label;
     }
 
+    togglePlaceholders() {
+        this.showPlaceholders = !this.showPlaceholders;
+        this.updateTogglePlaceholdersLabels();
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
+    updateTogglePlaceholdersLabels() {
+        const label = this.showPlaceholders ? '👻 Hide Placeholders' : '👻 Show Placeholders';
+        if (this.togglePlaceholdersBtn) this.togglePlaceholdersBtn.textContent = label;
+        if (this.hamburgerTogglePlaceholdersBtn) this.hamburgerTogglePlaceholdersBtn.textContent = label;
+    }
+
     updateFlowchart() {
         this.renderFlowchart(this.rootData);
     }
@@ -652,6 +688,10 @@ class FlowchartViewer {
             this.ensureRightmostPlaceholderNodes(child);
         });
 
+        if (nodeData._skipAutoPlaceholder) {
+            return;
+        }
+
         const lastChild = nodeData.children[nodeData.children.length - 1];
 
         if (
@@ -665,6 +705,45 @@ class FlowchartViewer {
         }
 
         nodeData.children.push(this.createPlaceholderNode());
+    }
+
+    // Generic helpers that operate directly on the plain-object tree by object reference,
+    // independent of any particular d3.hierarchy snapshot.
+    removeNodeDataFromTree(nodeData) {
+        const removeFrom = (node) => {
+            if (!node || !Array.isArray(node.children)) return false;
+            const idx = node.children.indexOf(nodeData);
+            if (idx !== -1) {
+                node.children.splice(idx, 1);
+                if (node.children.length === 0) delete node.children;
+                return true;
+            }
+            for (const child of node.children) {
+                if (removeFrom(child)) return true;
+            }
+            return false;
+        };
+        removeFrom(this.rootData);
+    }
+
+    unwrapNodeInTree(wrapData, replacementData) {
+        if (this.rootData === wrapData) {
+            this.rootData = replacementData;
+            return;
+        }
+        const replace = (node) => {
+            if (!node || !Array.isArray(node.children)) return false;
+            const idx = node.children.indexOf(wrapData);
+            if (idx !== -1) {
+                node.children[idx] = replacementData;
+                return true;
+            }
+            for (const child of node.children) {
+                if (replace(child)) return true;
+            }
+            return false;
+        };
+        replace(this.rootData);
     }
 
     showContextMenu(event, d) {
@@ -1211,6 +1290,7 @@ class FlowchartViewer {
 
     showNodeEditPopup(d) {
         if (!d || !d.data) return;
+
         this.nodeBeingEdited = d;
         this._suppressPopupHide = false;
         
@@ -2340,9 +2420,23 @@ class FlowchartViewer {
         this.setupZoom(svg, g);
 
         const treeLayout = d3.tree()
-            .nodeSize(this.orientation === 'LR' ? [this.lrNodeSpacing, 160] : [150, this.tbNodeSpacing]);
+            .nodeSize(this.orientation === 'LR' ? [this.lrNodeSpacing, 160] : [this.tbHorizontalSpacing, this.tbVerticalSpacing])
+            // By default d3 doubles the separation between nodes that don't share a parent,
+            // which is what makes the gap between two sibling trees (measured leaf-to-leaf)
+            // balloon far past the gap between plain childless siblings. Using a uniform
+            // separation keeps every pair of adjacent nodes at the same minimum distance,
+            // whether they're true siblings or the closest edges of two neighboring subtrees.
+            .separation(() => 1);
 
-        const root = d3.hierarchy(this.rootData, d => d._collapsed ? null : d.children);
+        const childrenAccessor = d => {
+            if (d._collapsed) return null;
+            if (!d.children) return null;
+            // The root placeholder (the tree's own top node) is never filtered here since this
+            // accessor only ever hides *children* of a node, never the node passed in as root.
+            if (this.showPlaceholders) return d.children;
+            return d.children.filter(child => !this.isPlaceholderNodeData(child));
+        };
+        const root = d3.hierarchy(this.rootData, childrenAccessor);
         treeLayout(root);
 
         if (this.orientation === 'LR') {
