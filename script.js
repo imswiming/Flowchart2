@@ -312,6 +312,9 @@ class FlowchartViewer {
         if (!d || !d.data || !d.data.children || d.data.children.length === 0) return;
         this.pushUndo();
         d.data._collapsed = !Boolean(d.data._collapsed);
+        // Hide the radial add-buttons after a fold/unfold; they only reappear if the
+        // node is clicked again.
+        this.selectedNode = null;
         this.renderFlowchart(this.rootData);
         this.autosave();
     }
@@ -575,6 +578,12 @@ class FlowchartViewer {
                     if (this.nodeBeingEdited && !this._suppressPopupHide) {
                         this.hideNodeEditPopup(false);
                     }
+                    // Dragging/zooming the background hides the radial add-buttons too;
+                    // they only come back if the node is clicked again.
+                    if (this.selectedNode) {
+                        this.selectedNode = null;
+                        d3.selectAll('.radial-add-btn-layer').remove();
+                    }
                 });
         }
 
@@ -608,6 +617,29 @@ class FlowchartViewer {
         if (!this._zoomBehavior || svg.empty()) return;
         svg.transition().duration(300)
             .call(this._zoomBehavior.scaleTo, 1);
+    }
+
+    // On mobile, tapping a node pans/animates the view so the node ends up centered in
+    // the top half of the screen - the bottom half is where the node edit popup opens,
+    // so this keeps the node visible instead of it landing behind the popup. Desktop is
+    // unaffected. `callback` runs once the pan finishes (or immediately on desktop).
+    centerNodeOnMobile(d, callback) {
+        const isMobile = window.matchMedia('(max-width: 600px)').matches;
+        const svg = d3.select('#flowchart svg');
+        if (!isMobile || !this._zoomBehavior || svg.empty() || !d) {
+            callback();
+            return;
+        }
+        const width = this.flowchartPanel.clientWidth;
+        const height = this.flowchartPanel.clientHeight;
+        const k = this.transform.k;
+        const tx = width / 2 - d.x * k;
+        const ty = (height / 4) - d.y * k;
+        const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
+        svg.transition().duration(250)
+            .call(this._zoomBehavior.transform, newTransform)
+            .on('end', () => callback())
+            .on('interrupt', () => callback());
     }
 
     resetView() {
@@ -2796,9 +2828,11 @@ class FlowchartViewer {
                         return;
                     }
                     event.stopPropagation();
-                    this.showNodeEditPopup(d);
-                    this.selectNode(d);
-                    this.refreshRadialButtons();
+                    this.centerNodeOnMobile(d, () => {
+                        this.showNodeEditPopup(d);
+                        this.selectNode(d);
+                        this.refreshRadialButtons();
+                    });
                 }
             })
             .on('dblclick', (event, d) => {
