@@ -1321,6 +1321,7 @@ class FlowchartViewer {
         }
         this.updateUndoRedoButtons();
         this.autosave();
+        return newParent;
     }
 
     duplicateNodeToParentSiblings(d) {
@@ -1431,7 +1432,7 @@ class FlowchartViewer {
         const el = this.nodeEditInput;
         if (!el) return;
         el.style.height = 'auto';
-        el.style.height = el.scrollHeight + 'px';
+        el.style.height = (el.scrollHeight + 2) + 'px';
     }
 
     showNodeEditPopup(d) {
@@ -1875,6 +1876,9 @@ class FlowchartViewer {
         }
 
         this.nodeEditPopup.style.display = 'block';
+        // The textarea must be visible (display:block on the popup) before scrollHeight
+        // reflects real content, so resize here rather than only right after setting .value.
+        this.resizeNodeEditInput();
     }
 
     saveNodeEdit() {
@@ -2959,11 +2963,23 @@ class FlowchartViewer {
     // sync incrementally, since selection changes and re-renders are both infrequent
     // relative to normal interaction.
     refreshRadialButtons() {
-        d3.selectAll('.radial-add-btn').remove();
+        d3.selectAll('.radial-add-btn-layer').remove();
         if (!this.selectedNode) return;
 
         const selectedData = this.selectedNode.data;
         if (!selectedData || this.isPlaceholderNodeData(selectedData) || !(selectedData.name || '').trim()) return;
+
+        const nodeEls = d3.selectAll('#flowchart .node');
+        if (nodeEls.empty()) return;
+        const containerEl = nodeEls.node().parentNode;
+        if (!containerEl) return;
+        const container = d3.select(containerEl);
+
+        let targetDatum = null;
+        nodeEls.each(function(d) {
+            if (d && d.data === selectedData) targetDatum = d;
+        });
+        if (!targetDatum) return;
 
         const NODE_WIDTH = 120;
         const LINE_HEIGHT = 18;
@@ -2971,59 +2987,95 @@ class FlowchartViewer {
         const gap = 24;
         const btnR = 13;
         const self = this;
+        const snap10 = v => Math.round(v / 10) * 10;
 
-        d3.selectAll('#flowchart .node').each(function(d) {
-            if (!d || d.data !== selectedData) return;
-            const lineCount = (d._lines && d._lines.length) || 1;
-            const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y) / 2;
-            const g = d3.select(this);
+        const baseX = snap10(targetDatum.x);
+        const baseY = targetDatum.y;
+        const lineCount = (targetDatum._lines && targetDatum._lines.length) || 1;
+        const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y) / 2;
 
-            const makeRadialBtn = (dx, dy, onActivate) => {
-                const btnGroup = g.append('g')
-                    .attr('class', 'radial-add-btn')
-                    .attr('transform', `translate(${dx},${dy})`)
-                    .style('cursor', 'pointer')
-                    .on('mousedown', (event) => event.stopPropagation())
-                    .on('click', (event) => {
-                        event.stopPropagation();
-                        onActivate();
-                    });
-                btnGroup.append('circle')
-                    .attr('r', btnR)
-                    .attr('fill', '#111827')
-                    .attr('stroke', '#00a67e')
-                    .attr('stroke-width', 1.5);
-                btnGroup.append('text')
-                    .attr('text-anchor', 'middle')
-                    .attr('dominant-baseline', 'central')
-                    .attr('fill', '#e6eef8')
-                    .attr('font-size', 16)
-                    .attr('font-weight', 'bold')
-                    .attr('y', 1)
-                    .text('+');
-            };
+        // Appended last, to the same container that holds every node - not nested inside
+        // the selected node's own <g> - so this layer always paints on top of neighboring
+        // nodes (e.g. a sibling sitting right where the right-hand button goes) instead of
+        // being hidden behind whichever node happens to come later in the draw order.
+        const btnLayer = container.append('g').attr('class', 'radial-add-btn-layer');
 
-            if (d.parent) {
-                makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, () => self.addSiblingNode(d, -1));
-                makeRadialBtn(NODE_WIDTH / 2 + gap, 0, () => self.addSiblingNode(d, 1));
-            }
-            makeRadialBtn(0, halfHeight + gap, () => {
-                const newChild = self.addChildNode(d);
-                if (newChild) {
-                    let found = null;
-                    d3.hierarchy(self.rootData).each(node => {
-                        if (node.data === newChild) found = node;
-                    });
-                    if (found) {
-                        self.showNodeEditPopup(found);
-                        self.nodeEditInput.value = '';
-                        self.resizeNodeEditInput();
-                        self.nodeEditInput.focus();
-                    }
-                }
+        const makeRadialBtn = (dx, dy, onActivate) => {
+            const btnGroup = btnLayer.append('g')
+                .attr('class', 'radial-add-btn')
+                .attr('transform', `translate(${baseX + dx},${baseY + dy})`)
+                .style('cursor', 'pointer')
+                .on('mousedown', (event) => event.stopPropagation())
+                .on('click', (event) => {
+                    event.stopPropagation();
+                    onActivate();
+                });
+            btnGroup.append('circle')
+                .attr('r', btnR)
+                .attr('fill', '#111827')
+                .attr('stroke', '#ffcc00')
+                .attr('stroke-width', 1.5);
+            btnGroup.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#e6eef8')
+                .attr('font-size', 16)
+                .attr('font-weight', 'bold')
+                .attr('y', 1)
+                .text('+');
+        };
+
+        // After a button spawns a new node, move the radial buttons onto that new node
+        // instead of leaving them on the original one.
+        const focusNewNode = (newData) => {
+            if (!newData) return null;
+            let found = null;
+            d3.hierarchy(self.rootData).each(node => {
+                if (node.data === newData) found = node;
             });
-            makeRadialBtn(0, -(halfHeight + gap), () => self.addParentNode(d));
-        });
+            if (found) {
+                self.selectNode(found);
+                self.refreshRadialButtons();
+            }
+            return found;
+        };
+
+        const activateAddChild = () => {
+            const newChild = self.addChildNode(targetDatum);
+            const found = focusNewNode(newChild);
+            if (found) {
+                self.showNodeEditPopup(found);
+                self.nodeEditInput.value = '';
+                self.resizeNodeEditInput();
+                self.nodeEditInput.focus();
+            }
+        };
+        const activateAddParent = () => {
+            const newParentData = self.addParentNode(targetDatum);
+            focusNewNode(newParentData);
+        };
+        const activateAddSiblingBefore = () => focusNewNode(self.addSiblingNode(targetDatum, -1));
+        const activateAddSiblingAfter = () => focusNewNode(self.addSiblingNode(targetDatum, 1));
+
+        if (this.orientation === 'LR') {
+            // Children extend to the right and parents sit to the left in this
+            // orientation, so the horizontal buttons follow that flow: left adds a new
+            // parent, right adds a child. Siblings stack vertically, so they move to
+            // the top/bottom buttons instead of left/right.
+            makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, activateAddParent);
+            makeRadialBtn(NODE_WIDTH / 2 + gap, 0, activateAddChild);
+            if (targetDatum.parent) {
+                makeRadialBtn(0, -(halfHeight + gap), activateAddSiblingBefore);
+                makeRadialBtn(0, halfHeight + gap, activateAddSiblingAfter);
+            }
+        } else {
+            if (targetDatum.parent) {
+                makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, activateAddSiblingBefore);
+                makeRadialBtn(NODE_WIDTH / 2 + gap, 0, activateAddSiblingAfter);
+            }
+            makeRadialBtn(0, halfHeight + gap, activateAddChild);
+            makeRadialBtn(0, -(halfHeight + gap), activateAddParent);
+        }
     }
 
     showNotification(message, duration = 3000) {
