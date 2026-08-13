@@ -2,9 +2,11 @@ class FlowchartViewer {
     constructor() {
         this.flowchartContainer = document.getElementById('flowchart');
         this.flowchartPanel = document.getElementById('flowchart-panel');
-        this.zoomInBtn = document.getElementById('zoom-in');
-        this.zoomOutBtn = document.getElementById('zoom-out');
-        this.resetZoomBtn = document.getElementById('reset-zoom');
+        // Top-right controls: previously zoom in/out/reset, now undo/redo/open.
+        // Zooming itself is still available via scroll-wheel / pinch (see setupZoom).
+        this.topUndoBtn = document.getElementById('top-undo-btn');
+        this.topRedoBtn = document.getElementById('top-redo-btn');
+        this.topOpenBtn = document.getElementById('top-open-btn');
         this.resetViewBtn = document.getElementById('reset-view');
         this.orientationBtn = document.getElementById('orientation-btn');
         this.hamburgerOrientationBtn = document.getElementById('hamburger-orientation');
@@ -57,7 +59,7 @@ class FlowchartViewer {
         this.lrNodeSpacing = 150;
         this.tbNodeSpacing = 150;
         this.tbHorizontalSpacing = 150;
-        this.tbVerticalSpacing = 200;
+        this.tbVerticalSpacing = 160;
         this.minZoom = 0.1;
         this.maxZoom = 5;
         this.zoomStep = 0.2;
@@ -98,9 +100,9 @@ class FlowchartViewer {
         this.loadFlowchartList();
 
         // Set up event listeners
-        this.zoomInBtn.addEventListener('click', () => this.zoom(1 + this.zoomStep));
-        this.zoomOutBtn.addEventListener('click', () => this.zoom(1 - this.zoomStep));
-        this.resetZoomBtn.addEventListener('click', () => this.resetZoom());
+        if (this.topUndoBtn) this.topUndoBtn.addEventListener('click', () => this.undo());
+        if (this.topRedoBtn) this.topRedoBtn.addEventListener('click', () => this.redo());
+        if (this.topOpenBtn) this.topOpenBtn.addEventListener('click', () => this.showStoragePopup());
         this.resetViewBtn.addEventListener('click', () => this.resetView());
         this.orientationBtn.addEventListener('click', () => this.toggleOrientation());
         this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
@@ -142,6 +144,7 @@ class FlowchartViewer {
             if (this.nodeBeingEdited) {
                 this._pendingNodeSave = true;
             }
+            this.resizeNodeEditInput();
         });
 
         // Save on blur (clicking away from the input)
@@ -149,6 +152,16 @@ class FlowchartViewer {
             if (this._pendingNodeSave && this.nodeBeingEdited) {
                 this._pendingNodeSave = false;
                 this.saveNodeEdit();
+            }
+        });
+
+        // The edit field is a wrapping textarea now (so long names wrap at the popup's
+        // width instead of overflowing); Enter still commits/blurs rather than adding a
+        // newline, matching how the old single-line input behaved.
+        this.nodeEditInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.nodeEditInput.blur();
             }
         });
 
@@ -574,6 +587,7 @@ class FlowchartViewer {
             if (event.target === svg.node()) {
                 this.hideContextMenu();
                 this.hideNodeEditPopup(true);
+                this.deselectNode();
                 if (this.isMovingNode) this.cancelMoveNode();
                 if (this.isMakingConnection) this.cancelMakeConnection();
             }
@@ -1151,6 +1165,14 @@ class FlowchartViewer {
         this.undoBtn.style.pointerEvents = this.undoStack.length > 0 ? "auto" : "none";
         this.redoBtn.style.opacity = this.redoStack.length > 0 ? "1" : "0.5";
         this.redoBtn.style.pointerEvents = this.redoStack.length > 0 ? "auto" : "none";
+        if (this.topUndoBtn) {
+            this.topUndoBtn.style.opacity = this.undoStack.length > 0 ? "1" : "0.5";
+            this.topUndoBtn.style.pointerEvents = this.undoStack.length > 0 ? "auto" : "none";
+        }
+        if (this.topRedoBtn) {
+            this.topRedoBtn.style.opacity = this.redoStack.length > 0 ? "1" : "0.5";
+            this.topRedoBtn.style.pointerEvents = this.redoStack.length > 0 ? "auto" : "none";
+        }
     }
 
     undo() {
@@ -1403,6 +1425,15 @@ class FlowchartViewer {
         return name;
     }
 
+    // Grows the node-edit textarea to fit however many lines the wrapped text now
+    // takes, so the box expands downward instead of scrolling internally.
+    resizeNodeEditInput() {
+        const el = this.nodeEditInput;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+    }
+
     showNodeEditPopup(d) {
         if (!d || !d.data) return;
 
@@ -1423,6 +1454,7 @@ class FlowchartViewer {
         }
         
         this.nodeEditInput.value = displayName;
+        this.resizeNodeEditInput();
         this.nodeEditInput.focus();
         this.nodeEditInput.select();
         setTimeout(() => {
@@ -2478,6 +2510,7 @@ class FlowchartViewer {
         this.selectedNode = null;
         this.nodeControlsRow.style.display = 'none';
         this.nodeControlsRow.innerHTML = '';
+        this.refreshRadialButtons();
     }
     deleteSelectedNode() {
         // No-op since delete node button is removed
@@ -2500,6 +2533,7 @@ class FlowchartViewer {
     }
 
     renderFlowchart(data, options = {}) {
+        const self = this;
         const { fitView = false } = options;
         if (fitView) {
             this.transform = d3.zoomIdentity;
@@ -2581,15 +2615,16 @@ class FlowchartViewer {
                 const targetY = snap10(d.target.y);
 
                 if (this.orientation === 'LR') {
-                    const siblings = d.source && Array.isArray(d.source.children) ? d.source.children : [];
-                    const targetIndex = siblings.indexOf(d.target);
-                    const middleIndex = siblings.length > 0 ? Math.floor(siblings.length / 2) : -1;
-                    const parentAndMiddleSameHeight = siblings.length % 2 === 1 &&
-                        targetIndex === middleIndex &&
-                        Math.abs(sourceY - targetY) < 1;
-                    const isStraightLink = siblings.length === 1 && Math.abs(sourceY - targetY) < 1;
+                    // Any link whose source and target sit at the same height gets a plain
+                    // horizontal line. This covers a lone child, an odd-count symmetric middle
+                    // child under the centered layout, AND the first child under the indented
+                    // layout (which is deliberately kept flush with its parent's row) - so the
+                    // parent-to-first-child segment is a straight line rather than the mismatched
+                    // up/down curve pair that appeared when sourceY and targetY were nearly
+                    // equal but not treated as a straight case.
+                    const isStraightLink = Math.abs(sourceY - targetY) < 1;
 
-                    if (isStraightLink || parentAndMiddleSameHeight) {
+                    if (isStraightLink) {
                         return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
                     }
 
@@ -2759,6 +2794,7 @@ class FlowchartViewer {
                     event.stopPropagation();
                     this.showNodeEditPopup(d);
                     this.selectNode(d);
+                    this.refreshRadialButtons();
                 }
             })
             .on('dblclick', (event, d) => {
@@ -2771,6 +2807,7 @@ class FlowchartViewer {
                 event.preventDefault();
                 this.showNodeEditPopup(d);
                 this.selectNode(d);
+                this.refreshRadialButtons();
             });
 
         const NODE_WIDTH = 120;
@@ -2875,15 +2912,27 @@ class FlowchartViewer {
         .attr('y', d => d.y)
         .text(d => d.line);
 
+        const collapseArrowOrientation = this.orientation;
         node.each(function(d) {
             if (d.data._collapsed) {
                 const text = d3.select(this).select('text');
-                text.append('tspan')
-                    .attr('x', 0)
-                    .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25)
-                    .attr('fill', '#ffffff')
-                    .attr('font-size', FONT_SIZE + 3)
-                    .text('▼');
+                if (collapseArrowOrientation === 'LR') {
+                    // Children extend to the right in LR mode, so the fold/unfold
+                    // indicator sits just outside the node's right edge instead of below it.
+                    text.append('tspan')
+                        .attr('x', NODE_WIDTH / 2 + 16)
+                        .attr('y', 4)
+                        .attr('fill', '#ffffff')
+                        .attr('font-size', FONT_SIZE + 3)
+                        .text('▶');
+                } else {
+                    text.append('tspan')
+                        .attr('x', 0)
+                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25)
+                        .attr('fill', '#ffffff')
+                        .attr('font-size', FONT_SIZE + 3)
+                        .text('▼');
+                }
             }
         });
 
@@ -2901,6 +2950,80 @@ class FlowchartViewer {
         }
 
         this.updateUndoRedoButtons();
+        this.refreshRadialButtons();
+    }
+
+    // Floating quick-add buttons around the currently selected node: left/right add a
+    // sibling on that side, below adds a child, above adds a new parent (same action as
+    // the "Add Parent" button in the edit popup). Rebuilt on demand rather than kept in
+    // sync incrementally, since selection changes and re-renders are both infrequent
+    // relative to normal interaction.
+    refreshRadialButtons() {
+        d3.selectAll('.radial-add-btn').remove();
+        if (!this.selectedNode) return;
+
+        const selectedData = this.selectedNode.data;
+        if (!selectedData || this.isPlaceholderNodeData(selectedData) || !(selectedData.name || '').trim()) return;
+
+        const NODE_WIDTH = 120;
+        const LINE_HEIGHT = 18;
+        const PADDING_Y = 12;
+        const gap = 24;
+        const btnR = 13;
+        const self = this;
+
+        d3.selectAll('#flowchart .node').each(function(d) {
+            if (!d || d.data !== selectedData) return;
+            const lineCount = (d._lines && d._lines.length) || 1;
+            const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y) / 2;
+            const g = d3.select(this);
+
+            const makeRadialBtn = (dx, dy, onActivate) => {
+                const btnGroup = g.append('g')
+                    .attr('class', 'radial-add-btn')
+                    .attr('transform', `translate(${dx},${dy})`)
+                    .style('cursor', 'pointer')
+                    .on('mousedown', (event) => event.stopPropagation())
+                    .on('click', (event) => {
+                        event.stopPropagation();
+                        onActivate();
+                    });
+                btnGroup.append('circle')
+                    .attr('r', btnR)
+                    .attr('fill', '#111827')
+                    .attr('stroke', '#00a67e')
+                    .attr('stroke-width', 1.5);
+                btnGroup.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dominant-baseline', 'central')
+                    .attr('fill', '#e6eef8')
+                    .attr('font-size', 16)
+                    .attr('font-weight', 'bold')
+                    .attr('y', 1)
+                    .text('+');
+            };
+
+            if (d.parent) {
+                makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, () => self.addSiblingNode(d, -1));
+                makeRadialBtn(NODE_WIDTH / 2 + gap, 0, () => self.addSiblingNode(d, 1));
+            }
+            makeRadialBtn(0, halfHeight + gap, () => {
+                const newChild = self.addChildNode(d);
+                if (newChild) {
+                    let found = null;
+                    d3.hierarchy(self.rootData).each(node => {
+                        if (node.data === newChild) found = node;
+                    });
+                    if (found) {
+                        self.showNodeEditPopup(found);
+                        self.nodeEditInput.value = '';
+                        self.resizeNodeEditInput();
+                        self.nodeEditInput.focus();
+                    }
+                }
+            });
+            makeRadialBtn(0, -(halfHeight + gap), () => self.addParentNode(d));
+        });
     }
 
     showNotification(message, duration = 3000) {
