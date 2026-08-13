@@ -8,6 +8,13 @@ class FlowchartViewer {
         this.resetViewBtn = document.getElementById('reset-view');
         this.orientationBtn = document.getElementById('orientation-btn');
         this.hamburgerOrientationBtn = document.getElementById('hamburger-orientation');
+
+        // Layout arrangement (centered vs indented-list). This is a display preference,
+        // not part of any individual chart's data, so it lives in localStorage and stays
+        // the same across every chart and across browser sessions.
+        this.arrangementBtn = document.getElementById('arrangement-btn');
+        this.hamburgerArrangementBtn = document.getElementById('hamburger-arrangement');
+        this.arrangement = localStorage.getItem('flowchart-arrangement') === 'indented' ? 'indented' : 'centered';
         this.undoBtn = document.getElementById('undo-btn');
         this.redoBtn = document.getElementById('redo-btn');
         this.exportBtn = document.getElementById('export-btn');
@@ -97,6 +104,12 @@ class FlowchartViewer {
         this.resetViewBtn.addEventListener('click', () => this.resetView());
         this.orientationBtn.addEventListener('click', () => this.toggleOrientation());
         this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
+        if (this.arrangementBtn) {
+            this.arrangementBtn.addEventListener('click', () => this.toggleArrangement());
+        }
+        if (this.hamburgerArrangementBtn) {
+            this.hamburgerArrangementBtn.addEventListener('click', () => this.toggleArrangement());
+        }
         this.undoBtn.addEventListener('click', () => this.undo());
         this.redoBtn.addEventListener('click', () => this.redo());
         this.exportBtn.addEventListener('click', () => this.showExportPopup());
@@ -151,6 +164,7 @@ class FlowchartViewer {
 
         this.updateOrientationButtonLabels();
         this.updateTogglePlaceholdersLabels();
+        this.updateArrangementButtonLabels();
 
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
@@ -599,6 +613,107 @@ class FlowchartViewer {
         const label = this.orientation === 'LR' ? '↔ Left-Right' : '↕ Top-Down';
         if (this.orientationBtn) this.orientationBtn.textContent = label;
         if (this.hamburgerOrientationBtn) this.hamburgerOrientationBtn.textContent = label;
+    }
+
+    toggleArrangement() {
+        this.arrangement = this.arrangement === 'indented' ? 'centered' : 'indented';
+        localStorage.setItem('flowchart-arrangement', this.arrangement);
+        this.updateArrangementButtonLabels();
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
+    updateArrangementButtonLabels() {
+        const label = this.arrangement === 'indented' ? '📐 Indented Layout' : '📐 Centered Layout';
+        if (this.arrangementBtn) this.arrangementBtn.textContent = label;
+        if (this.hamburgerArrangementBtn) this.hamburgerArrangementBtn.textContent = label;
+    }
+
+    // Positions a d3 hierarchy in "indented list" style instead of the default centered
+    // tree: each node's first child continues straight along the depth axis (same
+    // secondary-axis coordinate as its parent), and any additional siblings fan out
+    // along the secondary axis starting from that first child, rather than being
+    // centered as a group under the parent. Operates in the pre-LR-swap coordinate
+    // frame (x = secondary/sibling-spread axis, y = primary/depth axis), same as
+    // d3.tree(), so the existing LR swap that runs after layout still applies.
+    //
+    // Siblings are packed as tightly as possible rather than each reserving its full
+    // subtree's bounding-box width: a sibling with no children, or whose descendants
+    // never reach a row (depth) actually occupied by an earlier sibling's descendants,
+    // is pulled in until it's just one spacing unit away from what's already placed -
+    // it only backs off further where two subtrees would truly collide row-by-row.
+    // This is done with a contour: for each node, node._contour[r] tracks the
+    // min/max secondary-axis extent reached by its subtree r rows below itself.
+    computeIndentedContour(node, secondarySpacing) {
+        const children = node.children;
+        if (!children || children.length === 0) {
+            node._contour = [{ min: 0, max: 0 }];
+            return node._contour;
+        }
+
+        children.forEach(child => this.computeIndentedContour(child, secondarySpacing));
+
+        // Contour of everything placed under this node so far, in this node's own
+        // local frame (this node sits at local x = 0).
+        const combined = [];
+        const mergeInto = (childContour, offset) => {
+            childContour.forEach((c, row) => {
+                if (!c) return;
+                const parentRow = row + 1;
+                const shifted = { min: c.min + offset, max: c.max + offset };
+                if (!combined[parentRow]) {
+                    combined[parentRow] = { min: shifted.min, max: shifted.max };
+                } else {
+                    combined[parentRow].min = Math.min(combined[parentRow].min, shifted.min);
+                    combined[parentRow].max = Math.max(combined[parentRow].max, shifted.max);
+                }
+            });
+        };
+
+        // First child always continues flush with the parent (offset 0) - that's what
+        // keeps the "first entry stays in line with its parent" look.
+        children[0]._secondaryOffset = 0;
+        mergeInto(children[0]._contour, 0);
+
+        // Each later sibling is pulled in as close as it can get: only rows where its
+        // own subtree would actually overlap something already placed push it further out.
+        for (let i = 1; i < children.length; i++) {
+            const child = children[i];
+            const childContour = child._contour;
+            let offset = 0;
+            for (let row = 0; row < childContour.length; row++) {
+                const c = childContour[row];
+                if (!c) continue;
+                const parentRow = row + 1;
+                const existing = combined[parentRow];
+                if (existing) {
+                    const required = (existing.max + secondarySpacing) - c.min;
+                    if (required > offset) offset = required;
+                }
+            }
+            child._secondaryOffset = offset;
+            mergeInto(childContour, offset);
+        }
+
+        const contour = [{ min: 0, max: 0 }];
+        for (let row = 1; row < combined.length; row++) {
+            contour[row] = combined[row];
+        }
+        node._contour = contour;
+        return contour;
+    }
+
+    assignIndentedPositions(node, secondaryStart, depth, primarySpacing) {
+        node.x = secondaryStart;
+        node.y = depth * primarySpacing;
+        (node.children || []).forEach(child => {
+            this.assignIndentedPositions(child, secondaryStart + (child._secondaryOffset || 0), depth + 1, primarySpacing);
+        });
+    }
+
+    applyIndentedLayout(root, secondarySpacing, primarySpacing) {
+        this.computeIndentedContour(root, secondarySpacing);
+        this.assignIndentedPositions(root, 0, 0, primarySpacing);
     }
 
     togglePlaceholders() {
@@ -1908,15 +2023,11 @@ class FlowchartViewer {
     }
 
     convertToTreeDiagram() {
-        // Get the actual tree data (skip placeholder root if it has a real child)
-        let treeData = this.rootData;
-        if (this.isPlaceholderNodeData(treeData) && treeData.children && treeData.children.length > 0) {
-            // If the root is a placeholder with one real child, use that child as the actual root
-            const realChildren = treeData.children.filter(child => !this.isPlaceholderNodeData(child) && child.name && child.name.trim());
-            if (realChildren.length === 1) {
-                treeData = realChildren[0];
-            }
-        }
+        // Don't try to guess/unwrap the "real" root here. A node with a blank name or no
+        // color (including the invisible wrapper root, or a leftover placeholder that a
+        // real child got added under) simply produces no bullet line for itself below -
+        // its children are still visited and exported normally, so nothing gets dropped.
+        const treeData = this.rootData;
 
         const lines = [];
         const prefixMap = {
@@ -1937,19 +2048,21 @@ class FlowchartViewer {
 
         const buildTree = (node, depth = 0) => {
             const label = getLabel(node);
-            if (label && label.trim()) {
+            const hasLabel = Boolean(label && label.trim());
+            if (hasLabel) {
                 const indent = '    '.repeat(depth);
                 lines.push(`${indent}- ${label}`);
             }
 
             if (node.children && node.children.length > 0) {
-                // Filter out empty/placeholder children
-                const realChildren = node.children.filter(child => 
-                    !this.isPlaceholderNodeData(child) && child.name && child.name.trim()
-                );
-                
-                realChildren.forEach(child => {
-                    buildTree(child, depth + 1);
+                // Visit every child, even placeholder or blank-named ones - a node created
+                // without a name or color (or a still-unconverted placeholder that had a
+                // real child added under it) must not hide real content beneath it. Nodes
+                // that themselves produce no label are simply skipped when printing, and
+                // their children are kept at the same depth as their nearest labeled
+                // ancestor so the indentation stays meaningful.
+                node.children.forEach(child => {
+                    buildTree(child, hasLabel ? depth + 1 : depth);
                 });
             }
         };
@@ -2419,15 +2532,6 @@ class FlowchartViewer {
 
         this.setupZoom(svg, g);
 
-        const treeLayout = d3.tree()
-            .nodeSize(this.orientation === 'LR' ? [this.lrNodeSpacing, 160] : [this.tbHorizontalSpacing, this.tbVerticalSpacing])
-            // By default d3 doubles the separation between nodes that don't share a parent,
-            // which is what makes the gap between two sibling trees (measured leaf-to-leaf)
-            // balloon far past the gap between plain childless siblings. Using a uniform
-            // separation keeps every pair of adjacent nodes at the same minimum distance,
-            // whether they're true siblings or the closest edges of two neighboring subtrees.
-            .separation(() => 1);
-
         const childrenAccessor = d => {
             if (d._collapsed) return null;
             if (!d.children) return null;
@@ -2437,7 +2541,22 @@ class FlowchartViewer {
             return d.children.filter(child => !this.isPlaceholderNodeData(child));
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
-        treeLayout(root);
+
+        if (this.arrangement === 'indented') {
+            const secondarySpacing = this.orientation === 'LR' ? this.lrNodeSpacing : this.tbHorizontalSpacing;
+            const primarySpacing = this.orientation === 'LR' ? 160 : this.tbVerticalSpacing;
+            this.applyIndentedLayout(root, secondarySpacing, primarySpacing);
+        } else {
+            const treeLayout = d3.tree()
+                .nodeSize(this.orientation === 'LR' ? [this.lrNodeSpacing, 160] : [this.tbHorizontalSpacing, this.tbVerticalSpacing])
+                // By default d3 doubles the separation between nodes that don't share a parent,
+                // which is what makes the gap between two sibling trees (measured leaf-to-leaf)
+                // balloon far past the gap between plain childless siblings. Using a uniform
+                // separation keeps every pair of adjacent nodes at the same minimum distance,
+                // whether they're true siblings or the closest edges of two neighboring subtrees.
+                .separation(() => 1);
+            treeLayout(root);
+        }
 
         if (this.orientation === 'LR') {
             root.each(node => {
