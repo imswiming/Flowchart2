@@ -96,12 +96,12 @@ body {
     cursor: pointer;
 }
 
-.radial-add-btn circle {
+.radial-add-btn rect {
     transition: fill 0.15s ease;
 }
 
-.radial-add-btn:hover circle {
-    fill: #4a4020;
+.radial-add-btn:hover rect {
+    fill: #26313f;
 }
 
 .node rect {
