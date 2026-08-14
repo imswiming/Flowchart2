@@ -92,17 +92,6 @@ class FlowchartViewer {
         document.addEventListener('touchend', markGestureInactive, true);
         document.addEventListener('touchcancel', markGestureInactive, true);
 
-        // The keyboard's height isn't known/settled the instant it starts opening, so
-        // keep the node edit popup's position in sync as the visual viewport actually
-        // changes size (e.g. once the keyboard finishes animating in).
-        if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', () => {
-                if (this.nodeEditPopup && this.nodeEditPopup.style.display === 'block') {
-                    this.positionNodeEditPopupForMobile();
-                }
-            });
-        }
-
         // Reflection panel: guided questions shown for Assumption (pink, #e75480) and
         // Simplify (green, #00a67e) nodes. Answers are stored per-node in
         // node.data._reflectionAnswers and persisted like any other node field.
@@ -1881,34 +1870,26 @@ class FlowchartViewer {
         this.updateReflectionPanel(d);
     }
 
-    // On mobile, positions the node edit popup so it always sits between the on-screen
-    // keyboard (below) and the centered node (above) instead of the fixed bottom:80px
-    // offset, which the keyboard would otherwise cover. Recomputed whenever the popup
-    // opens and whenever the keyboard's actual height changes (visualViewport resize).
+    // On mobile, positions the node edit popup's top edge halfway between the center of
+    // the top half of the screen (25% - where the node is centered, see
+    // centerNodeOnMobile) and the vertical midline (50%), i.e. 37.5% down the screen.
+    // This keeps it clear of the node above without depending on the keyboard's actual
+    // height.
     positionNodeEditPopupForMobile() {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         if (!isMobile) {
+            this.nodeEditPopup.style.top = '';
             this.nodeEditPopup.style.bottom = '';
             this.nodeEditPopup.style.maxHeight = '';
             return;
         }
 
-        const vv = window.visualViewport;
         const viewportHeight = window.innerHeight;
-        const visibleHeight = vv ? vv.height : viewportHeight;
-        const keyboardHeight = Math.max(0, viewportHeight - visibleHeight);
+        const topPosition = viewportHeight * 0.375;
 
-        const margin = 16;
-        const bottomOffset = keyboardHeight + margin;
-
-        // The node is centered around 1/4 of the way down the screen (see
-        // centerNodeOnMobile) - leave room below it so the popup doesn't creep up and
-        // overlap it as it grows with typed text.
-        const nodeSafeTop = viewportHeight * 0.35;
-        const availableHeight = Math.max(120, (viewportHeight - bottomOffset) - nodeSafeTop);
-
-        this.nodeEditPopup.style.bottom = bottomOffset + 'px';
-        this.nodeEditPopup.style.maxHeight = availableHeight + 'px';
+        this.nodeEditPopup.style.top = topPosition + 'px';
+        this.nodeEditPopup.style.bottom = 'auto';
+        this.nodeEditPopup.style.maxHeight = Math.max(120, viewportHeight - topPosition - 20) + 'px';
     }
 
     // Updates one node's on-screen text/box directly, without touching any other DOM
