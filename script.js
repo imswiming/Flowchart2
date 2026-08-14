@@ -645,10 +645,10 @@ class FlowchartViewer {
     // On mobile, tapping a node opens the edit popup (which focuses the input and
     // triggers the on-screen keyboard) immediately, then - once the keyboard has
     // actually finished resizing the visible viewport - snaps the view so the node ends
-    // up centered in whatever's still visible above the keyboard. Doing this the other
-    // way around (centering first, then opening the keyboard) caused a second, jarring
-    // shift once the keyboard's own resize pushed the view afterward. Desktop is
-    // unaffected.
+    // up centered on the middle of the bottom fifth of whatever's still visible above the
+    // keyboard. Doing this the other way around (centering first, then opening the
+    // keyboard) caused a second, jarring shift once the keyboard's own resize pushed the
+    // view afterward. Desktop is unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
@@ -663,7 +663,9 @@ class FlowchartViewer {
             const height = vv ? vv.height : this.flowchartPanel.clientHeight;
             const k = this.transform.k;
             const tx = width / 2 - d.x * k;
-            const ty = (height / 2) - d.y * k;
+            // Bottom fifth of the screen spans from 4/5 to 5/5 of the height; its
+            // midpoint is 9/10 of the height.
+            const ty = (height * 0.9) - d.y * k;
             const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
             svg.call(this._zoomBehavior.transform, newTransform);
         };
