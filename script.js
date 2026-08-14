@@ -1872,9 +1872,10 @@ class FlowchartViewer {
 
     // On mobile, positions the node edit popup's top edge halfway between the center of
     // the top half of the screen (25% - where the node is centered, see
-    // centerNodeOnMobile) and the vertical midline (50%), i.e. 37.5% down the screen.
-    // This keeps it clear of the node above without depending on the keyboard's actual
-    // height.
+    // centerNodeOnMobile) and the vertical midline (50%), i.e. 37.5% down the screen,
+    // then nudges it down by one popup button's height (40px, matching btnHeight in
+    // refreshRadialButtons) for extra clearance from the node/buttons above. This keeps
+    // it clear of the node above without depending on the keyboard's actual height.
     positionNodeEditPopupForMobile() {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         if (!isMobile) {
@@ -1884,8 +1885,9 @@ class FlowchartViewer {
             return;
         }
 
+        const POPUP_BTN_HEIGHT = 40;
         const viewportHeight = window.innerHeight;
-        const topPosition = viewportHeight * 0.375;
+        const topPosition = (viewportHeight * 0.375) + POPUP_BTN_HEIGHT;
 
         this.nodeEditPopup.style.top = topPosition + 'px';
         this.nodeEditPopup.style.bottom = 'auto';
