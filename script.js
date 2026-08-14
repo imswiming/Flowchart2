@@ -606,6 +606,7 @@ class FlowchartViewer {
         if (!this._zoomBehavior) {
             this._zoomBehavior = d3.zoom()
                 .scaleExtent([this.minZoom, this.maxZoom])
+                .clickDistance(10)
                 .on('start', (event) => {
                     // Real user gesture starting to pan/zoom while a node's text is being
                     // edited: save that edit instead of discarding it. Only fires once per
@@ -1941,6 +1942,56 @@ class FlowchartViewer {
 
     // Shows/updates/hides the reflection panel for whichever node was just
     // opened/selected. Called from showNodeEditPopup so it tracks node selection.
+    // Turns a plain textarea into an auto-bulleting, auto-growing list: every line gets
+    // a leading bullet, Enter starts a new bulleted line instead of a bare newline, and
+    // the box grows taller to fit its content instead of scrolling internally.
+    resizeReflectionAnswer(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = (textarea.scrollHeight + 2) + 'px';
+    }
+
+    setupBulletAnswerTextarea(textarea, onChange) {
+        const BULLET = '\u2022 ';
+
+        const ensureLeadingBullet = () => {
+            if (textarea.value && !textarea.value.startsWith(BULLET)) {
+                const cursor = textarea.selectionStart;
+                textarea.value = BULLET + textarea.value;
+                textarea.selectionStart = textarea.selectionEnd = cursor + BULLET.length;
+            }
+        };
+
+        textarea.addEventListener('focus', () => {
+            if (!textarea.value) {
+                textarea.value = BULLET;
+                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            } else {
+                ensureLeadingBullet();
+            }
+            this.resizeReflectionAnswer(textarea);
+        });
+
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const insertion = '\n' + BULLET;
+                textarea.value = textarea.value.slice(0, start) + insertion + textarea.value.slice(end);
+                const newPos = start + insertion.length;
+                textarea.selectionStart = textarea.selectionEnd = newPos;
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+            }
+        });
+
+        textarea.addEventListener('input', () => {
+            ensureLeadingBullet();
+            this.resizeReflectionAnswer(textarea);
+            onChange(textarea.value);
+        });
+    }
+
     updateReflectionPanel(d) {
         if (!d || !d.data) {
             this.hideReflectionPanel();
@@ -1972,10 +2023,10 @@ class FlowchartViewer {
 
             const textarea = document.createElement('textarea');
             textarea.className = 'reflection-answer';
-            textarea.rows = 3;
+            textarea.rows = 1;
             textarea.value = nodeData._reflectionAnswers[i] || '';
-            textarea.addEventListener('input', () => {
-                nodeData._reflectionAnswers[i] = textarea.value;
+            this.setupBulletAnswerTextarea(textarea, (value) => {
+                nodeData._reflectionAnswers[i] = value;
                 this._pendingReflectionSave = true;
             });
             textarea.addEventListener('blur', () => {
@@ -1991,6 +2042,9 @@ class FlowchartViewer {
         });
 
         this.showReflectionPanel();
+        this.reflectionPanelBody.querySelectorAll('.reflection-answer').forEach(ta => {
+            this.resizeReflectionAnswer(ta);
+        });
     }
 
     showReflectionPanel() {
@@ -3095,6 +3149,7 @@ class FlowchartViewer {
                 .attr('transform', `translate(${baseX + dx},${baseY + dy})`)
                 .style('cursor', 'pointer')
                 .on('mousedown', (event) => event.stopPropagation())
+                .on('touchstart', (event) => event.stopPropagation())
                 .on('click', (event) => {
                     event.stopPropagation();
                     onActivate();
