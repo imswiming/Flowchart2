@@ -7,6 +7,12 @@ class FlowchartViewer {
         this.topUndoBtn = document.getElementById('top-undo-btn');
         this.topRedoBtn = document.getElementById('top-redo-btn');
         this.topOpenBtn = document.getElementById('top-open-btn');
+        this.topToggleReflectionBtn = document.getElementById('top-toggle-reflection-btn');
+        this.reflectionPanel = document.getElementById('reflection-panel');
+        this.reflectionPanelTitle = document.getElementById('reflection-panel-title');
+        this.reflectionPanelBody = document.getElementById('reflection-panel-body');
+        this.reflectionPanelClose = document.getElementById('reflection-panel-close');
+        this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
         this.resetViewBtn = document.getElementById('reset-view');
         this.orientationBtn = document.getElementById('orientation-btn');
         this.hamburgerOrientationBtn = document.getElementById('hamburger-orientation');
@@ -55,6 +61,27 @@ class FlowchartViewer {
 
         // Zoom/pan variables
         this.transform = d3.zoomIdentity;
+
+        // Reflection panel: guided questions shown for Assumption (pink, #e75480) and
+        // Simplify (green, #00a67e) nodes. Answers are stored per-node in
+        // node.data._reflectionAnswers and persisted like any other node field.
+        this.ASSUMPTION_QUESTIONS = [
+            'What problem am I actually trying to solve?',
+            'If this assumption was true is it really a problem needing to be solved? What would be the worst case scenario if I kept it?',
+            'What evidence do I have that this is true? Is it evidence or interpretation?',
+            'What is externally attached to this component or affecting this component? Can I alter that to solve the assumption?',
+            'What constraints have I imposed with this assumption?',
+            'What alternatives might I be overlooking?'
+        ];
+        this.SIMPLIFY_QUESTIONS = [
+            'Is there anything I can remove to make this simpler?',
+            'What alternatives could be simpler than this design?'
+        ];
+        this._reflectionNodeData = null;
+        this._reflectionPanelWidth = parseInt(localStorage.getItem('reflection-panel-width'), 10) || 340;
+        this._mobileReflectionFullscreen = true;
+        this.setupReflectionPanel();
+
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
         this.tbNodeSpacing = 150;
@@ -442,6 +469,7 @@ class FlowchartViewer {
         if (this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
             this.saveCurrentFlowchart();
         }
+        this.hideReflectionPanel();
         
         const defaultData = {
             name: "New Flowchart",
@@ -492,6 +520,7 @@ class FlowchartViewer {
         const item = this.flowchartList[index];
         if (!item || !item.data) return;
         
+        this.hideReflectionPanel();
         try {
             const parsed = JSON.parse(item.data);
             if (parsed.tree) {
@@ -1622,6 +1651,7 @@ class FlowchartViewer {
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
+                    this.updateReflectionPanel(currentNode);
                     this.hideNodeEditPopup(false);
                     this.autosave();
                 }
@@ -1650,6 +1680,7 @@ class FlowchartViewer {
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
+                    this.updateReflectionPanel(currentNode);
                     this.hideNodeEditPopup(false);
                     this.autosave();
                 }
@@ -1678,6 +1709,7 @@ class FlowchartViewer {
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
+                    this.updateReflectionPanel(currentNode);
                     this.hideNodeEditPopup(false);
                     this.autosave();
                 }
@@ -1706,6 +1738,7 @@ class FlowchartViewer {
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
+                    this.updateReflectionPanel(currentNode);
                     this.hideNodeEditPopup(false);
                     this.autosave();
                 }
@@ -1732,6 +1765,7 @@ class FlowchartViewer {
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
+                    this.updateReflectionPanel(currentNode);
                     this.hideNodeEditPopup(false);
                     this.autosave();
                 }
@@ -1769,6 +1803,8 @@ class FlowchartViewer {
         this.resizeNodeEditInput();
         this.nodeEditInput.focus();
         this.nodeEditInput.select();
+
+        this.updateReflectionPanel(d);
     }
 
     saveNodeEdit(deferRender = false) {
@@ -1843,12 +1879,164 @@ class FlowchartViewer {
         if (colorBtns) colorBtns.remove();
     }
 
+    // Returns the guided question set for a node's current color, or null if the node
+    // isn't an Assumption (pink) or Simplify (green) node.
+    getReflectionQuestions(nodeData) {
+        if (!nodeData) return null;
+        if (nodeData.color === '#e75480') return this.ASSUMPTION_QUESTIONS;
+        if (nodeData.color === '#00a67e') return this.SIMPLIFY_QUESTIONS;
+        return null;
+    }
+
+    // Wires up the reflection panel's close button, drag-to-resize handle (desktop), and
+    // mobile full-screen toggle button. Called once from the constructor.
+    setupReflectionPanel() {
+        if (this.reflectionPanelClose) {
+            this.reflectionPanelClose.addEventListener('click', () => this.hideReflectionPanel());
+        }
+
+        if (this.topToggleReflectionBtn) {
+            this.topToggleReflectionBtn.addEventListener('click', () => this.toggleMobileReflectionFullscreen());
+        }
+
+        if (this.reflectionPanelResizeHandle) {
+            let dragging = false;
+            let startX = 0;
+            let startWidth = 0;
+            const onMove = (clientX) => {
+                if (!dragging) return;
+                const delta = clientX - startX;
+                const maxWidth = window.innerWidth * 0.8;
+                const newWidth = Math.max(220, Math.min(startWidth + delta, maxWidth));
+                this._reflectionPanelWidth = newWidth;
+                this.reflectionPanel.style.width = newWidth + 'px';
+            };
+            const onEnd = () => {
+                if (!dragging) return;
+                dragging = false;
+                document.body.style.userSelect = '';
+                localStorage.setItem('reflection-panel-width', String(this._reflectionPanelWidth));
+            };
+            this.reflectionPanelResizeHandle.addEventListener('mousedown', (e) => {
+                dragging = true;
+                startX = e.clientX;
+                startWidth = this.reflectionPanel.getBoundingClientRect().width;
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+            window.addEventListener('mousemove', (e) => onMove(e.clientX));
+            window.addEventListener('mouseup', onEnd);
+            this.reflectionPanelResizeHandle.addEventListener('touchstart', (e) => {
+                dragging = true;
+                startX = e.touches[0].clientX;
+                startWidth = this.reflectionPanel.getBoundingClientRect().width;
+            }, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (!dragging) return;
+                onMove(e.touches[0].clientX);
+            }, { passive: true });
+            window.addEventListener('touchend', onEnd);
+        }
+    }
+
+    // Shows/updates/hides the reflection panel for whichever node was just
+    // opened/selected. Called from showNodeEditPopup so it tracks node selection.
+    updateReflectionPanel(d) {
+        if (!d || !d.data) {
+            this.hideReflectionPanel();
+            return;
+        }
+        const questions = this.getReflectionQuestions(d.data);
+        if (!questions) {
+            this.hideReflectionPanel();
+            return;
+        }
+
+        const nodeData = d.data;
+        this._reflectionNodeData = nodeData;
+        if (!Array.isArray(nodeData._reflectionAnswers)) {
+            nodeData._reflectionAnswers = [];
+        }
+
+        this.reflectionPanelTitle.textContent = nodeData.color === '#e75480'
+            ? 'Assumption Questions'
+            : 'Simplify Questions';
+
+        this.reflectionPanelBody.innerHTML = '';
+        questions.forEach((question, i) => {
+            const wrap = document.createElement('div');
+
+            const label = document.createElement('div');
+            label.className = 'reflection-question';
+            label.textContent = question;
+
+            const textarea = document.createElement('textarea');
+            textarea.className = 'reflection-answer';
+            textarea.rows = 3;
+            textarea.value = nodeData._reflectionAnswers[i] || '';
+            textarea.addEventListener('input', () => {
+                nodeData._reflectionAnswers[i] = textarea.value;
+                this._pendingReflectionSave = true;
+            });
+            textarea.addEventListener('blur', () => {
+                if (this._pendingReflectionSave) {
+                    this._pendingReflectionSave = false;
+                    this.autosave();
+                }
+            });
+
+            wrap.appendChild(label);
+            wrap.appendChild(textarea);
+            this.reflectionPanelBody.appendChild(wrap);
+        });
+
+        this.showReflectionPanel();
+    }
+
+    showReflectionPanel() {
+        this.reflectionPanel.style.display = 'flex';
+        this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
+        const isMobile = window.matchMedia('(max-width: 600px)').matches;
+        if (isMobile) {
+            this.topToggleReflectionBtn.style.display = 'flex';
+            this._mobileReflectionFullscreen = true;
+            this.applyMobileReflectionState();
+        } else {
+            this.topToggleReflectionBtn.style.display = 'none';
+            this.reflectionPanel.classList.remove('mobile-hidden');
+        }
+    }
+
+    hideReflectionPanel() {
+        this.reflectionPanel.style.display = 'none';
+        this.reflectionPanel.classList.remove('mobile-hidden');
+        this.topToggleReflectionBtn.style.display = 'none';
+        this._reflectionNodeData = null;
+    }
+
+    applyMobileReflectionState() {
+        if (this._mobileReflectionFullscreen) {
+            this.reflectionPanel.classList.remove('mobile-hidden');
+        } else {
+            this.reflectionPanel.classList.add('mobile-hidden');
+        }
+    }
+
+    // Toggles between full-screen questions view and full-screen chart view on mobile.
+    toggleMobileReflectionFullscreen() {
+        this._mobileReflectionFullscreen = !this._mobileReflectionFullscreen;
+        this.applyMobileReflectionState();
+    }
+
     exportAsJSON() {
         function stripParents(node) {
-            const { name, children, color, _collapsed } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers } = node;
             const out = { name };
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
+            if (Array.isArray(_reflectionAnswers) && _reflectionAnswers.some(a => a && a.trim())) {
+                out._reflectionAnswers = _reflectionAnswers;
+            }
             if (children) out.children = children.map(stripParents);
             return out;
         }
