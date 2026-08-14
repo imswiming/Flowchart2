@@ -1352,10 +1352,13 @@ class FlowchartViewer {
             if (node.data === newParent) found = node;
         });
         if (found) {
-            this.showNodeEditPopup(found);
-            this.nodeEditInput.value = '';
-            this.nodeEditInput.focus();
-            this.nodeEditInput.select();
+            this.centerNodeOnMobile(found, () => {
+                this.showNodeEditPopup(found);
+                this.nodeEditInput.value = '';
+                this.resizeNodeEditInput();
+                this.nodeEditInput.focus();
+                this.nodeEditInput.select();
+            });
         }
         this.updateUndoRedoButtons();
         this.autosave();
@@ -1427,7 +1430,9 @@ class FlowchartViewer {
         d3.hierarchy(this.rootData).each(node => {
             if (node.data === newSibling) found = node;
         });
-        if (found) this.showNodeEditPopup(found);
+        if (found) {
+            this.centerNodeOnMobile(found, () => this.showNodeEditPopup(found));
+        }
         this.updateUndoRedoButtons();
         this.autosave();
         return newSibling;
@@ -2856,28 +2861,30 @@ class FlowchartViewer {
 
         // After a button spawns a new node, move the radial buttons onto that new node
         // instead of leaving them on the original one.
-        const focusNewNode = (newData) => {
+        const focusNewNode = (newData, afterCenter) => {
             if (!newData) return null;
             let found = null;
             d3.hierarchy(self.rootData).each(node => {
                 if (node.data === newData) found = node;
             });
             if (found) {
-                self.selectNode(found);
-                self.refreshRadialButtons();
+                self.centerNodeOnMobile(found, () => {
+                    self.selectNode(found);
+                    self.refreshRadialButtons();
+                    if (afterCenter) afterCenter(found);
+                });
             }
             return found;
         };
 
         const activateAddChild = () => {
             const newChild = self.addChildNode(targetDatum);
-            const found = focusNewNode(newChild);
-            if (found) {
+            focusNewNode(newChild, (found) => {
                 self.showNodeEditPopup(found);
                 self.nodeEditInput.value = '';
                 self.resizeNodeEditInput();
                 self.nodeEditInput.focus();
-            }
+            });
         };
         const activateAddParent = () => {
             const newParentData = self.addParentNode(targetDatum);
