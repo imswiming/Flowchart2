@@ -497,7 +497,15 @@ class FlowchartViewer {
             if (parsed.tree) {
                 if (this.rootData) this.pushUndo();
                 this.orientation = parsed.orientation || 'TB';
-                this.transform = d3.zoomIdentity;
+                const savedTransform = parsed.transform;
+                const hasSavedTransform = savedTransform &&
+                    typeof savedTransform.x === 'number' &&
+                    typeof savedTransform.y === 'number' &&
+                    typeof savedTransform.k === 'number';
+                this.transform = hasSavedTransform
+                    ? d3.zoomIdentity.translate(savedTransform.x, savedTransform.y).scale(savedTransform.k)
+                    : d3.zoomIdentity;
+                const renderOpts = hasSavedTransform ? { keepTransform: true } : { fitView: true };
                 this._zoomBehavior = null;
                 this.updateOrientationButtonLabels();
                 
@@ -529,10 +537,10 @@ class FlowchartViewer {
                         })
                         .filter(Boolean);
                     
-                    this.renderFlowchart(this.rootData, { fitView: true });
+                    this.renderFlowchart(this.rootData, renderOpts);
                 }
                 
-                this.renderFlowchart(this.rootData, { fitView: true });
+                this.renderFlowchart(this.rootData, renderOpts);
                 this.currentSlotIndex = index;
                 this.saveCurrentFlowchart();
                 this.autosave();
@@ -585,6 +593,14 @@ class FlowchartViewer {
                         this.selectedNode = null;
                         d3.selectAll('.radial-add-btn-layer').remove();
                     }
+                })
+                .on('end', (event) => {
+                    // Only persist on a real user gesture (sourceEvent set) - our own
+                    // programmatic transform calls (initial setup, mobile centering,
+                    // restoring a saved view) also fire 'end' but shouldn't trigger a save.
+                    if (event.sourceEvent) {
+                        this.autosave();
+                    }
                 });
         }
 
@@ -620,14 +636,13 @@ class FlowchartViewer {
             .call(this._zoomBehavior.scaleTo, 1);
     }
 
-    // On mobile, tapping a node pans/animates the view so the node ends up centered in
-    // On mobile, tapping a node snaps the view so the node ends up centered in the top
-    // half of the screen - the bottom half is where the node edit popup (and the
-    // on-screen keyboard) opens, so this keeps the node visible instead of it landing
-    // behind either. This happens instantly (no animation) and the callback (which opens
-    // the popup and focuses the input, triggering the keyboard) runs immediately in the
-    // same tick - animating the pan first and opening the keyboard after caused a second,
-    // separate layout shift once the keyboard appeared. Desktop is unaffected.
+    // On mobile, tapping a node opens the edit popup (which focuses the input and
+    // triggers the on-screen keyboard) immediately, then - once the keyboard has
+    // actually finished resizing the visible viewport - snaps the view so the node ends
+    // up centered in whatever's still visible above the keyboard. Doing this the other
+    // way around (centering first, then opening the keyboard) caused a second, jarring
+    // shift once the keyboard's own resize pushed the view afterward. Desktop is
+    // unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
@@ -635,14 +650,43 @@ class FlowchartViewer {
             callback();
             return;
         }
-        const width = this.flowchartPanel.clientWidth;
-        const height = this.flowchartPanel.clientHeight;
-        const k = this.transform.k;
-        const tx = width / 2 - d.x * k;
-        const ty = (height / 4) - d.y * k;
-        const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
-        svg.call(this._zoomBehavior.transform, newTransform);
+
+        const doCenter = () => {
+            const vv = window.visualViewport;
+            const width = this.flowchartPanel.clientWidth;
+            const height = vv ? vv.height : this.flowchartPanel.clientHeight;
+            const k = this.transform.k;
+            const tx = width / 2 - d.x * k;
+            const ty = (height / 2) - d.y * k;
+            const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
+            svg.call(this._zoomBehavior.transform, newTransform);
+        };
+
+        // Open the keyboard first.
         callback();
+
+        // Then wait for the visual viewport to settle into its post-keyboard size before
+        // centering. A timeout fallback covers browsers without visualViewport, or cases
+        // where the keyboard was already open and no resize event fires.
+        if (window.visualViewport) {
+            const vv = window.visualViewport;
+            let settled = false;
+            const onResize = () => {
+                if (settled) return;
+                settled = true;
+                vv.removeEventListener('resize', onResize);
+                doCenter();
+            };
+            vv.addEventListener('resize', onResize);
+            setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                vv.removeEventListener('resize', onResize);
+                doCenter();
+            }, 400);
+        } else {
+            setTimeout(doCenter, 300);
+        }
     }
 
     resetView() {
@@ -1788,7 +1832,8 @@ class FlowchartViewer {
                 target: conn.target.name,
                 _offset: conn._offset || 0
             })),
-            orientation: this.orientation
+            orientation: this.orientation,
+            transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k }
         }, null, 2);
     }
 
@@ -2359,10 +2404,10 @@ class FlowchartViewer {
 
     renderFlowchart(data, options = {}) {
         const self = this;
-        const { fitView = false } = options;
+        const { fitView = false, keepTransform = false } = options;
         if (fitView) {
             this.transform = d3.zoomIdentity;
-        } else {
+        } else if (!keepTransform) {
             this.syncTransform();
         }
         this.rootData = this.wrapRootWithPlaceholder(data);
