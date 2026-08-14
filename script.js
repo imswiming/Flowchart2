@@ -580,10 +580,12 @@ class FlowchartViewer {
                 .on('start', (event) => {
                     // Real user gesture starting to pan/zoom while a node's text is being
                     // edited: save that edit instead of discarding it. Only fires once per
-                    // gesture, before any 'zoom' ticks, so this doesn't re-render on every
-                    // drag frame.
+                    // gesture, before any 'zoom' ticks. The render is deferred (see below)
+                    // so the SVG isn't torn down and rebuilt while this same gesture is
+                    // still actively tracking - doing that mid-drag broke d3-zoom's pointer
+                    // state and made the *next* pan jump.
                     if (event.sourceEvent && this.nodeBeingEdited && !this._suppressPopupHide) {
-                        this.hideNodeEditPopup(true);
+                        this.hideNodeEditPopup(true, true);
                     }
                 })
                 .on('zoom', (event) => {
@@ -594,8 +596,11 @@ class FlowchartViewer {
                     }
                     this.hideContextMenu();
                     // Dragging/zooming the background hides the radial add-buttons too;
-                    // they only come back if the node is clicked again.
-                    if (this.selectedNode) {
+                    // they only come back if the node is clicked again. Gated to real user
+                    // gestures (sourceEvent set) so our own programmatic transform calls -
+                    // e.g. the mobile centering that now runs after the keyboard opens -
+                    // don't immediately wipe out buttons that were just shown.
+                    if (event.sourceEvent && this.selectedNode) {
                         this.selectedNode = null;
                         d3.selectAll('.radial-add-btn-layer').remove();
                     }
@@ -606,6 +611,12 @@ class FlowchartViewer {
                     // restoring a saved view) also fire 'end' but shouldn't trigger a save.
                     if (event.sourceEvent) {
                         this.autosave();
+                    }
+                    // Now that the gesture has fully finished, it's safe to flush any
+                    // render that a mid-gesture text save deferred.
+                    if (this._deferredRenderPending) {
+                        this._deferredRenderPending = false;
+                        this.renderFlowchart(this.rootData);
                     }
                 });
         }
@@ -1760,7 +1771,7 @@ class FlowchartViewer {
         this.nodeEditInput.select();
     }
 
-    saveNodeEdit() {
+    saveNodeEdit(deferRender = false) {
         if (!this.nodeBeingEdited) return;
         const originalData = this.nodeBeingEdited.data;
         const wasPlaceholder = this.isPlaceholderNodeData(originalData);
@@ -1786,10 +1797,18 @@ class FlowchartViewer {
             }
             this.ensureRightmostPlaceholderNodes(this.rootData);
             this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
-            const editedRef = this.nodeBeingEdited;
-            this.renderFlowchart(this.rootData);
-            if (!this.nodeBeingEdited) {
-                this.nodeBeingEdited = editedRef;
+            if (deferRender) {
+                // Recreating the SVG right now would break an in-progress pan/zoom
+                // gesture's pointer tracking (causing the next gesture to jump), so hold
+                // off until the gesture actually finishes (see the zoom behavior's 'end'
+                // handler). The data above is already fully committed either way.
+                this._deferredRenderPending = true;
+            } else {
+                const editedRef = this.nodeBeingEdited;
+                this.renderFlowchart(this.rootData);
+                if (!this.nodeBeingEdited) {
+                    this.nodeBeingEdited = editedRef;
+                }
             }
         }
         this.autosave();
@@ -1814,9 +1833,9 @@ class FlowchartViewer {
         this.autosave();
     }
 
-    hideNodeEditPopup(save = true) {
+    hideNodeEditPopup(save = true, deferRender = false) {
         this._pendingNodeSave = false;
-        if (save) this.saveNodeEdit();
+        if (save) this.saveNodeEdit(deferRender);
         this.nodeEditPopup.style.display = 'none';
         this.nodeBeingEdited = null;
         this._suppressPopupHide = false;
