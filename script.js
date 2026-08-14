@@ -12,6 +12,7 @@ class FlowchartViewer {
         this.reflectionPanelTitle = document.getElementById('reflection-panel-title');
         this.reflectionPanelBody = document.getElementById('reflection-panel-body');
         this.reflectionPanelClose = document.getElementById('reflection-panel-close');
+        this.reflectionPanelBackBtn = document.getElementById('reflection-panel-back-btn');
         this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
         this.resetViewBtn = document.getElementById('reset-view');
         this.orientationBtn = document.getElementById('orientation-btn');
@@ -62,6 +63,35 @@ class FlowchartViewer {
         // Zoom/pan variables
         this.transform = d3.zoomIdentity;
 
+        // Tracks whether a pan/zoom gesture on the chart is currently in progress.
+        // Capture-phase so it fires before the browser's native "blur the focused input"
+        // default action for a mousedown/touchstart elsewhere on the page - this lets
+        // the node-edit textarea's blur handler reliably tell whether it's being blurred
+        // because of a pan gesture (and should defer its render) versus some other
+        // reason (and can render immediately).
+        this._gestureActive = false;
+        const markGestureActive = (e) => {
+            if (this.flowchartContainer && this.flowchartContainer.contains(e.target)) {
+                this._gestureActive = true;
+            }
+        };
+        const markGestureInactive = () => {
+            this._gestureActive = false;
+            if (this._deferredRenderPending) {
+                this._deferredRenderPending = false;
+                try {
+                    this.renderFlowchart(this.rootData);
+                } catch (err) {
+                    console.error('Error flushing deferred render:', err);
+                }
+            }
+        };
+        document.addEventListener('mousedown', markGestureActive, true);
+        document.addEventListener('touchstart', markGestureActive, true);
+        document.addEventListener('mouseup', markGestureInactive, true);
+        document.addEventListener('touchend', markGestureInactive, true);
+        document.addEventListener('touchcancel', markGestureInactive, true);
+
         // Reflection panel: guided questions shown for Assumption (pink, #e75480) and
         // Simplify (green, #00a67e) nodes. Answers are stored per-node in
         // node.data._reflectionAnswers and persisted like any other node field.
@@ -78,8 +108,9 @@ class FlowchartViewer {
             'What alternatives could be simpler than this design?'
         ];
         this._reflectionNodeData = null;
+        this._reflectionQuestions = null;
+        this._reflectionPanelActive = false;
         this._reflectionPanelWidth = parseInt(localStorage.getItem('reflection-panel-width'), 10) || 340;
-        this._mobileReflectionFullscreen = true;
         this.setupReflectionPanel();
 
         this.orientation = 'TB';
@@ -174,11 +205,20 @@ class FlowchartViewer {
             this.resizeNodeEditInput();
         });
 
-        // Save on blur (clicking away from the input)
+        // Save on blur (clicking away from the input). If a pan/zoom gesture is
+        // currently in progress, defer the render just like the zoom behavior's own
+        // 'start' handler does - a full render mid-gesture breaks the gesture's pointer
+        // tracking. Whichever of the two (this blur handler or the zoom 'start' handler)
+        // fires first does the save; nodeBeingEdited is null by the time the other runs,
+        // so there's no double-save.
         this.nodeEditInput.addEventListener('blur', () => {
             if (this._pendingNodeSave && this.nodeBeingEdited) {
                 this._pendingNodeSave = false;
-                this.saveNodeEdit();
+                try {
+                    this.saveNodeEdit(this._gestureActive);
+                } catch (err) {
+                    console.error('Error saving node edit on blur:', err);
+                }
             }
         });
 
@@ -205,6 +245,7 @@ class FlowchartViewer {
         this.updateOrientationButtonLabels();
         this.updateTogglePlaceholdersLabels();
         this.updateArrangementButtonLabels();
+        this.applyMobileViewState();
 
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
@@ -469,8 +510,8 @@ class FlowchartViewer {
         if (this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
             this.saveCurrentFlowchart();
         }
-        this.hideReflectionPanel();
-        
+        this.resetReflectionState();
+
         const defaultData = {
             name: "New Flowchart",
             color: '#00a67e',
@@ -520,7 +561,7 @@ class FlowchartViewer {
         const item = this.flowchartList[index];
         if (!item || !item.data) return;
         
-        this.hideReflectionPanel();
+        this.resetReflectionState();
         try {
             const parsed = JSON.parse(item.data);
             if (parsed.tree) {
@@ -613,9 +654,15 @@ class FlowchartViewer {
                     // gesture, before any 'zoom' ticks. The render is deferred (see below)
                     // so the SVG isn't torn down and rebuilt while this same gesture is
                     // still actively tracking - doing that mid-drag broke d3-zoom's pointer
-                    // state and made the *next* pan jump.
+                    // state and made the *next* pan jump. Wrapped in try/catch since an
+                    // uncaught exception here would abort d3-zoom's own gesture setup
+                    // partway through, freezing the drag entirely rather than just this save.
                     if (event.sourceEvent && this.nodeBeingEdited && !this._suppressPopupHide) {
-                        this.hideNodeEditPopup(true, true);
+                        try {
+                            this.hideNodeEditPopup(true, true);
+                        } catch (err) {
+                            console.error('Error saving node edit at gesture start:', err);
+                        }
                     }
                 })
                 .on('zoom', (event) => {
@@ -640,13 +687,21 @@ class FlowchartViewer {
                     // programmatic transform calls (initial setup, mobile centering,
                     // restoring a saved view) also fire 'end' but shouldn't trigger a save.
                     if (event.sourceEvent) {
-                        this.autosave();
+                        try {
+                            this.autosave();
+                        } catch (err) {
+                            console.error('Error autosaving at gesture end:', err);
+                        }
                     }
                     // Now that the gesture has fully finished, it's safe to flush any
                     // render that a mid-gesture text save deferred.
                     if (this._deferredRenderPending) {
                         this._deferredRenderPending = false;
-                        this.renderFlowchart(this.rootData);
+                        try {
+                            this.renderFlowchart(this.rootData);
+                        } catch (err) {
+                            console.error('Error flushing deferred render at gesture end:', err);
+                        }
                     }
                 });
         }
@@ -683,59 +738,28 @@ class FlowchartViewer {
             .call(this._zoomBehavior.scaleTo, 1);
     }
 
-    // On mobile, tapping a node opens the edit popup (which focuses the input and
-    // triggers the on-screen keyboard) immediately, then - once the keyboard has
-    // actually finished resizing the visible viewport - snaps the view so the node ends
-    // up centered on the middle of the bottom half of whatever's still visible above the
-    // keyboard. Doing this the other way around (centering first, then opening the
-    // keyboard) caused a second, jarring shift once the keyboard's own resize pushed the
-    // view afterward. Desktop is unaffected.
+    // On mobile, tapping a node snaps the view so the node ends up centered on the
+    // middle of the bottom half of the screen. This happens instantly (no animation, no
+    // waiting). Desktop is unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
-        if (!isMobile || !this._zoomBehavior || svg.empty() || !d) {
+        if (!isMobile || !this._zoomBehavior || svg.empty() || !d ||
+            !Number.isFinite(d.x) || !Number.isFinite(d.y)) {
             callback();
             return;
         }
 
-        const doCenter = () => {
-            const vv = window.visualViewport;
-            const width = this.flowchartPanel.clientWidth;
-            const height = vv ? vv.height : this.flowchartPanel.clientHeight;
-            const k = this.transform.k;
-            const tx = width / 2 - d.x * k;
-            // Bottom half of the screen spans from 1/2 to 2/2 of the height; its
-            // midpoint is 3/4 of the height.
-            const ty = (height * 0.75) - d.y * k;
-            const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
-            svg.call(this._zoomBehavior.transform, newTransform);
-        };
-
-        // Open the keyboard first.
+        const width = this.flowchartPanel.clientWidth;
+        const height = this.flowchartPanel.clientHeight;
+        const k = this.transform.k;
+        const tx = width / 2 - d.x * k;
+        // Bottom half of the screen spans from 1/2 to 2/2 of the height; its
+        // midpoint is 3/4 of the height.
+        const ty = (height * 0.75) - d.y * k;
+        const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
+        svg.call(this._zoomBehavior.transform, newTransform);
         callback();
-
-        // Then wait for the visual viewport to settle into its post-keyboard size before
-        // centering. A timeout fallback covers browsers without visualViewport, or cases
-        // where the keyboard was already open and no resize event fires.
-        if (window.visualViewport) {
-            const vv = window.visualViewport;
-            let settled = false;
-            const onResize = () => {
-                if (settled) return;
-                settled = true;
-                vv.removeEventListener('resize', onResize);
-                doCenter();
-            };
-            vv.addEventListener('resize', onResize);
-            setTimeout(() => {
-                if (settled) return;
-                settled = true;
-                vv.removeEventListener('resize', onResize);
-                doCenter();
-            }, 400);
-        } else {
-            setTimeout(doCenter, 300);
-        }
     }
 
     resetView() {
@@ -1445,7 +1469,8 @@ class FlowchartViewer {
             if (node.data === newParent) found = node;
         });
         if (found) {
-            this.centerNodeOnMobile(found, () => {
+            const renderedNode = this.findRenderedNode(newParent) || found;
+            this.centerNodeOnMobile(renderedNode, () => {
                 this.showNodeEditPopup(found);
                 this.nodeEditInput.value = '';
                 this.resizeNodeEditInput();
@@ -1524,7 +1549,8 @@ class FlowchartViewer {
             if (node.data === newSibling) found = node;
         });
         if (found) {
-            this.centerNodeOnMobile(found, () => this.showNodeEditPopup(found));
+            const renderedNode = this.findRenderedNode(newSibling) || found;
+            this.centerNodeOnMobile(renderedNode, () => this.showNodeEditPopup(found));
         }
         this.updateUndoRedoButtons();
         this.autosave();
@@ -1799,13 +1825,105 @@ class FlowchartViewer {
         this.nodeEditPopup.style.display = 'block';
         // The textarea must be visible (display:block on the popup) before scrollHeight
         // reflects real content, so resize here rather than only right after setting .value.
-        // Focusing must also wait until now - focusing a display:none element is a no-op
-        // in browsers, which is why the mobile on-screen keyboard wasn't appearing.
         this.resizeNodeEditInput();
-        this.nodeEditInput.focus();
-        this.nodeEditInput.select();
+
+        const isMobile = window.matchMedia('(max-width: 600px)').matches;
+        // Default view: desktop shows the reflection panel (if any) automatically
+        // alongside this popup, as it always has. Mobile defaults to the node edit menu
+        // (this popup + the radial popup buttons on the canvas); the toggle button
+        // switches to the reflection/question-boxes view instead, when available.
+        this._reflectionPanelActive = !isMobile;
+        if (!isMobile) {
+            this.nodeEditInput.focus();
+            this.nodeEditInput.select();
+        }
 
         this.updateReflectionPanel(d);
+    }
+
+    // Updates one node's on-screen text/box directly, without touching any other DOM
+    // element or rebinding the zoom behavior. Used when a text edit is saved mid-pan,
+    // where a full renderFlowchart (which tears down and rebuilds the whole SVG) would
+    // disrupt the active gesture. This only fixes up the edited node itself - any
+    // knock-on layout changes (siblings shifting, etc.) are corrected by the real
+    // renderFlowchart once the gesture ends.
+    quickPatchNodeText(d) {
+        if (!d || !d.data) return;
+        const selectedData = d.data;
+        const nodeEls = d3.selectAll('#flowchart .node');
+        if (nodeEls.empty()) return;
+        let targetEl = null;
+        nodeEls.each(function(nd) {
+            if (nd && nd.data === selectedData) targetEl = this;
+        });
+        if (!targetEl) return;
+
+        const NODE_WIDTH = 120;
+        const LINE_HEIGHT = 18;
+        const PADDING_Y = 12;
+        const FONT_SIZE = 13;
+        const FONT_FAMILY = 'Arial, sans-serif';
+
+        const measureTextWidth = (text) => {
+            const tempSvg = d3.select('body').append('svg')
+                .attr('style', 'position:absolute;left:-9999px;top:-9999px');
+            const tempText = tempSvg.append('text')
+                .attr('font-size', FONT_SIZE)
+                .attr('font-family', FONT_FAMILY)
+                .text(text);
+            const width = tempText.node().getComputedTextLength();
+            tempSvg.remove();
+            return width;
+        };
+
+        const rawName = selectedData.name || '';
+        const words = rawName.split(/(\s+)/);
+        let lines = [];
+        let current = '';
+        words.forEach(word => {
+            const testLine = (current + word).trim();
+            if (testLine && measureTextWidth(testLine) > NODE_WIDTH - 16) {
+                if (current) lines.push(current.trim());
+                current = word.trim();
+            } else {
+                current += word;
+            }
+        });
+        if (current.trim()) lines.push(current.trim());
+        const finalLines = lines.length ? lines : [rawName || ''];
+        d._lines = finalLines;
+
+        const g = d3.select(targetEl);
+        const rectHeight = finalLines.length * LINE_HEIGHT + PADDING_Y;
+        g.select('rect')
+            .attr('height', rectHeight)
+            .attr('y', -(rectHeight / 2));
+
+        const text = g.select('text');
+        text.selectAll('tspan').remove();
+        finalLines.forEach((line, i, arr) => {
+            text.append('tspan')
+                .attr('x', 0)
+                .attr('y', (i - (arr.length - 1) / 2) * LINE_HEIGHT + 4)
+                .text(line);
+        });
+        if (selectedData._collapsed) {
+            if (this.orientation === 'LR') {
+                text.append('tspan')
+                    .attr('x', NODE_WIDTH / 2 + 16)
+                    .attr('y', 4)
+                    .attr('fill', '#ffffff')
+                    .attr('font-size', FONT_SIZE + 3)
+                    .text('▶');
+            } else {
+                text.append('tspan')
+                    .attr('x', 0)
+                    .attr('y', finalLines.length * LINE_HEIGHT / 2 + 25)
+                    .attr('fill', '#ffffff')
+                    .attr('font-size', FONT_SIZE + 3)
+                    .text('▼');
+            }
+        }
     }
 
     saveNodeEdit(deferRender = false) {
@@ -1814,9 +1932,18 @@ class FlowchartViewer {
         const wasPlaceholder = this.isPlaceholderNodeData(originalData);
         const isRootPlaceholder = this.isRootPlaceholderNode(this.nodeBeingEdited);
         let newName = this.getNodeNameFromInput(originalData.color);
-        
-        // Add " (Simplify?)" suffix for green leaf nodes
-        if (this.isLeafNode(this.nodeBeingEdited) && this.isGreenNode(this.nodeBeingEdited)) {
+
+        // If the field reads back empty (e.g. a just-created node whose input we
+        // deliberately cleared for typing, then the user panned away before typing
+        // anything) don't blank out its name - keep whatever it already was.
+        if (!newName.trim() && originalData.name && originalData.name.trim()) {
+            newName = originalData.name;
+        }
+
+        // Add " (Simplify?)" suffix for green leaf nodes (only once there's an actual
+        // name - otherwise a freshly created, not-yet-typed-into node would end up
+        // saved as the broken " (Simplify?)" with no real name at all).
+        if (newName.trim() && this.isLeafNode(this.nodeBeingEdited) && this.isGreenNode(this.nodeBeingEdited)) {
             newName = newName + ' (Simplify?)';
         }
 
@@ -1838,8 +1965,15 @@ class FlowchartViewer {
                 // Recreating the SVG right now would break an in-progress pan/zoom
                 // gesture's pointer tracking (causing the next gesture to jump), so hold
                 // off until the gesture actually finishes (see the zoom behavior's 'end'
-                // handler). The data above is already fully committed either way.
+                // handler). The data above is already fully committed either way; patch
+                // the node's on-screen text immediately so the edit is visible right
+                // away instead of only after the pan ends.
                 this._deferredRenderPending = true;
+                try {
+                    this.quickPatchNodeText(this.nodeBeingEdited);
+                } catch (err) {
+                    console.error('Error patching node text in place:', err);
+                }
             } else {
                 const editedRef = this.nodeBeingEdited;
                 this.renderFlowchart(this.rootData);
@@ -1878,6 +2012,21 @@ class FlowchartViewer {
         this._suppressPopupHide = false;
         const colorBtns = document.getElementById('node-color-btns');
         if (colorBtns) colorBtns.remove();
+        this.applyMobileViewState();
+    }
+
+    // Resolves a node's raw data object back to its currently-rendered hierarchy node -
+    // the one bound to the actual DOM element, which has real .x/.y coordinates from the
+    // last layout pass. A fresh d3.hierarchy(this.rootData) call, by contrast, builds new
+    // node wrappers with no coordinates at all (no layout algorithm has run on them),
+    // which is only safe to use for their .data - never for positioning.
+    findRenderedNode(nodeData) {
+        if (!nodeData) return null;
+        let found = null;
+        d3.selectAll('#flowchart .node').each(function(nd) {
+            if (nd && nd.data === nodeData) found = nd;
+        });
+        return found;
     }
 
     // Returns the guided question set for a node's current color, or null if the node
@@ -1897,7 +2046,11 @@ class FlowchartViewer {
         }
 
         if (this.topToggleReflectionBtn) {
-            this.topToggleReflectionBtn.addEventListener('click', () => this.toggleMobileReflectionFullscreen());
+            this.topToggleReflectionBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
+        }
+
+        if (this.reflectionPanelBackBtn) {
+            this.reflectionPanelBackBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
         }
 
         if (this.reflectionPanelResizeHandle) {
@@ -1994,12 +2147,18 @@ class FlowchartViewer {
 
     updateReflectionPanel(d) {
         if (!d || !d.data) {
-            this.hideReflectionPanel();
+            this._reflectionQuestions = null;
+            this._reflectionNodeData = null;
+            this.reflectionPanelBody.innerHTML = '';
+            this.applyMobileViewState();
             return;
         }
         const questions = this.getReflectionQuestions(d.data);
+        this._reflectionQuestions = questions;
         if (!questions) {
-            this.hideReflectionPanel();
+            this._reflectionNodeData = null;
+            this.reflectionPanelBody.innerHTML = '';
+            this.applyMobileViewState();
             return;
         }
 
@@ -2041,45 +2200,75 @@ class FlowchartViewer {
             this.reflectionPanelBody.appendChild(wrap);
         });
 
-        this.showReflectionPanel();
+        this.applyMobileViewState();
         this.reflectionPanelBody.querySelectorAll('.reflection-answer').forEach(ta => {
             this.resizeReflectionAnswer(ta);
         });
     }
 
-    showReflectionPanel() {
-        this.reflectionPanel.style.display = 'flex';
-        this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
-        const isMobile = window.matchMedia('(max-width: 600px)').matches;
-        if (isMobile) {
-            this.topToggleReflectionBtn.style.display = 'flex';
-            this._mobileReflectionFullscreen = true;
-            this.applyMobileReflectionState();
-        } else {
-            this.topToggleReflectionBtn.style.display = 'none';
-            this.reflectionPanel.classList.remove('mobile-hidden');
-        }
-    }
-
+    // Explicit close (the X button): dismiss the reflection view (same effect as
+    // toggling it off) without forgetting that this node has a reflection/question set -
+    // otherwise the mobile toggle button would vanish since there'd be nothing left to
+    // toggle to.
     hideReflectionPanel() {
-        this.reflectionPanel.style.display = 'none';
-        this.reflectionPanel.classList.remove('mobile-hidden');
-        this.topToggleReflectionBtn.style.display = 'none';
-        this._reflectionNodeData = null;
-    }
-
-    applyMobileReflectionState() {
-        if (this._mobileReflectionFullscreen) {
-            this.reflectionPanel.classList.remove('mobile-hidden');
-        } else {
-            this.reflectionPanel.classList.add('mobile-hidden');
+        this._reflectionPanelActive = false;
+        this.applyMobileViewState();
+        if (this.nodeEditPopup.style.display === 'block' &&
+            window.matchMedia('(max-width: 600px)').matches) {
+            this.nodeEditInput.focus();
+            this.nodeEditInput.select();
         }
     }
 
-    // Toggles between full-screen questions view and full-screen chart view on mobile.
-    toggleMobileReflectionFullscreen() {
-        this._mobileReflectionFullscreen = !this._mobileReflectionFullscreen;
-        this.applyMobileReflectionState();
+    // Full reset: used when switching/creating flowcharts, where any previous node's
+    // reflection state (and its availability) no longer applies at all.
+    resetReflectionState() {
+        this._reflectionQuestions = null;
+        this._reflectionNodeData = null;
+        this._reflectionPanelActive = false;
+        this.reflectionPanelBody.innerHTML = '';
+        this.applyMobileViewState();
+    }
+
+    // Single source of truth for what's visible on screen: the node edit popup, the
+    // reflection panel, and the mobile toggle button. On desktop, the reflection panel
+    // (when available and not dismissed) sits beside the node edit popup as always. On
+    // mobile, the node edit menu is the default view; the toggle button - shown only
+    // when the current node actually has a reflection/question set - switches to a
+    // full-screen view of that panel instead, hiding the node edit menu while active.
+    applyMobileViewState() {
+        const isMobile = window.matchMedia('(max-width: 600px)').matches;
+        const panelActive = Boolean(this._reflectionQuestions) && this._reflectionPanelActive;
+
+        if (!isMobile) {
+            this.topToggleReflectionBtn.style.display = 'none';
+            this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
+            if (panelActive) {
+                this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
+            }
+            return;
+        }
+
+        this.topToggleReflectionBtn.style.display = 'flex';
+        this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
+        this.nodeEditPopup.style.display = (!panelActive && this.nodeBeingEdited) ? 'block' : 'none';
+    }
+
+    // Toggles between the node edit menu and the reflection/question-boxes view on
+    // mobile. Switching to the text-boxes view is also when the keyboard closes (the
+    // node edit input is hidden); switching back re-focuses it.
+    toggleMobileFieldsVisibility() {
+        if (!this._reflectionQuestions) return;
+        this._reflectionPanelActive = !this._reflectionPanelActive;
+        this.applyMobileViewState();
+        if (this._reflectionPanelActive) {
+            if (document.activeElement === this.nodeEditInput) {
+                this.nodeEditInput.blur();
+            }
+        } else if (this.nodeEditPopup.style.display === 'block') {
+            this.nodeEditInput.focus();
+            this.nodeEditInput.select();
+        }
     }
 
     exportAsJSON() {
@@ -3183,7 +3372,8 @@ class FlowchartViewer {
                 if (node.data === newData) found = node;
             });
             if (found) {
-                self.centerNodeOnMobile(found, () => {
+                const renderedNode = self.findRenderedNode(newData) || found;
+                self.centerNodeOnMobile(renderedNode, () => {
                     self.selectNode(found);
                     self.refreshRadialButtons();
                     if (afterCenter) afterCenter(found);
