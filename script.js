@@ -577,6 +577,15 @@ class FlowchartViewer {
         if (!this._zoomBehavior) {
             this._zoomBehavior = d3.zoom()
                 .scaleExtent([this.minZoom, this.maxZoom])
+                .on('start', (event) => {
+                    // Real user gesture starting to pan/zoom while a node's text is being
+                    // edited: save that edit instead of discarding it. Only fires once per
+                    // gesture, before any 'zoom' ticks, so this doesn't re-render on every
+                    // drag frame.
+                    if (event.sourceEvent && this.nodeBeingEdited && !this._suppressPopupHide) {
+                        this.hideNodeEditPopup(true);
+                    }
+                })
                 .on('zoom', (event) => {
                     this.transform = event.transform;
                     const flowGroup = d3.select('#flowchart g').node();
@@ -584,9 +593,6 @@ class FlowchartViewer {
                         d3.select(flowGroup).attr('transform', this.transform);
                     }
                     this.hideContextMenu();
-                    if (this.nodeBeingEdited && !this._suppressPopupHide) {
-                        this.hideNodeEditPopup(false);
-                    }
                     // Dragging/zooming the background hides the radial add-buttons too;
                     // they only come back if the node is clicked again.
                     if (this.selectedNode) {
