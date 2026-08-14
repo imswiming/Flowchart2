@@ -324,6 +324,7 @@
         <div class="zoom-btn" id="top-undo-btn" title="Undo">↩</div>
         <div class="zoom-btn" id="top-redo-btn" title="Redo">↪</div>
         <div class="zoom-btn" id="top-open-btn" title="Open">📂</div>
+        <div class="zoom-btn" id="top-toggle-reflection-btn" title="Toggle questions/chart view" style="display:none;">⇄</div>
       </div>
 
       <div class="reset-view-controls">
@@ -363,6 +364,16 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Reflection panel: guided questions for Assumption (pink) and Simplify (green) nodes -->
+    <div id="reflection-panel">
+      <div id="reflection-panel-header">
+        <span id="reflection-panel-title">Assumption Questions</span>
+        <button id="reflection-panel-close" title="Close">&times;</button>
+      </div>
+      <div id="reflection-panel-body"></div>
+      <div id="reflection-panel-resize-handle"></div>
     </div>
 
     <!-- Node text edit popup -->
