@@ -1517,8 +1517,6 @@ class FlowchartViewer {
         
         this.nodeEditInput.value = displayName;
         this.resizeNodeEditInput();
-        this.nodeEditInput.focus();
-        this.nodeEditInput.select();
         setTimeout(() => {
             try { this.nodeEditInput.select(); } catch (e) { /* ignore */ }
         }, 0);
@@ -1698,7 +1696,11 @@ class FlowchartViewer {
         this.nodeEditPopup.style.display = 'block';
         // The textarea must be visible (display:block on the popup) before scrollHeight
         // reflects real content, so resize here rather than only right after setting .value.
+        // Focusing must also wait until now - focusing a display:none element is a no-op
+        // in browsers, which is why the mobile on-screen keyboard wasn't appearing.
         this.resizeNodeEditInput();
+        this.nodeEditInput.focus();
+        this.nodeEditInput.select();
     }
 
     saveNodeEdit() {
