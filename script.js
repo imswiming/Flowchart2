@@ -92,6 +92,17 @@ class FlowchartViewer {
         document.addEventListener('touchend', markGestureInactive, true);
         document.addEventListener('touchcancel', markGestureInactive, true);
 
+        // The keyboard's height isn't known/settled the instant it starts opening, so
+        // keep the node edit popup's position in sync as the visual viewport actually
+        // changes size (e.g. once the keyboard finishes animating in).
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', () => {
+                if (this.nodeEditPopup && this.nodeEditPopup.style.display === 'block') {
+                    this.positionNodeEditPopupForMobile();
+                }
+            });
+        }
+
         // Reflection panel: guided questions shown for Assumption (pink, #e75480) and
         // Simplify (green, #00a67e) nodes. Answers are stored per-node in
         // node.data._reflectionAnswers and persisted like any other node field.
@@ -246,6 +257,32 @@ class FlowchartViewer {
         this.updateTogglePlaceholdersLabels();
         this.updateArrangementButtonLabels();
         this.applyMobileViewState();
+
+        // Re-render on real window resizes and orientation changes so the SVG's
+        // viewBox/width/height actually track the container's new size - otherwise the
+        // chart stays pinned to whatever size it was first drawn at, leaving a stale
+        // border/gap once the window or device orientation actually changes.
+        let resizeRenderTimer = null;
+        let lastRenderWidth = window.innerWidth;
+        const rerenderForResize = () => {
+            if (this.rootData) {
+                this.renderFlowchart(this.rootData);
+            }
+        };
+        window.addEventListener('resize', () => {
+            // Ignore height-only changes (e.g. the on-screen keyboard opening/closing);
+            // only width changes indicate an actual window resize or orientation change.
+            const widthChanged = window.innerWidth !== lastRenderWidth;
+            if (!widthChanged && window.visualViewport) return;
+            lastRenderWidth = window.innerWidth;
+            clearTimeout(resizeRenderTimer);
+            resizeRenderTimer = setTimeout(rerenderForResize, 150);
+        });
+        window.addEventListener('orientationchange', () => {
+            lastRenderWidth = window.innerWidth;
+            clearTimeout(resizeRenderTimer);
+            resizeRenderTimer = setTimeout(rerenderForResize, 250);
+        });
 
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
@@ -738,22 +775,26 @@ class FlowchartViewer {
             .call(this._zoomBehavior.scaleTo, 1);
     }
 
-    // On mobile, tapping a node horizontally centers it (leaving the vertical scroll
-    // position untouched) and opens the keyboard via showNodeEditPopup's focus call.
-    // This happens instantly, synchronously alongside opening the popup. Desktop is
-    // unaffected.
+    // On mobile, tapping a node centers it horizontally and vertically in the middle of
+    // the top half of the screen, and opens the keyboard via showNodeEditPopup's focus
+    // call. This happens instantly, synchronously alongside opening the popup. Desktop
+    // is unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
-        if (!isMobile || !this._zoomBehavior || svg.empty() || !d || !Number.isFinite(d.x)) {
+        if (!isMobile || !this._zoomBehavior || svg.empty() || !d ||
+            !Number.isFinite(d.x) || !Number.isFinite(d.y)) {
             callback();
             return;
         }
 
         const width = this.flowchartPanel.clientWidth;
+        const height = this.flowchartPanel.clientHeight;
         const k = this.transform.k;
         const tx = width / 2 - d.x * k;
-        const newTransform = d3.zoomIdentity.translate(tx, this.transform.y).scale(k);
+        // Center of the top half of the screen: 1/4 of the height.
+        const ty = (height * 0.25) - d.y * k;
+        const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
         svg.call(this._zoomBehavior.transform, newTransform);
         callback();
     }
@@ -1405,6 +1446,10 @@ class FlowchartViewer {
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.hideNodeEditPopup(false);
+        const renderedNode = this.findRenderedNode(movingData);
+        if (renderedNode) {
+            this.centerNodeOnMobile(renderedNode, () => {});
+        }
         this.autosave();
     }
 
@@ -1832,7 +1877,38 @@ class FlowchartViewer {
         this.nodeEditInput.focus();
         this.nodeEditInput.select();
 
+        this.positionNodeEditPopupForMobile();
         this.updateReflectionPanel(d);
+    }
+
+    // On mobile, positions the node edit popup so it always sits between the on-screen
+    // keyboard (below) and the centered node (above) instead of the fixed bottom:80px
+    // offset, which the keyboard would otherwise cover. Recomputed whenever the popup
+    // opens and whenever the keyboard's actual height changes (visualViewport resize).
+    positionNodeEditPopupForMobile() {
+        const isMobile = window.matchMedia('(max-width: 600px)').matches;
+        if (!isMobile) {
+            this.nodeEditPopup.style.bottom = '';
+            this.nodeEditPopup.style.maxHeight = '';
+            return;
+        }
+
+        const vv = window.visualViewport;
+        const viewportHeight = window.innerHeight;
+        const visibleHeight = vv ? vv.height : viewportHeight;
+        const keyboardHeight = Math.max(0, viewportHeight - visibleHeight);
+
+        const margin = 16;
+        const bottomOffset = keyboardHeight + margin;
+
+        // The node is centered around 1/4 of the way down the screen (see
+        // centerNodeOnMobile) - leave room below it so the popup doesn't creep up and
+        // overlap it as it grows with typed text.
+        const nodeSafeTop = viewportHeight * 0.35;
+        const availableHeight = Math.max(120, (viewportHeight - bottomOffset) - nodeSafeTop);
+
+        this.nodeEditPopup.style.bottom = bottomOffset + 'px';
+        this.nodeEditPopup.style.maxHeight = availableHeight + 'px';
     }
 
     // Updates one node's on-screen text/box directly, without touching any other DOM
@@ -1994,7 +2070,10 @@ class FlowchartViewer {
         d3.hierarchy(this.rootData).each(node => {
             if (node.data === d.data) found = node;
         });
-        if (found) this.showNodeEditPopup(found);
+        if (found) {
+            const renderedNode = this.findRenderedNode(d.data) || found;
+            this.centerNodeOnMobile(renderedNode, () => this.showNodeEditPopup(found));
+        }
         this.autosave();
     }
 
