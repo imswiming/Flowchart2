@@ -621,9 +621,13 @@ class FlowchartViewer {
     }
 
     // On mobile, tapping a node pans/animates the view so the node ends up centered in
-    // the top half of the screen - the bottom half is where the node edit popup opens,
-    // so this keeps the node visible instead of it landing behind the popup. Desktop is
-    // unaffected. `callback` runs once the pan finishes (or immediately on desktop).
+    // On mobile, tapping a node snaps the view so the node ends up centered in the top
+    // half of the screen - the bottom half is where the node edit popup (and the
+    // on-screen keyboard) opens, so this keeps the node visible instead of it landing
+    // behind either. This happens instantly (no animation) and the callback (which opens
+    // the popup and focuses the input, triggering the keyboard) runs immediately in the
+    // same tick - animating the pan first and opening the keyboard after caused a second,
+    // separate layout shift once the keyboard appeared. Desktop is unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
@@ -637,10 +641,8 @@ class FlowchartViewer {
         const tx = width / 2 - d.x * k;
         const ty = (height / 4) - d.y * k;
         const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
-        svg.transition().duration(250)
-            .call(this._zoomBehavior.transform, newTransform)
-            .on('end', () => callback())
-            .on('interrupt', () => callback());
+        svg.call(this._zoomBehavior.transform, newTransform);
+        callback();
     }
 
     resetView() {
