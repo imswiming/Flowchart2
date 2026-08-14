@@ -1,6 +1,7 @@
 html,
 body {
     height: 100%;
+    height: var(--app-height, 100%);
     margin: 0;
     padding: 0;
 }
@@ -24,6 +25,7 @@ body {
     margin: 0;
     padding: 0;
     height: 100vh;
+    height: var(--app-height, 100vh);
     width: 100vw;
     overflow: hidden;
     background: var(--bg);
@@ -32,6 +34,7 @@ body {
 
 .container {
     height: 100vh;
+    height: var(--app-height, 100vh);
     width: 100vw;
     display: flex;
     flex-direction: column;
@@ -495,7 +498,9 @@ body {
         position: fixed !important;
         inset: 0 !important;
         height: 100vh !important;
+        height: var(--app-height, 100vh) !important;
         min-height: 100vh !important;
+        min-height: var(--app-height, 100vh) !important;
         width: 100vw !important;
         min-width: 0 !important;
         overflow: auto !important;
@@ -506,6 +511,7 @@ body {
         position: fixed !important;
         inset: 0 !important;
         height: 100vh !important;
+        height: var(--app-height, 100vh) !important;
         min-height: 400px !important;
         width: 100vw !important;
         min-width: 0 !important;
