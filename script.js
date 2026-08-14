@@ -445,8 +445,9 @@ class FlowchartViewer {
         
         const defaultData = {
             name: "New Flowchart",
+            color: '#00a67e',
             children: [
-                { name: "Start" }
+                { name: "Start", color: '#00a67e' }
             ]
         };
         
@@ -800,6 +801,9 @@ class FlowchartViewer {
     markNodeAsReal(nodeData) {
         if (nodeData) {
             delete nodeData._isPlaceholder;
+            if (nodeData.color === this.getPlaceholderColor()) {
+                nodeData.color = '#00a67e';
+            }
         }
     }
 
@@ -1299,7 +1303,7 @@ class FlowchartViewer {
         while (siblingNames.includes(newName)) {
             newName = `${baseName} ${idx++}`;
         }
-        const newChild = { name: newName };
+        const newChild = { name: newName, color: '#00a67e' };
         const children = d.data.children;
         const placeholderIndex = children.reduce((lastIndex, child, index) => {
             if (this.isPlaceholderNodeData(child) || !(child.name || '').trim()) {
@@ -1324,7 +1328,7 @@ class FlowchartViewer {
         this.pushUndo();
         const oldData = d.data;
         const parent = d.parent;
-        const newParent = { name: '' };
+        const newParent = { name: '', color: '#00a67e' };
         newParent.children = [oldData];
 
         if (parent) {
@@ -1412,7 +1416,7 @@ class FlowchartViewer {
         while (siblingNames.includes(newName)) {
             newName = `${baseName} ${idx++}`;
         }
-        const newSibling = { name: newName };
+        const newSibling = { name: newName, color: '#00a67e' };
         const idxPos = siblings.indexOf(d.data);
         const insertAt = direction < 0 ? idxPos : idxPos + 1;
         siblings.splice(insertAt, 0, newSibling);
@@ -1425,6 +1429,29 @@ class FlowchartViewer {
         this.updateUndoRedoButtons();
         this.autosave();
         return newSibling;
+    }
+
+    deleteNodeAndPromoteChildren(d) {
+        if (!d.parent) {
+            alert('Cannot delete the root node.');
+            return;
+        }
+        this.pushUndo();
+        const parent = d.parent;
+        const siblings = parent.data.children || [];
+        const idx = siblings.indexOf(d.data);
+        const children = d.data.children || [];
+        if (idx !== -1) {
+            siblings.splice(idx, 1);
+            if (children.length > 0) {
+                siblings.splice(idx, 0, ...children);
+            }
+        }
+        if (parent.data.children && parent.data.children.length === 0) delete parent.data.children;
+        this.customConnections = this.customConnections.filter(conn => conn.source !== d.data && conn.target !== d.data);
+        this.renderFlowchart(this.rootData);
+        this.updateUndoRedoButtons();
+        this.autosave();
     }
 
     deleteNode(d) {
@@ -1493,237 +1520,6 @@ class FlowchartViewer {
         setTimeout(() => {
             try { this.nodeEditInput.select(); } catch (e) { /* ignore */ }
         }, 0);
-        
-        let nodeActionBtns = document.getElementById('node-action-btns');
-        if (!nodeActionBtns) {
-            nodeActionBtns = document.createElement('div');
-            nodeActionBtns.id = 'node-action-btns';
-            nodeActionBtns.style.display = 'flex';
-            nodeActionBtns.style.gap = '10px';
-            nodeActionBtns.style.marginBottom = '10px';
-            nodeActionBtns.style.justifyContent = 'center';
-            nodeActionBtns.style.flexWrap = 'wrap';
-            
-            const addChildBtn = document.createElement('button');
-            addChildBtn.textContent = 'Add Child';
-            addChildBtn.style.background = '#f0f0f0';
-            addChildBtn.style.color = '#333';
-            addChildBtn.style.border = '1px solid #aaa';
-            addChildBtn.style.borderRadius = '5px';
-            addChildBtn.style.padding = '6px 16px';
-            addChildBtn.style.cursor = 'pointer';
-            addChildBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                const newChild = this.addChildNode(d);
-                if (newChild) {
-                    if (!this.isMovingNode) {
-                        const root = d3.hierarchy(this.rootData);
-                        let found = null;
-                        root.each(node => {
-                            if (node.data === newChild) found = node;
-                        });
-                        if (found) {
-                            this.showNodeEditPopup(found);
-                            this.nodeEditInput.value = '';
-                            this.nodeEditInput.focus();
-                        }
-                    }
-                }
-            };
-            
-            const addParentBtn = document.createElement('button');
-            addParentBtn.textContent = 'Add Parent';
-            addParentBtn.style.background = '#f0f0f0';
-            addParentBtn.style.color = '#333';
-            addParentBtn.style.border = '1px solid #aaa';
-            addParentBtn.style.borderRadius = '5px';
-            addParentBtn.style.padding = '6px 16px';
-            addParentBtn.style.cursor = 'pointer';
-            addParentBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.addParentNode(d);
-            };
-            
-            const makeConnBtn = document.createElement('button');
-            makeConnBtn.textContent = 'Make Connection';
-            makeConnBtn.style.background = '#f0f0f0';
-            makeConnBtn.style.color = '#333';
-            makeConnBtn.style.border = '1px solid #aaa';
-            makeConnBtn.style.borderRadius = '5px';
-            makeConnBtn.style.padding = '6px 16px';
-            makeConnBtn.style.cursor = 'pointer';
-            makeConnBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.startMakeConnection(d);
-            };
-            
-            const duplicateBtn = document.createElement('button');
-            duplicateBtn.textContent = 'Duplicate Node';
-            duplicateBtn.style.background = '#f0f0f0';
-            duplicateBtn.style.color = '#333';
-            duplicateBtn.style.border = '1px solid #aaa';
-            duplicateBtn.style.borderRadius = '5px';
-            duplicateBtn.style.padding = '6px 16px';
-            duplicateBtn.style.cursor = 'pointer';
-            duplicateBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.duplicateNodeToParentSiblings(d);
-            };
-
-            const deleteNodeBtn = document.createElement('button');
-            deleteNodeBtn.textContent = 'Delete Node';
-            deleteNodeBtn.style.background = '#f0f0f0';
-            deleteNodeBtn.style.color = '#333';
-            deleteNodeBtn.style.border = '1px solid #aaa';
-            deleteNodeBtn.style.borderRadius = '5px';
-            deleteNodeBtn.style.padding = '6px 16px';
-            deleteNodeBtn.style.cursor = 'pointer';
-            deleteNodeBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.deleteNode(d);
-            };
-            
-            const deletePromoteBtn = document.createElement('button');
-            deletePromoteBtn.textContent = 'Delete Node (Promote Children)';
-            deletePromoteBtn.style.background = '#ffecec';
-            deletePromoteBtn.style.color = '#900';
-            deletePromoteBtn.style.border = '1px solid #ff9a9a';
-            deletePromoteBtn.style.borderRadius = '5px';
-            deletePromoteBtn.style.padding = '6px 14px';
-            deletePromoteBtn.style.cursor = 'pointer';
-            deletePromoteBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                if (!d.parent) {
-                    alert('Cannot delete the root node.');
-                    return;
-                }
-                this.pushUndo();
-                const parent = d.parent;
-                const siblings = parent.data.children || [];
-                const idx = siblings.indexOf(d.data);
-                const children = d.data.children || [];
-                if (idx !== -1) {
-                    siblings.splice(idx, 1);
-                    if (children.length > 0) {
-                        siblings.splice(idx, 0, ...children);
-                    }
-                }
-                if (parent.data.children && parent.data.children.length === 0) delete parent.data.children;
-                this.customConnections = this.customConnections.filter(conn => conn.source !== d.data && conn.target !== d.data);
-                this.renderFlowchart(this.rootData);
-                this.updateUndoRedoButtons();
-                this.autosave();
-            };
-            
-            nodeActionBtns.appendChild(addChildBtn);
-            nodeActionBtns.appendChild(addParentBtn);
-            nodeActionBtns.appendChild(makeConnBtn);
-            nodeActionBtns.appendChild(duplicateBtn);
-            nodeActionBtns.appendChild(deleteNodeBtn);
-            nodeActionBtns.appendChild(deletePromoteBtn);
-            this.nodeEditPopup.insertBefore(nodeActionBtns, this.nodeEditPopup.firstChild);
-
-            const nodeSiblingBtns = document.createElement('div');
-            nodeSiblingBtns.id = 'node-sibling-btns';
-            nodeSiblingBtns.style.display = 'flex';
-            nodeSiblingBtns.style.gap = '10px';
-            nodeSiblingBtns.style.margin = '8px 0 6px 0';
-            nodeSiblingBtns.style.justifyContent = 'center';
-            nodeSiblingBtns.style.flexWrap = 'wrap';
-
-            const addSiblingLeftBtn = document.createElement('button');
-            addSiblingLeftBtn.textContent = 'Add Sibling Left';
-            addSiblingLeftBtn.style.background = '#f0f0f0';
-            addSiblingLeftBtn.style.color = '#333';
-            addSiblingLeftBtn.style.border = '1px solid #aaa';
-            addSiblingLeftBtn.style.borderRadius = '5px';
-            addSiblingLeftBtn.style.padding = '6px 14px';
-            addSiblingLeftBtn.style.cursor = 'pointer';
-            addSiblingLeftBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.addSiblingNode(d, -1);
-            };
-
-            const addSiblingRightBtn = document.createElement('button');
-            addSiblingRightBtn.textContent = 'Add Sibling Right';
-            addSiblingRightBtn.style.background = '#f0f0f0';
-            addSiblingRightBtn.style.color = '#333';
-            addSiblingRightBtn.style.border = '1px solid #aaa';
-            addSiblingRightBtn.style.borderRadius = '5px';
-            addSiblingRightBtn.style.padding = '6px 14px';
-            addSiblingRightBtn.style.cursor = 'pointer';
-            addSiblingRightBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.addSiblingNode(d, 1);
-            };
-
-            nodeSiblingBtns.appendChild(addSiblingLeftBtn);
-            nodeSiblingBtns.appendChild(addSiblingRightBtn);
-            this.nodeEditPopup.insertBefore(nodeSiblingBtns, this.nodeEditPopup.firstChild);
-
-            const nodeMoveBtns = document.createElement('div');
-            nodeMoveBtns.id = 'node-move-btns';
-            nodeMoveBtns.style.display = 'flex';
-            nodeMoveBtns.style.gap = '10px';
-            nodeMoveBtns.style.margin = '8px 0 12px 0';
-            nodeMoveBtns.style.justifyContent = 'center';
-            nodeMoveBtns.style.flexWrap = 'wrap';
-
-            const moveBtn = document.createElement('button');
-            moveBtn.textContent = 'Move';
-            moveBtn.style.background = '#f0f0f0';
-            moveBtn.style.color = '#333';
-            moveBtn.style.border = '1px solid #aaa';
-            moveBtn.style.borderRadius = '5px';
-            moveBtn.style.padding = '6px 16px';
-            moveBtn.style.cursor = 'pointer';
-            moveBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.startMoveNode(d);
-            };
-
-            const moveLeftBtn = document.createElement('button');
-            moveLeftBtn.textContent = 'Move Left';
-            moveLeftBtn.style.background = '#f8f8f8';
-            moveLeftBtn.style.border = '1px solid #aaa';
-            moveLeftBtn.style.borderRadius = '5px';
-            moveLeftBtn.style.padding = '6px 12px';
-            moveLeftBtn.style.cursor = 'pointer';
-            moveLeftBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.moveNodeInSiblings(d, -1);
-            };
-
-            const moveRightBtn = document.createElement('button');
-            moveRightBtn.textContent = 'Move Right';
-            moveRightBtn.style.background = '#f8f8f8';
-            moveRightBtn.style.border = '1px solid #aaa';
-            moveRightBtn.style.borderRadius = '5px';
-            moveRightBtn.style.padding = '6px 12px';
-            moveRightBtn.style.cursor = 'pointer';
-            moveRightBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.moveNodeInSiblings(d, 1);
-            };
-
-            const collapseBtn = document.createElement('button');
-            collapseBtn.id = 'node-collapse-btn';
-            collapseBtn.style.background = '#f8f8f8';
-            collapseBtn.style.border = '1px solid #aaa';
-            collapseBtn.style.borderRadius = '5px';
-            collapseBtn.style.padding = '6px 12px';
-            collapseBtn.style.cursor = 'pointer';
-            collapseBtn.onclick = () => {
-                this.hideNodeEditPopup();
-                this.toggleNodeCollapse(d);
-            };
-
-            nodeMoveBtns.appendChild(moveBtn);
-            nodeMoveBtns.appendChild(moveLeftBtn);
-            nodeMoveBtns.appendChild(moveRightBtn);
-            nodeMoveBtns.appendChild(collapseBtn);
-            this.nodeEditPopup.insertBefore(nodeMoveBtns, this.nodeEditPopup.firstChild);
-        }
         
         let colorBtns = document.getElementById('node-color-btns');
         if (!colorBtns) {
@@ -1897,16 +1693,6 @@ class FlowchartViewer {
             }
         });
 
-        const collapseBtn = document.getElementById('node-collapse-btn');
-        if (collapseBtn) {
-            if (this.hasVisibleChildren(d)) {
-                collapseBtn.style.display = 'inline-block';
-                collapseBtn.textContent = d.data._collapsed ? 'Unfold Children' : 'Collapse Children';
-            } else {
-                collapseBtn.style.display = 'none';
-            }
-        }
-
         this.nodeEditPopup.style.display = 'block';
         // The textarea must be visible (display:block on the popup) before scrollHeight
         // reflects real content, so resize here rather than only right after setting .value.
@@ -1975,12 +1761,6 @@ class FlowchartViewer {
         this._suppressPopupHide = false;
         const colorBtns = document.getElementById('node-color-btns');
         if (colorBtns) colorBtns.remove();
-        const moveBtns = document.getElementById('node-move-btns');
-        if (moveBtns) moveBtns.remove();
-        const nodeActionBtns = document.getElementById('node-action-btns');
-        if (nodeActionBtns) nodeActionBtns.remove();
-        const siblingBtns = document.getElementById('node-sibling-btns');
-        if (siblingBtns) siblingBtns.remove();
     }
 
     exportAsJSON() {
@@ -2260,12 +2040,12 @@ class FlowchartViewer {
             if (gcd > 0) indentUnit = gcd;
         }
 
-        const root = { name: '' };
+        const root = { name: '', color: '#00a67e' };
         const stack = [];
 
         for (const item of parsedLines) {
             const depth = item.leadingSpaces === 0 ? 0 : Math.round(item.leadingSpaces / indentUnit);
-            const node = { name: item.content };
+            const node = { name: item.content, color: '#00a67e' };
 
             while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
                 stack.pop();
@@ -3001,7 +2781,7 @@ class FlowchartViewer {
         if (!this.selectedNode) return;
 
         const selectedData = this.selectedNode.data;
-        if (!selectedData || this.isPlaceholderNodeData(selectedData) || !(selectedData.name || '').trim()) return;
+        if (!selectedData) return;
 
         const nodeEls = d3.selectAll('#flowchart .node');
         if (nodeEls.empty()) return;
@@ -3018,8 +2798,14 @@ class FlowchartViewer {
         const NODE_WIDTH = 120;
         const LINE_HEIGHT = 18;
         const PADDING_Y = 12;
-        const gap = 24;
-        const btnR = 13;
+        const btnWidth = 52;
+        const btnHeight = 40;
+        const btnClearance = 20;
+        const btnSpacing = 10;
+        const horizGap = btnClearance + btnWidth / 2;
+        const vertGap = btnClearance + btnHeight / 2;
+        const NODE_STROKE = '#999';
+        const DANGER_STROKE = '#ff3b30';
         const self = this;
         const snap10 = v => Math.round(v / 10) * 10;
 
@@ -3034,7 +2820,7 @@ class FlowchartViewer {
         // being hidden behind whichever node happens to come later in the draw order.
         const btnLayer = container.append('g').attr('class', 'radial-add-btn-layer');
 
-        const makeRadialBtn = (dx, dy, onActivate) => {
+        const makeRadialBtn = (dx, dy, label, onActivate, stroke = NODE_STROKE, fontSize = 26) => {
             const btnGroup = btnLayer.append('g')
                 .attr('class', 'radial-add-btn')
                 .attr('transform', `translate(${baseX + dx},${baseY + dy})`)
@@ -3044,19 +2830,24 @@ class FlowchartViewer {
                     event.stopPropagation();
                     onActivate();
                 });
-            btnGroup.append('circle')
-                .attr('r', btnR)
+            btnGroup.append('rect')
+                .attr('x', -btnWidth / 2)
+                .attr('y', -btnHeight / 2)
+                .attr('width', btnWidth)
+                .attr('height', btnHeight)
+                .attr('rx', 8)
+                .attr('ry', 8)
                 .attr('fill', '#111827')
-                .attr('stroke', '#ffcc00')
+                .attr('stroke', stroke)
                 .attr('stroke-width', 1.5);
             btnGroup.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'central')
                 .attr('fill', '#e6eef8')
-                .attr('font-size', 16)
+                .attr('font-size', fontSize)
                 .attr('font-weight', 'bold')
                 .attr('y', 1)
-                .text('+');
+                .text(label);
         };
 
         // After a button spawns a new node, move the radial buttons onto that new node
@@ -3090,25 +2881,68 @@ class FlowchartViewer {
         };
         const activateAddSiblingBefore = () => focusNewNode(self.addSiblingNode(targetDatum, -1));
         const activateAddSiblingAfter = () => focusNewNode(self.addSiblingNode(targetDatum, 1));
+        const activateMoveLeft = () => self.moveNodeInSiblings(targetDatum, -1);
+        const activateMoveRight = () => self.moveNodeInSiblings(targetDatum, 1);
+        const activateMove = () => {
+            self.hideNodeEditPopup();
+            self.deselectNode();
+            self.startMoveNode(targetDatum);
+        };
+        const activateDelete = () => {
+            self.hideNodeEditPopup(false);
+            self.selectedNode = null;
+            self.deleteNode(targetDatum);
+        };
+        const activateDeleteAndPromote = () => {
+            self.hideNodeEditPopup(false);
+            self.selectedNode = null;
+            self.deleteNodeAndPromoteChildren(targetDatum);
+        };
+
+        const activateMakeConnection = () => {
+            self.hideNodeEditPopup();
+            self.deselectNode();
+            self.startMakeConnection(targetDatum);
+        };
+
+        // The "top" +button sits at the same offset in both orientations (see below), so
+        // the delete-row above it can be positioned once, independent of orientation.
+        const topPlusDy = -(halfHeight + vertGap);
+        const deleteRowDy = topPlusDy - (btnHeight + btnSpacing);
+        if (targetDatum.parent) {
+            makeRadialBtn(0, deleteRowDy, '✕', activateDelete, DANGER_STROKE, 22);
+            makeRadialBtn(-(btnWidth + btnSpacing), deleteRowDy, 'M', activateMove);
+            makeRadialBtn(-2 * (btnWidth + btnSpacing), deleteRowDy, 'C', activateMakeConnection);
+            makeRadialBtn(btnWidth + btnSpacing, deleteRowDy, 'P', activateDeleteAndPromote, DANGER_STROKE, 20);
+        } else {
+            // Root node: nothing to delete/promote, but it can still be dragged to
+            // become a child of another node, or used as a connection source.
+            makeRadialBtn(0, deleteRowDy, 'M', activateMove);
+            makeRadialBtn(-(btnWidth + btnSpacing), deleteRowDy, 'C', activateMakeConnection);
+        }
 
         if (this.orientation === 'LR') {
             // Children extend to the right and parents sit to the left in this
             // orientation, so the horizontal buttons follow that flow: left adds a new
             // parent, right adds a child. Siblings stack vertically, so they move to
             // the top/bottom buttons instead of left/right.
-            makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, activateAddParent);
-            makeRadialBtn(NODE_WIDTH / 2 + gap, 0, activateAddChild);
+            makeRadialBtn(-(NODE_WIDTH / 2 + horizGap), 0, '+', activateAddParent);
+            makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddChild);
             if (targetDatum.parent) {
-                makeRadialBtn(0, -(halfHeight + gap), activateAddSiblingBefore);
-                makeRadialBtn(0, halfHeight + gap, activateAddSiblingAfter);
+                makeRadialBtn(0, topPlusDy, '+', activateAddSiblingBefore);
+                makeRadialBtn(0, halfHeight + vertGap, '+', activateAddSiblingAfter);
+                makeRadialBtn(-(btnWidth + btnSpacing), topPlusDy, '◀', activateMoveLeft);
+                makeRadialBtn(btnWidth + btnSpacing, halfHeight + vertGap, '▶', activateMoveRight);
             }
         } else {
             if (targetDatum.parent) {
-                makeRadialBtn(-(NODE_WIDTH / 2 + gap), 0, activateAddSiblingBefore);
-                makeRadialBtn(NODE_WIDTH / 2 + gap, 0, activateAddSiblingAfter);
+                makeRadialBtn(-(NODE_WIDTH / 2 + horizGap), 0, '+', activateAddSiblingBefore);
+                makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddSiblingAfter);
+                makeRadialBtn(-(NODE_WIDTH / 2 + horizGap) - (btnWidth + btnSpacing), 0, '◀', activateMoveLeft);
+                makeRadialBtn(NODE_WIDTH / 2 + horizGap + (btnWidth + btnSpacing), 0, '▶', activateMoveRight);
             }
-            makeRadialBtn(0, halfHeight + gap, activateAddChild);
-            makeRadialBtn(0, -(halfHeight + gap), activateAddParent);
+            makeRadialBtn(0, halfHeight + vertGap, '+', activateAddChild);
+            makeRadialBtn(0, topPlusDy, '+', activateAddParent);
         }
     }
 
