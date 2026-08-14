@@ -738,76 +738,24 @@ class FlowchartViewer {
             .call(this._zoomBehavior.scaleTo, 1);
     }
 
-    // On mobile, tapping a node opens the keyboard (via showNodeEditPopup's focus call)
-    // and then, once the keyboard has actually finished resizing the visible viewport,
-    // centers the node within whatever space remains above it. The vertical position is
-    // biased upward from a plain center: the radial popup buttons extend roughly 110-150px
-    // above the node (the add-parent/sibling "+" plus the M/X/P/C row above that) but only
-    // about 60-100px below it (just the add-child "+"), so simply centering the node
-    // itself would still leave the top buttons at risk of running under the keyboard.
-    // Desktop is unaffected.
+    // On mobile, tapping a node horizontally centers it (leaving the vertical scroll
+    // position untouched) and opens the keyboard via showNodeEditPopup's focus call.
+    // This happens instantly, synchronously alongside opening the popup. Desktop is
+    // unaffected.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
-        if (!isMobile || !this._zoomBehavior || svg.empty() || !d ||
-            !Number.isFinite(d.x) || !Number.isFinite(d.y)) {
+        if (!isMobile || !this._zoomBehavior || svg.empty() || !d || !Number.isFinite(d.x)) {
             callback();
             return;
         }
 
-        const doCenter = () => {
-            const vv = window.visualViewport;
-            const width = this.flowchartPanel.clientWidth;
-            // visualViewport.height reflects the space actually visible above the
-            // on-screen keyboard once it has finished opening; fall back to the full
-            // panel height if the API isn't available.
-            const availableHeight = vv ? vv.height : this.flowchartPanel.clientHeight;
-            const k = this.transform.k;
-
-            const aboveMargin = 150;
-            const belowMargin = 100;
-
-            let centerY;
-            if (aboveMargin + belowMargin <= availableHeight) {
-                centerY = (aboveMargin + (availableHeight - belowMargin)) / 2;
-            } else {
-                // Not enough room for both margins - prioritize keeping the top buttons
-                // (M/X/P/C row and the add-parent/sibling "+") visible.
-                centerY = Math.min(aboveMargin, availableHeight / 2);
-            }
-
-            const tx = width / 2 - d.x * k;
-            const ty = centerY - d.y * k;
-            const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
-            svg.call(this._zoomBehavior.transform, newTransform);
-        };
-
-        // Open the keyboard first (the caller's callback shows the popup and focuses
-        // the input).
+        const width = this.flowchartPanel.clientWidth;
+        const k = this.transform.k;
+        const tx = width / 2 - d.x * k;
+        const newTransform = d3.zoomIdentity.translate(tx, this.transform.y).scale(k);
+        svg.call(this._zoomBehavior.transform, newTransform);
         callback();
-
-        // Then wait for the visual viewport to settle into its post-keyboard size before
-        // centering. A timeout fallback covers browsers without visualViewport, or cases
-        // where the keyboard was already open and no resize event fires.
-        if (window.visualViewport) {
-            const vv = window.visualViewport;
-            let settled = false;
-            const onResize = () => {
-                if (settled) return;
-                settled = true;
-                vv.removeEventListener('resize', onResize);
-                doCenter();
-            };
-            vv.addEventListener('resize', onResize);
-            setTimeout(() => {
-                if (settled) return;
-                settled = true;
-                vv.removeEventListener('resize', onResize);
-                doCenter();
-            }, 400);
-        } else {
-            setTimeout(doCenter, 300);
-        }
     }
 
     resetView() {
