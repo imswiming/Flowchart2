@@ -160,7 +160,8 @@
 
       /* Other mobile styles from original CSS */
       #export-popup,
-      #import-popup {
+      #import-popup,
+      #cloud-sync-popup {
         min-width: 95vw !important;
         left: 50% !important;
         transform: translateX(-50%) !important;
@@ -317,12 +318,15 @@
         <button class="menu-item" id="hamburger-ai-import">🤖 Import from AI</button>
         <button class="menu-item" id="hamburger-open">📂 Open</button>
         <button class="menu-item" id="hamburger-toggle-placeholders">👻 Hide Placeholders</button>
+        <button class="menu-item" id="hamburger-cloud-sync">☁ Cloud Sync</button>
       </div>
 
       <div class="zoom-controls">
         <div class="zoom-btn" id="top-undo-btn" title="Undo">↩</div>
         <div class="zoom-btn" id="top-redo-btn" title="Redo">↪</div>
         <div class="zoom-btn" id="top-open-btn" title="Open">📂</div>
+        <div class="zoom-btn" id="top-toggle-placeholders-btn" title="Show/Hide Placeholders">👻</div>
+        <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
         <div class="zoom-btn" id="top-toggle-reflection-btn" title="Toggle text fields/chart view" style="display:none;">⇄</div>
       </div>
 
@@ -341,7 +345,9 @@
             <div class="reset-view-btn" id="ai-import-btn" style="background:#00a67e;color:white;">🤖 Import from AI</div>
             <div class="reset-view-btn" id="open-btn">📂 Open</div>
             <div class="reset-view-btn" id="toggle-placeholders-btn">👻 Hide Placeholders</div>
+            <div class="reset-view-btn" id="cloud-sync-btn">☁ Cloud Sync</div>
           </div>
+          <div id="cloud-sync-status" style="display:none; font-size:12px; color:var(--text); opacity:0.75; margin-top:2px; text-align:right;"></div>
 
           <!-- Move connection controls row -->
           <div id="connection-controls-row"
@@ -426,6 +432,39 @@
           style="font-size:15px; padding:6px 18px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
       </div>
     </div>
+
+    <!-- Cloud Sync popup -->
+    <div id="cloud-sync-popup"
+      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
+      <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (GitHub Gist)</div>
+      <div style="margin-bottom:10px; line-height:1.4;">
+        Free, no size cap you'll ever hit. On <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener">github.com/settings/tokens/new</a>
+        (this is the <b>classic</b> token page - gist access isn't available on fine-grained tokens yet), check the
+        <b>gist</b> checkbox, generate, then paste the token below and click "Create New Gist" once. Enter the same
+        token and Gist ID on your other devices to sync between them.
+      </div>
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Personal Access Token</label>
+      <input id="cloud-sync-key-input" type="text" placeholder="ghp_... or github_pat_..."
+        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Gist ID</label>
+      <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <input id="cloud-sync-bin-input" type="text" placeholder="Leave blank, then Create New Gist"
+          style="flex:1; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa;">
+        <button id="cloud-sync-create-bin-btn"
+          style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Gist</button>
+      </div>
+      <div id="cloud-sync-popup-status" style="min-height:18px; margin-bottom:8px; font-size:13px;"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+        <button id="cloud-sync-disconnect-btn"
+          style="font-size:13px; padding:6px 12px; border:1px solid #ffaaaa; border-radius:5px; background:#ffe0e0; color:#a00; cursor:pointer;">Disconnect</button>
+        <div style="display:flex; gap:8px;">
+          <button id="cloud-sync-save-btn"
+            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer;">Save & Sync Now</button>
+          <button id="close-cloud-sync-btn"
+            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -503,7 +542,8 @@
         'hamburger-import': 'import-btn',
         'hamburger-ai-export': 'ai-export-btn',
         'hamburger-ai-import': 'ai-import-btn',
-        'hamburger-open': 'open-btn'
+        'hamburger-open': 'open-btn',
+        'hamburger-cloud-sync': 'cloud-sync-btn'
       };
 
       // For each hamburger item, find the original button and trigger click
