@@ -491,7 +491,23 @@ class FlowchartViewer {
         localStorage.setItem('cloud-sync-bin-id', gistId);
         this.setCloudPopupStatus('Connected. Syncing...');
         this.startCloudPolling();
-        this.cloudPull().then(() => this.cloudPush());
+
+        // Race the sync against a timeout so the popup always resolves to something
+        // concrete - "Synced", a specific error, or "taking longer than expected" -
+        // instead of sitting on "Syncing..." forever if a request stalls.
+        const timeout = new Promise(resolve => setTimeout(() => resolve('timeout'), 15000));
+        Promise.race([
+            this.cloudPull().then(() => this.cloudPush()),
+            timeout
+        ]).then((result) => {
+            if (result === 'timeout') {
+                this.setCloudPopupStatus('Still trying to reach GitHub - check your connection and try again.', true);
+            } else if (result) {
+                this.setCloudPopupStatus('Synced!');
+            } else {
+                this.setCloudPopupStatus('Connected, but the last sync failed - double check the token and Gist ID.', true);
+            }
+        });
     }
 
     disconnectCloudSync() {
@@ -542,11 +558,24 @@ class FlowchartViewer {
         }
     }
 
+    // Gists occasionally return 409 for a request made immediately after the gist
+    // itself was just created (backend replication lag) - retry a couple of times
+    // with a short delay before giving up, rather than surfacing a scary error for
+    // something that resolves itself a second later.
+    async fetchGithubWithRetry(url, options, retriesLeft = 2, delayMs = 1200) {
+        const res = await fetch(url, options);
+        if (res.status === 409 && retriesLeft > 0) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            return this.fetchGithubWithRetry(url, options, retriesLeft - 1, delayMs);
+        }
+        return res;
+    }
+
     async cloudPush() {
-        if (!this.cloudMasterKey || !this.cloudBinId) return;
+        if (!this.cloudMasterKey || !this.cloudBinId) return false;
         if (this._cloudSyncInFlight) {
             this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
-            return;
+            return false;
         }
         this._cloudSyncInFlight = true;
         this.updateCloudSyncStatus('syncing');
@@ -558,9 +587,9 @@ class FlowchartViewer {
             if (payload.length > 900000) {
                 this.updateCloudSyncStatus('error', 'data too large (>900KB) - remove some old flowcharts');
                 this._cloudSyncInFlight = false;
-                return;
+                return false;
             }
-            const res = await fetch(`https://api.github.com/gists/${this.cloudBinId}`, {
+            const res = await this.fetchGithubWithRetry(`https://api.github.com/gists/${this.cloudBinId}`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${this.cloudMasterKey}`,
@@ -574,20 +603,22 @@ class FlowchartViewer {
             if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
             this.updateCloudSyncStatus('synced');
+            return true;
         } catch (err) {
             console.error('Cloud push failed:', err);
             this.updateCloudSyncStatus('error', err.message);
+            return false;
         } finally {
             this._cloudSyncInFlight = false;
         }
     }
 
     async cloudPull() {
-        if (!this.cloudMasterKey || !this.cloudBinId) return;
-        if (this._cloudSyncInFlight) return;
+        if (!this.cloudMasterKey || !this.cloudBinId) return false;
+        if (this._cloudSyncInFlight) return false;
         this._cloudSyncInFlight = true;
         try {
-            const res = await fetch(`https://api.github.com/gists/${this.cloudBinId}`, {
+            const res = await this.fetchGithubWithRetry(`https://api.github.com/gists/${this.cloudBinId}`, {
                 headers: {
                     'Authorization': `Bearer ${this.cloudMasterKey}`,
                     'Accept': 'application/vnd.github+json'
@@ -618,9 +649,11 @@ class FlowchartViewer {
                 this.showNotification('Synced latest changes from another device.');
             }
             this.updateCloudSyncStatus('synced');
+            return true;
         } catch (err) {
             console.error('Cloud pull failed:', err);
             this.updateCloudSyncStatus('error', err.message);
+            return false;
         } finally {
             this._cloudSyncInFlight = false;
         }
