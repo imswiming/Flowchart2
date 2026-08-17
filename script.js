@@ -8,6 +8,7 @@ class FlowchartViewer {
         this.topRedoBtn = document.getElementById('top-redo-btn');
         this.topOpenBtn = document.getElementById('top-open-btn');
         this.topToggleReflectionBtn = document.getElementById('top-toggle-reflection-btn');
+        this.topTogglePlaceholdersBtn = document.getElementById('top-toggle-placeholders-btn');
         this.reflectionPanel = document.getElementById('reflection-panel');
         this.reflectionPanelTitle = document.getElementById('reflection-panel-title');
         this.reflectionPanelBody = document.getElementById('reflection-panel-body');
@@ -49,6 +50,27 @@ class FlowchartViewer {
         // AI Export/Import
         this.aiExportBtn = document.getElementById('ai-export-btn');
         this.aiImportBtn = document.getElementById('ai-import-btn');
+
+        // Cloud Sync (JSONBin.io) - free key/value JSON storage, no login flow. The
+        // whole flowchart list is stored as one bin; last-write-wins by timestamp.
+        this.cloudSyncBtn = document.getElementById('cloud-sync-btn');
+        this.topCloudSyncBtn = document.getElementById('top-cloud-sync-btn');
+        this.cloudSyncPopup = document.getElementById('cloud-sync-popup');
+        this.cloudSyncKeyInput = document.getElementById('cloud-sync-key-input');
+        this.cloudSyncBinInput = document.getElementById('cloud-sync-bin-input');
+        this.cloudSyncCreateBinBtn = document.getElementById('cloud-sync-create-bin-btn');
+        this.cloudSyncSaveBtn = document.getElementById('cloud-sync-save-btn');
+        this.cloudSyncDisconnectBtn = document.getElementById('cloud-sync-disconnect-btn');
+        this.closeCloudSyncBtn = document.getElementById('close-cloud-sync-btn');
+        this.cloudSyncPopupStatus = document.getElementById('cloud-sync-popup-status');
+        this.cloudSyncStatusBadge = document.getElementById('cloud-sync-status');
+        this.cloudMasterKey = localStorage.getItem('cloud-sync-master-key') || '';
+        this.cloudBinId = localStorage.getItem('cloud-sync-bin-id') || '';
+        this._cloudPushTimer = null;
+        this._cloudPollTimer = null;
+        this._cloudSyncInFlight = false;
+        this._applyingRemote = false;
+        this.setupCloudSync();
 
         this.selectedConnection = null;
         this.connectionMoveStep = 10;
@@ -161,6 +183,7 @@ class FlowchartViewer {
         if (this.topUndoBtn) this.topUndoBtn.addEventListener('click', () => this.undo());
         if (this.topRedoBtn) this.topRedoBtn.addEventListener('click', () => this.redo());
         if (this.topOpenBtn) this.topOpenBtn.addEventListener('click', () => this.showStoragePopup());
+        if (this.topTogglePlaceholdersBtn) this.topTogglePlaceholdersBtn.addEventListener('click', () => this.togglePlaceholders());
         this.resetViewBtn.addEventListener('click', () => this.resetView());
         this.orientationBtn.addEventListener('click', () => this.toggleOrientation());
         this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
@@ -186,6 +209,14 @@ class FlowchartViewer {
         if (this.hamburgerTogglePlaceholdersBtn) {
             this.hamburgerTogglePlaceholdersBtn.addEventListener('click', () => this.togglePlaceholders());
         }
+
+        // Cloud Sync event listeners
+        if (this.cloudSyncBtn) this.cloudSyncBtn.addEventListener('click', () => this.showCloudSyncPopup());
+        if (this.topCloudSyncBtn) this.topCloudSyncBtn.addEventListener('click', () => this.showCloudSyncPopup());
+        if (this.closeCloudSyncBtn) this.closeCloudSyncBtn.addEventListener('click', () => this.cloudSyncPopup.style.display = 'none');
+        if (this.cloudSyncSaveBtn) this.cloudSyncSaveBtn.addEventListener('click', () => this.saveCloudSyncSettings());
+        if (this.cloudSyncCreateBinBtn) this.cloudSyncCreateBinBtn.addEventListener('click', () => this.createCloudBin());
+        if (this.cloudSyncDisconnectBtn) this.cloudSyncDisconnectBtn.addEventListener('click', () => this.disconnectCloudSync());
 
         // AI Export/Import event listeners
         this.aiExportBtn.addEventListener('click', () => this.exportToAi());
@@ -256,6 +287,9 @@ class FlowchartViewer {
         const rerenderForResize = () => {
             if (this.rootData) {
                 this.renderFlowchart(this.rootData);
+            }
+            if (this.nodeBeingEdited) {
+                this.positionNodeEditPopupForMobile();
             }
         };
         window.addEventListener('resize', () => {
@@ -381,6 +415,215 @@ class FlowchartViewer {
     // Autosave wrapper - call after any edit
     autosave() {
         this.saveCurrentFlowchart();
+        if (!this._applyingRemote) this.scheduleCloudPush();
+    }
+
+    // ===== CLOUD SYNC (GitHub Gist) =====
+    // Free, no login flow for the app itself (just a personal access token pasted
+    // once), and no small fixed request-size cap like JSONBin's 100KB - gist files
+    // hold up to 1MB before the API truncates them, which the whole saved flowchart
+    // list will realistically never approach. Last-write-wins by timestamp.
+    setupCloudSync() {
+        this.CLOUD_GIST_FILENAME = 'flowchart-cloud-sync.json';
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.cloudMasterKey && this.cloudBinId) this.cloudPull();
+        });
+        if (this.cloudMasterKey && this.cloudBinId) {
+            this.updateCloudSyncStatus('idle');
+            this.startCloudPolling();
+            // Pick up anything saved from another device shortly after boot.
+            setTimeout(() => this.cloudPull(), 800);
+        }
+    }
+
+    startCloudPolling() {
+        clearInterval(this._cloudPollTimer);
+        this._cloudPollTimer = setInterval(() => {
+            if (!document.hidden) this.cloudPull();
+        }, 8000);
+    }
+
+    scheduleCloudPush() {
+        if (!this.cloudMasterKey || !this.cloudBinId) return;
+        clearTimeout(this._cloudPushTimer);
+        this._cloudPushTimer = setTimeout(() => this.cloudPush(), 2000);
+    }
+
+    setCloudPopupStatus(text, isError = false) {
+        if (!this.cloudSyncPopupStatus) return;
+        this.cloudSyncPopupStatus.textContent = text || '';
+        this.cloudSyncPopupStatus.style.color = isError ? '#a00' : '#0a0';
+    }
+
+    updateCloudSyncStatus(state, message) {
+        const badge = this.cloudSyncStatusBadge;
+        if (!badge) return;
+        if (!this.cloudMasterKey || !this.cloudBinId) {
+            badge.style.display = 'none';
+            return;
+        }
+        badge.style.display = 'block';
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (state === 'syncing') badge.textContent = '☁ Syncing...';
+        else if (state === 'synced') badge.textContent = `☁ Synced ${time}`;
+        else if (state === 'error') badge.textContent = `☁ Sync error${message ? ': ' + message : ''}`;
+        else badge.textContent = '☁ Cloud sync on';
+    }
+
+    showCloudSyncPopup() {
+        if (!this.cloudSyncPopup) return;
+        this.cloudSyncKeyInput.value = this.cloudMasterKey || '';
+        this.cloudSyncBinInput.value = this.cloudBinId || '';
+        this.setCloudPopupStatus(this.cloudMasterKey && this.cloudBinId ? 'Connected.' : '');
+        this.cloudSyncPopup.style.display = 'block';
+    }
+
+    saveCloudSyncSettings() {
+        const token = (this.cloudSyncKeyInput.value || '').trim();
+        const gistId = (this.cloudSyncBinInput.value || '').trim();
+        if (!token || !gistId) {
+            this.setCloudPopupStatus('Enter both a token and a Gist ID (or click "Create New Gist").', true);
+            return;
+        }
+        this.cloudMasterKey = token;
+        this.cloudBinId = gistId;
+        localStorage.setItem('cloud-sync-master-key', token);
+        localStorage.setItem('cloud-sync-bin-id', gistId);
+        this.setCloudPopupStatus('Connected. Syncing...');
+        this.startCloudPolling();
+        this.cloudPull().then(() => this.cloudPush());
+    }
+
+    disconnectCloudSync() {
+        this.cloudMasterKey = '';
+        this.cloudBinId = '';
+        localStorage.removeItem('cloud-sync-master-key');
+        localStorage.removeItem('cloud-sync-bin-id');
+        localStorage.removeItem('cloud-sync-known-remote-at');
+        clearTimeout(this._cloudPushTimer);
+        clearInterval(this._cloudPollTimer);
+        this._cloudPollTimer = null;
+        if (this.cloudSyncKeyInput) this.cloudSyncKeyInput.value = '';
+        if (this.cloudSyncBinInput) this.cloudSyncBinInput.value = '';
+        this.setCloudPopupStatus('Disconnected.');
+        this.updateCloudSyncStatus('idle');
+    }
+
+    async createCloudBin() {
+        const token = (this.cloudSyncKeyInput.value || '').trim();
+        if (!token) {
+            this.setCloudPopupStatus('Paste your Personal Access Token first.', true);
+            return;
+        }
+        this.setCloudPopupStatus('Creating gist...');
+        try {
+            const updatedAt = Date.now();
+            const payload = JSON.stringify({ updatedAt, flowchartList: this.flowchartList });
+            const res = await fetch('https://api.github.com/gists', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/vnd.github+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: 'Flowchart Editor cloud sync data',
+                    public: false,
+                    files: { [this.CLOUD_GIST_FILENAME]: { content: payload } }
+                })
+            });
+            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+            const gist = await res.json();
+            this.cloudSyncBinInput.value = gist.id;
+            this.setCloudPopupStatus('Gist created! Click "Save & Sync Now" to connect.');
+        } catch (err) {
+            console.error('Create gist failed:', err);
+            this.setCloudPopupStatus('Failed to create gist: ' + err.message, true);
+        }
+    }
+
+    async cloudPush() {
+        if (!this.cloudMasterKey || !this.cloudBinId) return;
+        if (this._cloudSyncInFlight) {
+            this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
+            return;
+        }
+        this._cloudSyncInFlight = true;
+        this.updateCloudSyncStatus('syncing');
+        try {
+            const updatedAt = Date.now();
+            const payload = JSON.stringify({ updatedAt, flowchartList: this.flowchartList });
+            // Gist files truncate past 1MB via the API - bail out with a clear warning
+            // well before that instead of silently losing data.
+            if (payload.length > 900000) {
+                this.updateCloudSyncStatus('error', 'data too large (>900KB) - remove some old flowcharts');
+                this._cloudSyncInFlight = false;
+                return;
+            }
+            const res = await fetch(`https://api.github.com/gists/${this.cloudBinId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bearer ${this.cloudMasterKey}`,
+                    'Accept': 'application/vnd.github+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    files: { [this.CLOUD_GIST_FILENAME]: { content: payload } }
+                })
+            });
+            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+            localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
+            this.updateCloudSyncStatus('synced');
+        } catch (err) {
+            console.error('Cloud push failed:', err);
+            this.updateCloudSyncStatus('error', err.message);
+        } finally {
+            this._cloudSyncInFlight = false;
+        }
+    }
+
+    async cloudPull() {
+        if (!this.cloudMasterKey || !this.cloudBinId) return;
+        if (this._cloudSyncInFlight) return;
+        this._cloudSyncInFlight = true;
+        try {
+            const res = await fetch(`https://api.github.com/gists/${this.cloudBinId}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.cloudMasterKey}`,
+                    'Accept': 'application/vnd.github+json'
+                }
+            });
+            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+            const gist = await res.json();
+            const file = gist.files && gist.files[this.CLOUD_GIST_FILENAME];
+            if (!file) throw new Error('sync file not found in gist');
+            let content = file.content;
+            if (file.truncated && file.raw_url) {
+                const rawRes = await fetch(file.raw_url);
+                content = await rawRes.text();
+            }
+            const parsed = JSON.parse(content);
+            const remoteUpdatedAt = Number(parsed.updatedAt) || 0;
+            const knownRemoteAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
+            if (remoteUpdatedAt > knownRemoteAt && Array.isArray(parsed.flowchartList)) {
+                this._applyingRemote = true;
+                this.flowchartList = parsed.flowchartList;
+                this.saveFlowchartList();
+                localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
+                if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
+                    this.currentSlotIndex = 0;
+                }
+                this.loadFlowchartFromList(this.currentSlotIndex);
+                this._applyingRemote = false;
+                this.showNotification('Synced latest changes from another device.');
+            }
+            this.updateCloudSyncStatus('synced');
+        } catch (err) {
+            console.error('Cloud pull failed:', err);
+            this.updateCloudSyncStatus('error', err.message);
+        } finally {
+            this._cloudSyncInFlight = false;
+        }
     }
 
     // Helper methods for leaf node and green node detection
@@ -402,14 +645,29 @@ class FlowchartViewer {
         );
     }
 
-    toggleNodeCollapse(d) {
+    toggleNodeCollapse(d, keepSelection = false) {
         if (!d || !d.data || !d.data.children || d.data.children.length === 0) return;
         this.pushUndo();
-        d.data._collapsed = !Boolean(d.data._collapsed);
-        // Hide the radial add-buttons after a fold/unfold; they only reappear if the
-        // node is clicked again.
-        this.selectedNode = null;
-        this.renderFlowchart(this.rootData);
+        const nodeData = d.data;
+        nodeData._collapsed = !Boolean(nodeData._collapsed);
+        if (keepSelection) {
+            // Used by the radial "F" button: re-render, then re-find and re-select the
+            // same node (its d3.hierarchy wrapper is a new object after every render)
+            // so the radial menu stays open and can be toggled again immediately,
+            // instead of silently disappearing after one use.
+            this.renderFlowchart(this.rootData);
+            let found = null;
+            d3.hierarchy(this.rootData).each(node => {
+                if (node.data === nodeData) found = node;
+            });
+            this.selectedNode = found || null;
+            this.refreshRadialButtons();
+        } else {
+            // Hide the radial add-buttons after a fold/unfold; they only reappear if the
+            // node is clicked again.
+            this.selectedNode = null;
+            this.renderFlowchart(this.rootData);
+        }
         this.autosave();
     }
 
@@ -551,7 +809,8 @@ class FlowchartViewer {
             data: JSON.stringify({
                 tree: defaultData,
                 customConnections: [],
-                orientation: 'TB'
+                orientation: 'TB',
+                showPlaceholders: true
             })
         });
         
@@ -565,9 +824,11 @@ class FlowchartViewer {
         this.customConnections = [];
         this.rootData = defaultData;
         this.orientation = 'TB';
+        this.showPlaceholders = true;
         this.transform = d3.zoomIdentity;
         this._zoomBehavior = null;
         this.updateOrientationButtonLabels();
+        this.updateTogglePlaceholdersLabels();
         
         this.renderFlowchart(this.rootData);
         this.currentSlotIndex = this.flowchartList.length - 1;
@@ -593,6 +854,8 @@ class FlowchartViewer {
             if (parsed.tree) {
                 if (this.rootData) this.pushUndo();
                 this.orientation = parsed.orientation || 'TB';
+                this.showPlaceholders = parsed.showPlaceholders !== false;
+                this.updateTogglePlaceholdersLabels();
                 const savedTransform = parsed.transform;
                 const hasSavedTransform = savedTransform &&
                     typeof savedTransform.x === 'number' &&
@@ -1562,14 +1825,9 @@ class FlowchartViewer {
         const parent = d.parent;
         if (!parent.data.children) parent.data.children = [];
         const siblings = parent.data.children;
-        let baseName = 'New Node';
-        let idx = 1;
-        const siblingNames = siblings.map(child => child.name);
-        let newName = baseName;
-        while (siblingNames.includes(newName)) {
-            newName = `${baseName} ${idx++}`;
-        }
-        const newSibling = { name: newName, color: '#00a67e' };
+        // Siblings start out empty (placeholder styling) - only newly spawned *child*
+        // nodes default to green (see addChildNode).
+        const newSibling = this.createPlaceholderNode();
         const idxPos = siblings.indexOf(d.data);
         const insertAt = direction < 0 ? idxPos : idxPos + 1;
         siblings.splice(insertAt, 0, newSibling);
@@ -1879,11 +2137,34 @@ class FlowchartViewer {
     positionNodeEditPopupForMobile() {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         if (!isMobile) {
+            // Desktop: keep the popup centered on the window (not "snapped" to wherever
+            // the clicked node happens to be), and clear of the bottom-right control
+            // buttons (Undo, Reset View, Export, etc.) - those wrap onto more rows the
+            // narrower the window gets, so their height is measured live instead of
+            // assuming a fixed offset.
+            this.nodeEditPopup.style.position = 'fixed';
+            this.nodeEditPopup.style.left = '50%';
+            this.nodeEditPopup.style.transform = 'translateX(-50%)';
             this.nodeEditPopup.style.top = '';
-            this.nodeEditPopup.style.bottom = '';
             this.nodeEditPopup.style.maxHeight = '';
+
+            let clearance = 80;
+            if (this.resetViewBtn) {
+                const controlsEl = this.resetViewBtn.closest('.reset-view-controls');
+                if (controlsEl) {
+                    const rect = controlsEl.getBoundingClientRect();
+                    if (rect.height > 0) {
+                        clearance = (window.innerHeight - rect.top) + 20;
+                    }
+                }
+            }
+            this.nodeEditPopup.style.bottom = clearance + 'px';
             return;
         }
+
+        this.nodeEditPopup.style.position = 'absolute';
+        this.nodeEditPopup.style.left = '50%';
+        this.nodeEditPopup.style.transform = 'translateX(-50%)';
 
         const POPUP_BTN_HEIGHT = 40;
         const viewportHeight = window.innerHeight;
@@ -2329,10 +2610,11 @@ class FlowchartViewer {
 
     exportAsJSON() {
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder } = node;
             const out = { name };
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
+            if (_isPlaceholder) out._isPlaceholder = true;
             if (Array.isArray(_reflectionAnswers) && _reflectionAnswers.some(a => a && a.trim())) {
                 out._reflectionAnswers = _reflectionAnswers;
             }
@@ -2347,6 +2629,7 @@ class FlowchartViewer {
                 _offset: conn._offset || 0
             })),
             orientation: this.orientation,
+            showPlaceholders: this.showPlaceholders,
             transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k }
         }, null, 2);
     }
@@ -2956,7 +3239,7 @@ class FlowchartViewer {
             // The root placeholder (the tree's own top node) is never filtered here since this
             // accessor only ever hides *children* of a node, never the node passed in as root.
             if (this.showPlaceholders) return d.children;
-            return d.children.filter(child => !this.isPlaceholderNodeData(child));
+            return d.children.filter(child => !this.isPlaceholderNodeData(child) && (child.name || '').trim());
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
 
@@ -3372,8 +3655,7 @@ class FlowchartViewer {
         const btnSpacing = 10;
         const horizGap = btnClearance + btnWidth / 2;
         const vertGap = btnClearance + btnHeight / 2;
-        const NODE_STROKE = '#999';
-        const DANGER_STROKE = '#ff3b30';
+        const DANGER_TEXT = '#ff6b6b';
         const self = this;
         const snap10 = v => Math.round(v / 10) * 10;
 
@@ -3388,7 +3670,7 @@ class FlowchartViewer {
         // being hidden behind whichever node happens to come later in the draw order.
         const btnLayer = container.append('g').attr('class', 'radial-add-btn-layer');
 
-        const makeRadialBtn = (dx, dy, label, onActivate, stroke = NODE_STROKE, fontSize = 26) => {
+        const makeRadialBtn = (dx, dy, label, onActivate, danger = false, fontSize = 26) => {
             const btnGroup = btnLayer.append('g')
                 .attr('class', 'radial-add-btn')
                 .attr('transform', `translate(${baseX + dx},${baseY + dy})`)
@@ -3406,13 +3688,12 @@ class FlowchartViewer {
                 .attr('height', btnHeight)
                 .attr('rx', 8)
                 .attr('ry', 8)
-                .attr('fill', '#111827')
-                .attr('stroke', stroke)
-                .attr('stroke-width', 1.5);
+                .style('fill', 'var(--bg)')
+                .attr('stroke', 'none');
             btnGroup.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'central')
-                .attr('fill', '#e6eef8')
+                .attr('fill', danger ? DANGER_TEXT : '#e6eef8')
                 .attr('font-size', fontSize)
                 .attr('font-weight', 'bold')
                 .attr('y', 1)
@@ -3477,21 +3758,36 @@ class FlowchartViewer {
             self.startMakeConnection(targetDatum);
         };
 
+        // Fold/unfold, driven by a dedicated button rather than relying on double-click
+        // (which is unreliable on mobile once a tap has re-centered the view - the
+        // second tap can land on a different element and the browser never fires
+        // dblclick at all). Keeps the node selected so the row stays open afterward.
+        const canFold = Boolean(targetDatum.data.children && targetDatum.data.children.length > 0);
+        const activateFold = () => self.toggleNodeCollapse(targetDatum, true);
+
         // The "top" +button sits at the same offset in both orientations (see below), so
         // the delete-row above it can be positioned once, independent of orientation.
         const topPlusDy = -(halfHeight + vertGap);
         const deleteRowDy = topPlusDy - (btnHeight + btnSpacing);
+
+        // Built as a list and evenly spaced around dx=0 so the row is always centered
+        // as a whole, whatever combination of buttons ends up in it - rather than each
+        // button having a hardcoded offset (which is what made the row look lopsided
+        // before). F (fold) always sits immediately left of C (make connection).
+        const deleteRowBtns = [];
+        if (canFold) deleteRowBtns.push({ label: 'F', activate: activateFold });
+        deleteRowBtns.push({ label: 'C', activate: activateMakeConnection });
+        deleteRowBtns.push({ label: 'M', activate: activateMove });
         if (targetDatum.parent) {
-            makeRadialBtn(0, deleteRowDy, '✕', activateDelete, DANGER_STROKE, 22);
-            makeRadialBtn(-(btnWidth + btnSpacing), deleteRowDy, 'M', activateMove);
-            makeRadialBtn(-2 * (btnWidth + btnSpacing), deleteRowDy, 'C', activateMakeConnection);
-            makeRadialBtn(btnWidth + btnSpacing, deleteRowDy, 'P', activateDeleteAndPromote, DANGER_STROKE, 20);
-        } else {
-            // Root node: nothing to delete/promote, but it can still be dragged to
-            // become a child of another node, or used as a connection source.
-            makeRadialBtn(0, deleteRowDy, 'M', activateMove);
-            makeRadialBtn(-(btnWidth + btnSpacing), deleteRowDy, 'C', activateMakeConnection);
+            deleteRowBtns.push({ label: '✕', activate: activateDelete, danger: true, fontSize: 22 });
+            deleteRowBtns.push({ label: 'P', activate: activateDeleteAndPromote, danger: true, fontSize: 20 });
         }
+        const rowUnit = btnWidth + btnSpacing;
+        const rowCount = deleteRowBtns.length;
+        deleteRowBtns.forEach((btn, i) => {
+            const dx = (i - (rowCount - 1) / 2) * rowUnit;
+            makeRadialBtn(dx, deleteRowDy, btn.label, btn.activate, Boolean(btn.danger), btn.fontSize || 26);
+        });
 
         if (this.orientation === 'LR') {
             // Children extend to the right and parents sit to the left in this
