@@ -76,6 +76,36 @@ body {
     text-align: center;
 }
 
+#left-panel-tabs {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+}
+
+.left-panel-tab {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: bold;
+    padding: 5px 12px;
+    border-radius: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.left-panel-tab:hover {
+    border-color: var(--accent);
+}
+
+.left-panel-tab.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
 #reflection-panel-close,
 #reflection-panel-back-btn {
     background: none;
@@ -94,6 +124,14 @@ body {
     display: none;
 }
 
+#left-panel-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+
 #reflection-panel-body {
     flex: 1;
     overflow-y: auto;
@@ -101,6 +139,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
 }
 
 .reflection-question {
@@ -128,6 +167,277 @@ body {
     line-height: 1.4;
 }
 
+/* ===== Notes (global, not tied to any node) - a persistent, vertically resizable
+   strip pinned below whichever of Questions/Pugh Matrix is currently showing above
+   it, so it's always on screen whenever the panel itself is open. ===== */
+#notes-resize-handle {
+    height: 6px;
+    flex-shrink: 0;
+    cursor: ns-resize;
+    background: transparent;
+    border-top: 1px solid var(--border);
+}
+
+#notes-resize-handle:hover {
+    background: rgba(0, 166, 126, 0.3);
+}
+
+#notes-panel-body {
+    flex: 0 0 auto;
+    height: 200px;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    padding: 4px 12px 12px;
+    overflow: hidden;
+}
+
+#notes-panel-label {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    margin-bottom: 6px;
+    flex-shrink: 0;
+}
+
+.reflection-notes-global {
+    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: 'Courier New', Consolas, monospace;
+    font-size: 13px;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--control-bg);
+    color: var(--text);
+    resize: none;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.4;
+    tab-size: 4;
+}
+
+/* ===== Pugh Matrix ===== */
+#pugh-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+.pugh-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.pugh-toolbar button {
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--control-bg);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.pugh-toolbar button:hover {
+    background: var(--control-hover);
+}
+
+.pugh-table-wrap {
+    overflow: auto;
+    flex: 1;
+}
+
+.pugh-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: max-content;
+    min-width: 100%;
+}
+
+.pugh-table th,
+.pugh-table td {
+    border: 1px solid var(--border);
+    padding: 4px 5px;
+    text-align: center;
+    color: var(--text);
+    background: var(--control-bg);
+}
+
+.pugh-table thead th {
+    background: var(--surface);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.pugh-criteria-cell {
+    text-align: left !important;
+    min-width: 120px;
+}
+
+.pugh-criteria-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    text-align: left;
+}
+
+.pugh-criteria-input:focus {
+    outline: 1px solid var(--accent);
+    background: var(--control-hover);
+    border-radius: 3px;
+}
+
+.pugh-weight-input,
+.pugh-score-input {
+    width: 32px;
+    box-sizing: border-box;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    text-align: center;
+}
+
+.pugh-weight-input:focus,
+.pugh-score-input:focus {
+    outline: 1px solid var(--accent);
+    background: var(--control-hover);
+    border-radius: 3px;
+}
+
+.pugh-weighted-cell {
+    font-weight: bold;
+}
+
+/* Solution columns (header + score cells) are kept as narrow as the content
+   allows so more of them fit on screen side by side without horizontal scrolling. */
+.pugh-col-header {
+    position: relative;
+    min-width: 60px;
+    max-width: 90px;
+    padding: 3px 3px;
+}
+
+.pugh-score-cell {
+    min-width: 60px;
+    max-width: 90px;
+    padding: 3px 2px;
+}
+
+.pugh-col-header-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+    justify-content: center;
+}
+
+.pugh-col-title-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed var(--border);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: bold;
+    font-family: inherit;
+    text-align: center;
+    text-transform: none;
+    letter-spacing: normal;
+    padding: 1px 0;
+    resize: none;
+    overflow: hidden;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.25;
+}
+
+.pugh-col-title-input:focus {
+    outline: none;
+    border-bottom: 1px solid var(--accent);
+}
+
+.pugh-delete-col-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 3px;
+    flex-shrink: 0;
+}
+
+.pugh-delete-col-btn:hover {
+    color: var(--text);
+}
+
+.pugh-delete-row-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.pugh-delete-row-btn:hover {
+    color: #ff6b6b;
+}
+
+.pugh-total-row td,
+.pugh-total-row th {
+    font-weight: bold;
+    background: var(--surface);
+    border-top: 2px solid var(--border);
+}
+
+/* The single highest base score in each solution column - same green as the
+   flowchart's Green node color. */
+.pugh-top-score-cell {
+    background: #00a67e !important;
+    font-weight: bold;
+}
+
+.pugh-top-score-cell .pugh-score-input {
+    color: white;
+}
+
+/* The single highest Total Weighted Score across all solutions - same yellow as
+   the flowchart's Yellow node color. */
+.pugh-max-weighted-cell {
+    background: #ffcc00 !important;
+    color: #1a1a2e !important;
+}
+
+.pugh-empty-state {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 6px 2px;
+}
+
 #reflection-panel-resize-handle {
     position: absolute;
     top: 0;
@@ -140,6 +450,25 @@ body {
 
 #reflection-panel-resize-handle:hover {
     background: rgba(0, 166, 126, 0.3);
+}
+
+/* Desktop: the left panel sits beside the flowchart canvas as a normal flex sibling
+   (pushing the canvas over) rather than floating on top of it - avoids it covering
+   the hamburger menu / zoom controls / toolbar whenever it's open. Mobile keeps the
+   full-screen overlay behavior from the base rule + media query below, since there's
+   no room for a side-by-side layout there. */
+@media (min-width: 601px) {
+    .container {
+        flex-direction: row;
+    }
+
+    #reflection-panel {
+        position: relative;
+        top: auto;
+        left: auto;
+        order: -1;
+        flex-shrink: 0;
+    }
 }
 
 /* Mobile: the reflection panel becomes a full-screen overlay (there's no room for a
