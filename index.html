@@ -319,6 +319,8 @@
         <button class="menu-item" id="hamburger-open">📂 Open</button>
         <button class="menu-item" id="hamburger-toggle-placeholders">👻 Hide Placeholders</button>
         <button class="menu-item" id="hamburger-cloud-sync">☁ Cloud Sync</button>
+        <button class="menu-item" id="hamburger-pugh-matrix">📊 Pugh Matrix</button>
+        <button class="menu-item" id="hamburger-notes">📝 Notes</button>
       </div>
 
       <div class="zoom-controls">
@@ -327,6 +329,8 @@
         <div class="zoom-btn" id="top-open-btn" title="Open">📂</div>
         <div class="zoom-btn" id="top-toggle-placeholders-btn" title="Show/Hide Placeholders">👻</div>
         <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
+        <div class="zoom-btn" id="top-pugh-matrix-btn" title="Pugh Matrix">📊</div>
+        <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
         <div class="zoom-btn" id="top-toggle-reflection-btn" title="Toggle text fields/chart view" style="display:none;">⇄</div>
       </div>
 
@@ -346,6 +350,8 @@
             <div class="reset-view-btn" id="open-btn">📂 Open</div>
             <div class="reset-view-btn" id="toggle-placeholders-btn">👻 Hide Placeholders</div>
             <div class="reset-view-btn" id="cloud-sync-btn">☁ Cloud Sync</div>
+            <div class="reset-view-btn" id="pugh-matrix-btn">📊 Pugh Matrix</div>
+            <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
           </div>
           <div id="cloud-sync-status" style="display:none; font-size:12px; color:var(--text); opacity:0.75; margin-top:2px; text-align:right;"></div>
 
@@ -371,14 +377,23 @@
       </div>
     </div>
 
-    <!-- Reflection panel: guided questions for Assumption (pink) and Simplify (green) nodes -->
+    <!-- Left panel: guided questions (Assumption/Simplify nodes) or Pugh Matrix, with
+         a persistent global Notes strip pinned below whichever one is showing -->
     <div id="reflection-panel">
       <div id="reflection-panel-header">
         <button id="reflection-panel-back-btn" title="Back to node edit view">⇄</button>
-        <span id="reflection-panel-title">Assumption Questions</span>
+        <div id="left-panel-tabs">
+          <button class="left-panel-tab active" id="left-panel-tab-questions" data-mode="questions">Questions</button>
+          <button class="left-panel-tab" id="left-panel-tab-pugh" data-mode="pugh">Pugh Matrix</button>
+        </div>
         <button id="reflection-panel-close" title="Close">&times;</button>
       </div>
-      <div id="reflection-panel-body"></div>
+      <div id="left-panel-main">
+        <div id="reflection-panel-body"></div>
+        <div id="pugh-panel-body" style="display:none;"></div>
+      </div>
+      <div id="notes-resize-handle" title="Drag to resize"></div>
+      <div id="notes-panel-body"></div>
       <div id="reflection-panel-resize-handle"></div>
     </div>
 
@@ -436,22 +451,33 @@
     <!-- Cloud Sync popup -->
     <div id="cloud-sync-popup"
       style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
-      <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (GitHub Gist)</div>
+      <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (Supabase)</div>
       <div style="margin-bottom:10px; line-height:1.4;">
-        Free, no size cap you'll ever hit. On <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener">github.com/settings/tokens/new</a>
-        (this is the <b>classic</b> token page - gist access isn't available on fine-grained tokens yet), check the
-        <b>gist</b> checkbox, generate, then paste the token below and click "Create New Gist" once. Enter the same
-        token and Gist ID on your other devices to sync between them.
+        Free tier, generous limits. Create a project at <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">supabase.com/dashboard</a>,
+        then in the SQL Editor run:
+        <pre style="white-space:pre-wrap; background:#f4f4f4; border:1px solid #ddd; border-radius:4px; padding:8px; margin:6px 0; font-size:12px;">create table flowchart_sync (
+  id text primary key,
+  updated_at bigint,
+  data jsonb
+);
+alter table flowchart_sync enable row level security;
+create policy "allow all" on flowchart_sync
+  for all using (true) with check (true);</pre>
+        Then go to <b>Project Settings &gt; API</b>, copy the <b>Project URL</b> and the <b>anon public</b> key below,
+        and click "Create New Sync" once. Enter the same URL, key, and Sync ID on your other devices to sync between them.
       </div>
-      <label style="display:block; margin-bottom:4px; font-weight:bold;">Personal Access Token</label>
-      <input id="cloud-sync-key-input" type="text" placeholder="ghp_... or github_pat_..."
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Project URL</label>
+      <input id="cloud-sync-url-input" type="text" placeholder="https://xxxxxxxx.supabase.co"
         style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
-      <label style="display:block; margin-bottom:4px; font-weight:bold;">Gist ID</label>
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Anon/Public API Key</label>
+      <input id="cloud-sync-key-input" type="text" placeholder="eyJhbGciOi..."
+        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Sync ID</label>
       <div style="display:flex; gap:6px; margin-bottom:10px;">
-        <input id="cloud-sync-bin-input" type="text" placeholder="Leave blank, then Create New Gist"
+        <input id="cloud-sync-bin-input" type="text" placeholder="Leave blank, then Create New Sync"
           style="flex:1; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa;">
         <button id="cloud-sync-create-bin-btn"
-          style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Gist</button>
+          style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Sync</button>
       </div>
       <div id="cloud-sync-popup-status" style="min-height:18px; margin-bottom:8px; font-size:13px;"></div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
@@ -543,7 +569,9 @@
         'hamburger-ai-export': 'ai-export-btn',
         'hamburger-ai-import': 'ai-import-btn',
         'hamburger-open': 'open-btn',
-        'hamburger-cloud-sync': 'cloud-sync-btn'
+        'hamburger-cloud-sync': 'cloud-sync-btn',
+        'hamburger-pugh-matrix': 'pugh-matrix-btn',
+        'hamburger-notes': 'notes-btn'
       };
 
       // For each hamburger item, find the original button and trigger click
