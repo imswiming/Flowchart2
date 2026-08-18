@@ -10,11 +10,20 @@ class FlowchartViewer {
         this.topToggleReflectionBtn = document.getElementById('top-toggle-reflection-btn');
         this.topTogglePlaceholdersBtn = document.getElementById('top-toggle-placeholders-btn');
         this.reflectionPanel = document.getElementById('reflection-panel');
-        this.reflectionPanelTitle = document.getElementById('reflection-panel-title');
         this.reflectionPanelBody = document.getElementById('reflection-panel-body');
         this.reflectionPanelClose = document.getElementById('reflection-panel-close');
         this.reflectionPanelBackBtn = document.getElementById('reflection-panel-back-btn');
         this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
+        this.leftPanelTabQuestions = document.getElementById('left-panel-tab-questions');
+        this.leftPanelTabPugh = document.getElementById('left-panel-tab-pugh');
+        this.leftPanelMain = document.getElementById('left-panel-main');
+        this.pughPanelBody = document.getElementById('pugh-panel-body');
+        this.notesPanelBody = document.getElementById('notes-panel-body');
+        this.notesResizeHandle = document.getElementById('notes-resize-handle');
+        this.pughMatrixBtn = document.getElementById('pugh-matrix-btn');
+        this.topPughMatrixBtn = document.getElementById('top-pugh-matrix-btn');
+        this.notesBtn = document.getElementById('notes-btn');
+        this.topNotesBtn = document.getElementById('top-notes-btn');
         this.resetViewBtn = document.getElementById('reset-view');
         this.orientationBtn = document.getElementById('orientation-btn');
         this.hamburgerOrientationBtn = document.getElementById('hamburger-orientation');
@@ -51,11 +60,14 @@ class FlowchartViewer {
         this.aiExportBtn = document.getElementById('ai-export-btn');
         this.aiImportBtn = document.getElementById('ai-import-btn');
 
-        // Cloud Sync (JSONBin.io) - free key/value JSON storage, no login flow. The
-        // whole flowchart list is stored as one bin; last-write-wins by timestamp.
+        // Cloud Sync (Supabase) - free Postgres-backed key/value storage via the
+        // auto-generated REST API, no login flow for the app itself (just a project
+        // URL + anon key pasted once). The whole flowchart list is stored as one
+        // row; last-write-wins by timestamp.
         this.cloudSyncBtn = document.getElementById('cloud-sync-btn');
         this.topCloudSyncBtn = document.getElementById('top-cloud-sync-btn');
         this.cloudSyncPopup = document.getElementById('cloud-sync-popup');
+        this.cloudSyncUrlInput = document.getElementById('cloud-sync-url-input');
         this.cloudSyncKeyInput = document.getElementById('cloud-sync-key-input');
         this.cloudSyncBinInput = document.getElementById('cloud-sync-bin-input');
         this.cloudSyncCreateBinBtn = document.getElementById('cloud-sync-create-bin-btn');
@@ -64,8 +76,9 @@ class FlowchartViewer {
         this.closeCloudSyncBtn = document.getElementById('close-cloud-sync-btn');
         this.cloudSyncPopupStatus = document.getElementById('cloud-sync-popup-status');
         this.cloudSyncStatusBadge = document.getElementById('cloud-sync-status');
-        this.cloudMasterKey = localStorage.getItem('cloud-sync-master-key') || '';
-        this.cloudBinId = localStorage.getItem('cloud-sync-bin-id') || '';
+        this.cloudProjectUrl = (localStorage.getItem('cloud-sync-project-url') || '').replace(/\/+$/, '');
+        this.cloudApiKey = localStorage.getItem('cloud-sync-api-key') || '';
+        this.cloudSyncId = localStorage.getItem('cloud-sync-id') || '';
         this._cloudPushTimer = null;
         this._cloudPollTimer = null;
         this._cloudSyncInFlight = false;
@@ -134,6 +147,27 @@ class FlowchartViewer {
         this._reflectionPanelActive = false;
         this._reflectionPanelWidth = parseInt(localStorage.getItem('reflection-panel-width'), 10) || 340;
         this.setupReflectionPanel();
+
+        // Pugh Matrix: lives in the same left-hand panel as the reflection questions,
+        // switchable via the Questions/Pugh Matrix tabs. Data is per-flowchart (saved
+        // and loaded alongside the tree) so each chart can carry its own matrix.
+        this._leftPanelMode = 'questions'; // 'questions' | 'pugh'
+        this._pughPanelActive = false;
+        this._pughIdCounter = 0;
+        this.pughMatrix = this.getDefaultPughMatrix();
+
+        // Notes: a single free-form text field, global to the whole flowchart (not
+        // tied to any node). Lives in a persistent strip at the bottom of the same
+        // left-hand panel, visible under both the Questions and Pugh Matrix tabs. Its
+        // height is user-resizable (drag the handle above it) and remembered across
+        // sessions, same as the panel's own width.
+        this.globalNotes = '';
+        this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
+
+        this.setupPughPanel();
+        this.updateLeftPanelTabs();
+        this.renderNotesPanel();
+        this.setupNotesResizeHandle();
 
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
@@ -217,6 +251,14 @@ class FlowchartViewer {
         if (this.cloudSyncSaveBtn) this.cloudSyncSaveBtn.addEventListener('click', () => this.saveCloudSyncSettings());
         if (this.cloudSyncCreateBinBtn) this.cloudSyncCreateBinBtn.addEventListener('click', () => this.createCloudBin());
         if (this.cloudSyncDisconnectBtn) this.cloudSyncDisconnectBtn.addEventListener('click', () => this.disconnectCloudSync());
+
+        // Pugh Matrix event listeners
+        if (this.pughMatrixBtn) this.pughMatrixBtn.addEventListener('click', () => this.openPughPanel());
+        if (this.topPughMatrixBtn) this.topPughMatrixBtn.addEventListener('click', () => this.openPughPanel());
+
+        // Notes event listeners
+        if (this.notesBtn) this.notesBtn.addEventListener('click', () => this.openNotesPanel());
+        if (this.topNotesBtn) this.topNotesBtn.addEventListener('click', () => this.openNotesPanel());
 
         // AI Export/Import event listeners
         this.aiExportBtn.addEventListener('click', () => this.exportToAi());
@@ -418,17 +460,18 @@ class FlowchartViewer {
         if (!this._applyingRemote) this.scheduleCloudPush();
     }
 
-    // ===== CLOUD SYNC (GitHub Gist) =====
-    // Free, no login flow for the app itself (just a personal access token pasted
-    // once), and no small fixed request-size cap like JSONBin's 100KB - gist files
-    // hold up to 1MB before the API truncates them, which the whole saved flowchart
-    // list will realistically never approach. Last-write-wins by timestamp.
+    // ===== CLOUD SYNC (Supabase) =====
+    // Free Postgres-backed key/value storage via Supabase's auto-generated REST
+    // API (PostgREST). No login flow for the app itself (just a project URL and
+    // anon/public API key pasted once). The whole flowchart list is stored as a
+    // single row in a `flowchart_sync` table, keyed by a Sync ID. Last-write-wins
+    // by timestamp.
     setupCloudSync() {
-        this.CLOUD_GIST_FILENAME = 'flowchart-cloud-sync.json';
+        this.CLOUD_TABLE = 'flowchart_sync';
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && this.cloudMasterKey && this.cloudBinId) this.cloudPull();
+            if (!document.hidden && this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId) this.cloudPull();
         });
-        if (this.cloudMasterKey && this.cloudBinId) {
+        if (this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId) {
             this.updateCloudSyncStatus('idle');
             this.startCloudPolling();
             // Pick up anything saved from another device shortly after boot.
@@ -444,7 +487,7 @@ class FlowchartViewer {
     }
 
     scheduleCloudPush() {
-        if (!this.cloudMasterKey || !this.cloudBinId) return;
+        if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return;
         clearTimeout(this._cloudPushTimer);
         this._cloudPushTimer = setTimeout(() => this.cloudPush(), 2000);
     }
@@ -458,7 +501,7 @@ class FlowchartViewer {
     updateCloudSyncStatus(state, message) {
         const badge = this.cloudSyncStatusBadge;
         if (!badge) return;
-        if (!this.cloudMasterKey || !this.cloudBinId) {
+        if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) {
             badge.style.display = 'none';
             return;
         }
@@ -472,23 +515,27 @@ class FlowchartViewer {
 
     showCloudSyncPopup() {
         if (!this.cloudSyncPopup) return;
-        this.cloudSyncKeyInput.value = this.cloudMasterKey || '';
-        this.cloudSyncBinInput.value = this.cloudBinId || '';
-        this.setCloudPopupStatus(this.cloudMasterKey && this.cloudBinId ? 'Connected.' : '');
+        this.cloudSyncUrlInput.value = this.cloudProjectUrl || '';
+        this.cloudSyncKeyInput.value = this.cloudApiKey || '';
+        this.cloudSyncBinInput.value = this.cloudSyncId || '';
+        this.setCloudPopupStatus(this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId ? 'Connected.' : '');
         this.cloudSyncPopup.style.display = 'block';
     }
 
     saveCloudSyncSettings() {
-        const token = (this.cloudSyncKeyInput.value || '').trim();
-        const gistId = (this.cloudSyncBinInput.value || '').trim();
-        if (!token || !gistId) {
-            this.setCloudPopupStatus('Enter both a token and a Gist ID (or click "Create New Gist").', true);
+        const url = (this.cloudSyncUrlInput.value || '').trim().replace(/\/+$/, '');
+        const key = (this.cloudSyncKeyInput.value || '').trim();
+        const syncId = (this.cloudSyncBinInput.value || '').trim();
+        if (!url || !key || !syncId) {
+            this.setCloudPopupStatus('Enter the Project URL, API key, and a Sync ID (or click "Create New Sync").', true);
             return;
         }
-        this.cloudMasterKey = token;
-        this.cloudBinId = gistId;
-        localStorage.setItem('cloud-sync-master-key', token);
-        localStorage.setItem('cloud-sync-bin-id', gistId);
+        this.cloudProjectUrl = url;
+        this.cloudApiKey = key;
+        this.cloudSyncId = syncId;
+        localStorage.setItem('cloud-sync-project-url', url);
+        localStorage.setItem('cloud-sync-api-key', key);
+        localStorage.setItem('cloud-sync-id', syncId);
         this.setCloudPopupStatus('Connected. Syncing...');
         this.startCloudPolling();
 
@@ -501,24 +548,27 @@ class FlowchartViewer {
             timeout
         ]).then((result) => {
             if (result === 'timeout') {
-                this.setCloudPopupStatus('Still trying to reach GitHub - check your connection and try again.', true);
+                this.setCloudPopupStatus('Still trying to reach Supabase - check your connection and try again.', true);
             } else if (result) {
                 this.setCloudPopupStatus('Synced!');
             } else {
-                this.setCloudPopupStatus('Connected, but the last sync failed - double check the token and Gist ID.', true);
+                this.setCloudPopupStatus('Connected, but the last sync failed - double check the URL, key, and Sync ID.', true);
             }
         });
     }
 
     disconnectCloudSync() {
-        this.cloudMasterKey = '';
-        this.cloudBinId = '';
-        localStorage.removeItem('cloud-sync-master-key');
-        localStorage.removeItem('cloud-sync-bin-id');
+        this.cloudProjectUrl = '';
+        this.cloudApiKey = '';
+        this.cloudSyncId = '';
+        localStorage.removeItem('cloud-sync-project-url');
+        localStorage.removeItem('cloud-sync-api-key');
+        localStorage.removeItem('cloud-sync-id');
         localStorage.removeItem('cloud-sync-known-remote-at');
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
         this._cloudPollTimer = null;
+        if (this.cloudSyncUrlInput) this.cloudSyncUrlInput.value = '';
         if (this.cloudSyncKeyInput) this.cloudSyncKeyInput.value = '';
         if (this.cloudSyncBinInput) this.cloudSyncBinInput.value = '';
         this.setCloudPopupStatus('Disconnected.');
@@ -526,53 +576,38 @@ class FlowchartViewer {
     }
 
     async createCloudBin() {
-        const token = (this.cloudSyncKeyInput.value || '').trim();
-        if (!token) {
-            this.setCloudPopupStatus('Paste your Personal Access Token first.', true);
+        const url = (this.cloudSyncUrlInput.value || '').trim().replace(/\/+$/, '');
+        const key = (this.cloudSyncKeyInput.value || '').trim();
+        if (!url || !key) {
+            this.setCloudPopupStatus('Enter the Project URL and API key first.', true);
             return;
         }
-        this.setCloudPopupStatus('Creating gist...');
+        this.setCloudPopupStatus('Creating sync row...');
         try {
+            const newId = (crypto.randomUUID && crypto.randomUUID()) ||
+                `${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const updatedAt = Date.now();
-            const payload = JSON.stringify({ updatedAt, flowchartList: this.flowchartList });
-            const res = await fetch('https://api.github.com/gists', {
+            const res = await fetch(`${url}/rest/v1/${this.CLOUD_TABLE}`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/vnd.github+json',
-                    'Content-Type': 'application/json'
+                    'apikey': key,
+                    'Authorization': `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
                 },
-                body: JSON.stringify({
-                    description: 'Flowchart Editor cloud sync data',
-                    public: false,
-                    files: { [this.CLOUD_GIST_FILENAME]: { content: payload } }
-                })
+                body: JSON.stringify([{ id: newId, updated_at: updatedAt, data: { flowchartList: this.flowchartList } }])
             });
-            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
-            const gist = await res.json();
-            this.cloudSyncBinInput.value = gist.id;
-            this.setCloudPopupStatus('Gist created! Click "Save & Sync Now" to connect.');
+            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+            this.cloudSyncBinInput.value = newId;
+            this.setCloudPopupStatus('Sync row created! Click "Save & Sync Now" to connect.');
         } catch (err) {
-            console.error('Create gist failed:', err);
-            this.setCloudPopupStatus('Failed to create gist: ' + err.message, true);
+            console.error('Create sync row failed:', err);
+            this.setCloudPopupStatus('Failed to create sync row: ' + err.message, true);
         }
-    }
-
-    // Gists occasionally return 409 for a request made immediately after the gist
-    // itself was just created (backend replication lag) - retry a couple of times
-    // with a short delay before giving up, rather than surfacing a scary error for
-    // something that resolves itself a second later.
-    async fetchGithubWithRetry(url, options, retriesLeft = 2, delayMs = 1200) {
-        const res = await fetch(url, options);
-        if (res.status === 409 && retriesLeft > 0) {
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-            return this.fetchGithubWithRetry(url, options, retriesLeft - 1, delayMs);
-        }
-        return res;
     }
 
     async cloudPush() {
-        if (!this.cloudMasterKey || !this.cloudBinId) return false;
+        if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return false;
         if (this._cloudSyncInFlight) {
             this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
             return false;
@@ -581,26 +616,27 @@ class FlowchartViewer {
         this.updateCloudSyncStatus('syncing');
         try {
             const updatedAt = Date.now();
-            const payload = JSON.stringify({ updatedAt, flowchartList: this.flowchartList });
-            // Gist files truncate past 1MB via the API - bail out with a clear warning
-            // well before that instead of silently losing data.
-            if (payload.length > 900000) {
-                this.updateCloudSyncStatus('error', 'data too large (>900KB) - remove some old flowcharts');
+            const payload = { updated_at: updatedAt, data: { flowchartList: this.flowchartList } };
+            const serialized = JSON.stringify(payload);
+            // Supabase free tier rows via PostgREST handle multi-MB JSON comfortably,
+            // but bail out with a clear warning well before anything unreasonable
+            // instead of silently losing data.
+            if (serialized.length > 8000000) {
+                this.updateCloudSyncStatus('error', 'data too large (>8MB) - remove some old flowcharts');
                 this._cloudSyncInFlight = false;
                 return false;
             }
-            const res = await this.fetchGithubWithRetry(`https://api.github.com/gists/${this.cloudBinId}`, {
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}`, {
                 method: 'PATCH',
                 headers: {
-                    'Authorization': `Bearer ${this.cloudMasterKey}`,
-                    'Accept': 'application/vnd.github+json',
-                    'Content-Type': 'application/json'
+                    'apikey': this.cloudApiKey,
+                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
                 },
-                body: JSON.stringify({
-                    files: { [this.CLOUD_GIST_FILENAME]: { content: payload } }
-                })
+                body: serialized
             });
-            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
             this.updateCloudSyncStatus('synced');
             return true;
@@ -614,31 +650,27 @@ class FlowchartViewer {
     }
 
     async cloudPull() {
-        if (!this.cloudMasterKey || !this.cloudBinId) return false;
+        if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return false;
         if (this._cloudSyncInFlight) return false;
         this._cloudSyncInFlight = true;
         try {
-            const res = await this.fetchGithubWithRetry(`https://api.github.com/gists/${this.cloudBinId}`, {
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at,data`, {
                 headers: {
-                    'Authorization': `Bearer ${this.cloudMasterKey}`,
-                    'Accept': 'application/vnd.github+json'
+                    'apikey': this.cloudApiKey,
+                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Accept': 'application/json'
                 }
             });
-            if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
-            const gist = await res.json();
-            const file = gist.files && gist.files[this.CLOUD_GIST_FILENAME];
-            if (!file) throw new Error('sync file not found in gist');
-            let content = file.content;
-            if (file.truncated && file.raw_url) {
-                const rawRes = await fetch(file.raw_url);
-                content = await rawRes.text();
-            }
-            const parsed = JSON.parse(content);
-            const remoteUpdatedAt = Number(parsed.updatedAt) || 0;
+            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+            const rows = await res.json();
+            const row = rows && rows[0];
+            if (!row) throw new Error('sync row not found - check the Sync ID');
+            const remoteUpdatedAt = Number(row.updated_at) || 0;
             const knownRemoteAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
-            if (remoteUpdatedAt > knownRemoteAt && Array.isArray(parsed.flowchartList)) {
+            const remoteList = row.data && row.data.flowchartList;
+            if (remoteUpdatedAt > knownRemoteAt && Array.isArray(remoteList)) {
                 this._applyingRemote = true;
-                this.flowchartList = parsed.flowchartList;
+                this.flowchartList = remoteList;
                 this.saveFlowchartList();
                 localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
                 if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
@@ -909,6 +941,10 @@ class FlowchartViewer {
                     this.rootData = this.wrapRootWithPlaceholder(treeData);
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                 }
+
+                this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
+                this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
+                this.renderNotesPanel();
                 
                 if (parsed.customConnections) {
                     const nodeMap = new Map();
@@ -2515,6 +2551,119 @@ class FlowchartViewer {
         });
     }
 
+    // Turns a plain textarea into a bulleted outline editor, the way Word's
+    // multilevel lists behave: every line gets a bullet matching its indent depth
+    // (•, then ◦, then ▪, cycling for deeper levels), Enter starts a new line at the
+    // same indent level with the matching bullet already in place, and Tab/Shift+Tab
+    // indent/dedent the current line - or every line touched by the selection - one
+    // level at a time, updating each line's bullet to match its new depth.
+    setupIndentableTextarea(textarea, onChange) {
+        const INDENT = '    '; // 4 spaces per indent level
+        const BULLETS = ['\u2022', '\u25E6', '\u25AA']; // •, ◦, ▪ - cycles for deeper levels
+        const bulletFor = (level) => BULLETS[level % BULLETS.length];
+
+        // Breaks a line into how many indent levels of leading INDENT it has, how
+        // many characters that indent + bullet + trailing space take up, and the
+        // actual text content after that.
+        const parseLine = (line) => {
+            let level = 0;
+            let rest = line;
+            while (rest.startsWith(INDENT)) {
+                rest = rest.slice(INDENT.length);
+                level++;
+            }
+            const indentLen = line.length - rest.length;
+            let bulletLen = 0;
+            for (const b of BULLETS) {
+                if (rest.startsWith(b + ' ')) {
+                    bulletLen = b.length + 1;
+                    break;
+                }
+            }
+            return { level, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
+        };
+
+        const buildLine = (level, content) => INDENT.repeat(level) + bulletFor(level) + ' ' + content;
+
+        const ensureLeadingBullet = () => {
+            if (textarea.value && !BULLETS.some(b => textarea.value.startsWith(b))) {
+                const cursor = textarea.selectionStart;
+                const prefix = bulletFor(0) + ' ';
+                textarea.value = prefix + textarea.value;
+                textarea.selectionStart = textarea.selectionEnd = cursor + prefix.length;
+            }
+        };
+
+        textarea.addEventListener('focus', () => {
+            if (!textarea.value) {
+                textarea.value = bulletFor(0) + ' ';
+                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            } else {
+                ensureLeadingBullet();
+            }
+            this.resizeReflectionAnswer(textarea);
+        });
+
+        textarea.addEventListener('keydown', (e) => {
+            const value = textarea.value;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                let lineEnd = value.indexOf('\n', start);
+                if (lineEnd === -1) lineEnd = value.length;
+                const { level } = parseLine(value.slice(lineStart, lineEnd));
+                const insertion = '\n' + buildLine(level, '');
+                textarea.value = value.slice(0, start) + insertion + value.slice(end);
+                const newPos = start + insertion.length;
+                textarea.selectionStart = textarea.selectionEnd = newPos;
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+                return;
+            }
+
+            if (e.key === 'Tab') {
+                e.preventDefault();
+
+                // Expand the affected range to cover every full line touched by the
+                // selection (or just the current line, if nothing is selected).
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                let blockEnd = value.indexOf('\n', end);
+                if (blockEnd === -1) blockEnd = value.length;
+
+                const before = value.slice(0, lineStart);
+                const block = value.slice(lineStart, blockEnd);
+                const after = value.slice(blockEnd);
+
+                let firstLineDelta = 0;
+                const newLines = block.split('\n').map((line, i) => {
+                    const { level, content } = parseLine(line);
+                    const newLevel = e.shiftKey ? Math.max(0, level - 1) : level + 1;
+                    const newLine = buildLine(newLevel, content);
+                    if (i === 0) firstLineDelta = newLine.length - line.length;
+                    return newLine;
+                });
+                const newBlock = newLines.join('\n');
+                const lengthDelta = newBlock.length - block.length;
+
+                textarea.value = before + newBlock + after;
+                textarea.selectionStart = Math.max(lineStart, start + firstLineDelta);
+                textarea.selectionEnd = end + lengthDelta;
+
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+            }
+        });
+
+        textarea.addEventListener('input', () => {
+            ensureLeadingBullet();
+            this.resizeReflectionAnswer(textarea);
+            onChange(textarea.value);
+        });
+    }
+
     updateReflectionPanel(d) {
         if (!d || !d.data) {
             this._reflectionQuestions = null;
@@ -2538,11 +2687,17 @@ class FlowchartViewer {
             nodeData._reflectionAnswers = [];
         }
 
-        this.reflectionPanelTitle.textContent = nodeData.color === '#e75480'
+        this.reflectionPanelBody.innerHTML = '';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'reflection-panel-subtitle';
+        titleEl.style.fontWeight = 'bold';
+        titleEl.style.marginBottom = '-6px';
+        titleEl.textContent = nodeData.color === '#e75480'
             ? 'Assumption Questions'
             : 'Simplify Questions';
+        this.reflectionPanelBody.appendChild(titleEl);
 
-        this.reflectionPanelBody.innerHTML = '';
         questions.forEach((question, i) => {
             const wrap = document.createElement('div');
 
@@ -2576,12 +2731,17 @@ class FlowchartViewer {
         });
     }
 
-    // Explicit close (the X button): dismiss the reflection view (same effect as
-    // toggling it off) without forgetting that this node has a reflection/question set -
-    // otherwise the mobile toggle button would vanish since there'd be nothing left to
-    // toggle to.
+    // Explicit close (the X button): dismiss whichever left-panel view is currently
+    // showing (questions or Pugh Matrix) without forgetting its underlying state -
+    // otherwise the mobile toggle button would vanish since there'd be nothing left
+    // to toggle to. Notes has no active flag of its own since it's always visible
+    // alongside whichever view is open.
     hideReflectionPanel() {
-        this._reflectionPanelActive = false;
+        if (this._leftPanelMode === 'pugh') {
+            this._pughPanelActive = false;
+        } else {
+            this._reflectionPanelActive = false;
+        }
         this.applyMobileViewState();
         if (this.nodeEditPopup.style.display === 'block' &&
             window.matchMedia('(max-width: 600px)').matches) {
@@ -2591,24 +2751,38 @@ class FlowchartViewer {
     }
 
     // Full reset: used when switching/creating flowcharts, where any previous node's
-    // reflection state (and its availability) no longer applies at all.
+    // reflection state (and its availability) no longer applies at all. Also resets
+    // the Pugh Matrix and the global Notes back to their per-flowchart defaults;
+    // loadFlowchartFromList fills them back in from saved data right after this
+    // runs, if any was saved.
     resetReflectionState() {
         this._reflectionQuestions = null;
         this._reflectionNodeData = null;
         this._reflectionPanelActive = false;
         this.reflectionPanelBody.innerHTML = '';
+        this._leftPanelMode = 'questions';
+        this._pughPanelActive = false;
+        this.pughMatrix = this.getDefaultPughMatrix();
+        this.globalNotes = '';
+        this.updateLeftPanelTabs();
+        this.renderNotesPanel();
         this.applyMobileViewState();
     }
 
     // Single source of truth for what's visible on screen: the node edit popup, the
-    // reflection panel, and the mobile toggle button. On desktop, the reflection panel
-    // (when available and not dismissed) sits beside the node edit popup as always. On
-    // mobile, the node edit menu is the default view; the toggle button - shown only
-    // when the current node actually has a reflection/question set - switches to a
-    // full-screen view of that panel instead, hiding the node edit menu while active.
+    // left panel (questions or Pugh Matrix, whichever tab is active, with the global
+    // Notes strip always visible underneath), and the mobile toggle button. On
+    // desktop, the left panel (when available and not dismissed) sits beside the node
+    // edit popup as always. On mobile, the node edit menu is the default view; the
+    // toggle button - shown only when the current node actually has a
+    // reflection/question set - switches to a full-screen view of that panel instead,
+    // hiding the node edit menu while active. The Pugh Matrix tab is driven by its own
+    // independent active flag, tied to nothing about node selection, so switching
+    // nodes never yanks it away or forces it open.
     applyMobileViewState() {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
-        const panelActive = Boolean(this._reflectionQuestions) && this._reflectionPanelActive;
+        const questionsActive = Boolean(this._reflectionQuestions) && this._reflectionPanelActive;
+        const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive : questionsActive;
 
         if (!isMobile) {
             this.topToggleReflectionBtn.style.display = 'none';
@@ -2619,7 +2793,7 @@ class FlowchartViewer {
             return;
         }
 
-        this.topToggleReflectionBtn.style.display = 'flex';
+        this.topToggleReflectionBtn.style.display = (this._leftPanelMode === 'questions') ? 'flex' : 'none';
         this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
         this.nodeEditPopup.style.display = (!panelActive && this.nodeBeingEdited) ? 'block' : 'none';
     }
@@ -2639,6 +2813,509 @@ class FlowchartViewer {
             this.nodeEditInput.focus();
             this.nodeEditInput.select();
         }
+    }
+
+    // ===== PUGH MATRIX =====
+    // A decision matrix living in the same left-hand panel as the reflection
+    // questions, switchable via the Questions/Pugh Matrix tabs at the top. Criteria
+    // (rows) each carry a weight (default 1); solutions (columns) can be added,
+    // deleted, and either typed directly or "armed" so that clicking a node in the
+    // flowchart copies that node's name in as the column heading.
+
+    nextPughId(prefix) {
+        this._pughIdCounter = (this._pughIdCounter || 0) + 1;
+        return `${prefix}-${Date.now().toString(36)}-${this._pughIdCounter}`;
+    }
+
+    getDefaultPughMatrix() {
+        return {
+            criteria: [],
+            columns: [
+                { id: this.nextPughId('col'), title: 'Solution 1' }
+            ],
+            scores: {}
+        };
+    }
+
+    // Validates/repairs a Pugh Matrix loaded from saved JSON, falling back to sane
+    // defaults for anything missing or malformed rather than trusting the shape.
+    sanitizePughMatrix(raw) {
+        if (!raw || typeof raw !== 'object') return this.getDefaultPughMatrix();
+
+        const columns = Array.isArray(raw.columns) ? raw.columns
+            .filter(c => c && typeof c === 'object')
+            .map(c => ({
+                id: (typeof c.id === 'string' && c.id) ? c.id : this.nextPughId('col'),
+                title: (typeof c.title === 'string') ? c.title : ''
+            })) : [];
+
+        const criteria = Array.isArray(raw.criteria) ? raw.criteria
+            .filter(c => c && typeof c === 'object')
+            .map(c => ({
+                id: (typeof c.id === 'string' && c.id) ? c.id : this.nextPughId('crit'),
+                name: (typeof c.name === 'string') ? c.name : '',
+                weight: (typeof c.weight === 'number' && !isNaN(c.weight)) ? c.weight : 1
+            })) : [];
+
+        const columnIds = new Set(columns.map(c => c.id));
+        const scores = {};
+        if (raw.scores && typeof raw.scores === 'object') {
+            criteria.forEach(crit => {
+                const row = raw.scores[crit.id];
+                if (row && typeof row === 'object') {
+                    scores[crit.id] = {};
+                    Object.keys(row).forEach(colId => {
+                        if (columnIds.has(colId) && typeof row[colId] === 'number' && !isNaN(row[colId])) {
+                            scores[crit.id][colId] = row[colId];
+                        }
+                    });
+                }
+            });
+        }
+
+        return { criteria, columns, scores };
+    }
+
+    // Wires up the left-panel tab switcher. Called once from the constructor.
+    setupPughPanel() {
+        if (this.leftPanelTabQuestions) {
+            this.leftPanelTabQuestions.addEventListener('click', () => this.switchLeftPanelMode('questions'));
+        }
+        if (this.leftPanelTabPugh) {
+            this.leftPanelTabPugh.addEventListener('click', () => this.switchLeftPanelMode('pugh'));
+        }
+    }
+
+    // Opens the left panel directly to the Pugh Matrix tab - used by the toolbar/
+    // hamburger "Pugh Matrix" buttons, which aren't tied to any node selection.
+    openPughPanel() {
+        this._pughPanelActive = true;
+        this.switchLeftPanelMode('pugh');
+    }
+
+    // Opens the left panel so the (always-visible) Notes strip is on screen - used by
+    // the toolbar/hamburger "Notes" buttons. If a node's guided questions are already
+    // showing, just brings that view forward; otherwise falls back to the Pugh Matrix
+    // tab, since Notes isn't a view of its own anymore and needs something above it.
+    openNotesPanel() {
+        if (this._leftPanelMode === 'questions' && this._reflectionQuestions) {
+            this._reflectionPanelActive = true;
+            this.applyMobileViewState();
+        } else {
+            this.openPughPanel();
+        }
+        if (this.notesTextarea) {
+            this.notesTextarea.focus();
+        }
+    }
+
+    switchLeftPanelMode(mode) {
+        this._leftPanelMode = mode;
+        if (mode === 'pugh') {
+            this._pughPanelActive = true;
+            this.renderPughPanel();
+        }
+        this.updateLeftPanelTabs();
+        this.applyMobileViewState();
+    }
+
+    updateLeftPanelTabs() {
+        if (this.leftPanelTabQuestions) {
+            this.leftPanelTabQuestions.classList.toggle('active', this._leftPanelMode === 'questions');
+        }
+        if (this.leftPanelTabPugh) {
+            this.leftPanelTabPugh.classList.toggle('active', this._leftPanelMode === 'pugh');
+        }
+        if (this.reflectionPanelBody) {
+            this.reflectionPanelBody.style.display = this._leftPanelMode === 'questions' ? 'flex' : 'none';
+        }
+        if (this.pughPanelBody) {
+            this.pughPanelBody.style.display = this._leftPanelMode === 'pugh' ? 'flex' : 'none';
+        }
+    }
+
+    // ===== NOTES =====
+    // A single free-form notes field, global to the whole flowchart rather than tied
+    // to any node. Lives in a persistent strip at the bottom of the left panel, below
+    // whichever of Questions/Pugh Matrix is currently showing above it - always
+    // visible whenever the panel itself is open, regardless of tab.
+    renderNotesPanel() {
+        if (!this.notesPanelBody) return;
+        this.notesPanelBody.innerHTML = '';
+        this.notesPanelBody.style.height = this._notesPanelHeight + 'px';
+
+        const label = document.createElement('div');
+        label.id = 'notes-panel-label';
+        label.textContent = 'Notes';
+        this.notesPanelBody.appendChild(label);
+
+        const notesArea = document.createElement('textarea');
+        notesArea.className = 'reflection-notes-global';
+        notesArea.placeholder = 'Notes...';
+        notesArea.value = this.globalNotes || '';
+        this.setupIndentableTextarea(notesArea, (value) => {
+            this.globalNotes = value;
+            this._pendingNotesSave = true;
+        });
+        notesArea.addEventListener('blur', () => {
+            if (this._pendingNotesSave) {
+                this._pendingNotesSave = false;
+                this.autosave();
+            }
+        });
+        this.notesTextarea = notesArea;
+        this.notesPanelBody.appendChild(notesArea);
+    }
+
+    // Lets the person drag the handle above the Notes strip to resize it vertically,
+    // same drag-and-persist pattern as the panel's own width handle.
+    setupNotesResizeHandle() {
+        if (!this.notesResizeHandle || !this.notesPanelBody) return;
+
+        let dragging = false;
+        let startY = 0;
+        let startHeight = 0;
+
+        const onMove = (clientY) => {
+            if (!dragging) return;
+            // Dragging up (clientY decreasing) should grow the notes strip, since it's
+            // pinned to the bottom of the panel.
+            const delta = startY - clientY;
+            const panelHeight = this.reflectionPanel.getBoundingClientRect().height || window.innerHeight;
+            const maxHeight = Math.max(120, panelHeight - 120);
+            const newHeight = Math.max(80, Math.min(startHeight + delta, maxHeight));
+            this._notesPanelHeight = newHeight;
+            this.notesPanelBody.style.height = newHeight + 'px';
+        };
+        const onEnd = () => {
+            if (!dragging) return;
+            dragging = false;
+            document.body.style.userSelect = '';
+            localStorage.setItem('notes-panel-height', String(this._notesPanelHeight));
+        };
+
+        this.notesResizeHandle.addEventListener('mousedown', (e) => {
+            dragging = true;
+            startY = e.clientY;
+            startHeight = this.notesPanelBody.getBoundingClientRect().height;
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', (e) => onMove(e.clientY));
+        window.addEventListener('mouseup', onEnd);
+        this.notesResizeHandle.addEventListener('touchstart', (e) => {
+            dragging = true;
+            startY = e.touches[0].clientY;
+            startHeight = this.notesPanelBody.getBoundingClientRect().height;
+        }, { passive: true });
+        window.addEventListener('touchmove', (e) => {
+            if (!dragging) return;
+            onMove(e.touches[0].clientY);
+        }, { passive: true });
+        window.addEventListener('touchend', onEnd);
+    }
+
+    addPughCriteria() {
+        this.pughMatrix.criteria.push({
+            id: this.nextPughId('crit'),
+            name: '',
+            weight: 1 // all new criteria default to a weight of 1
+        });
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    deletePughCriteria(criteriaId) {
+        this.pughMatrix.criteria = this.pughMatrix.criteria.filter(c => c.id !== criteriaId);
+        delete this.pughMatrix.scores[criteriaId];
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    addPughColumn() {
+        const n = this.pughMatrix.columns.length + 1;
+        this.pughMatrix.columns.push({ id: this.nextPughId('col'), title: `Solution ${n}` });
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    deletePughColumn(columnId) {
+        this.pughMatrix.columns = this.pughMatrix.columns.filter(c => c.id !== columnId);
+        Object.values(this.pughMatrix.scores).forEach(row => { delete row[columnId]; });
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    getPughScore(criteriaId, columnId) {
+        const row = this.pughMatrix.scores[criteriaId];
+        const v = row ? row[columnId] : undefined;
+        return (typeof v === 'number' && !isNaN(v)) ? v : 0;
+    }
+
+    setPughScore(criteriaId, columnId, value) {
+        if (!this.pughMatrix.scores[criteriaId]) this.pughMatrix.scores[criteriaId] = {};
+        this.pughMatrix.scores[criteriaId][columnId] = value;
+    }
+
+    computePughColumnTotal(columnId) {
+        return this.pughMatrix.criteria.reduce((sum, c) => {
+            const weight = (typeof c.weight === 'number' && !isNaN(c.weight)) ? c.weight : 1;
+            return sum + weight * this.getPughScore(c.id, columnId);
+        }, 0);
+    }
+
+    // Builds the Pugh Matrix table fresh into #pugh-panel-body. Called on open and
+    // after every add/delete/select-node change; individual keystrokes into the
+    // number/text inputs update the underlying data directly without a full re-render
+    // (see the input handlers below) so focus/cursor position isn't lost while typing.
+    renderPughPanel() {
+        if (!this.pughPanelBody) return;
+        const m = this.pughMatrix;
+        this.pughPanelBody.innerHTML = '';
+        this.pughPanelBody.style.display = this._leftPanelMode === 'pugh' ? 'flex' : 'none';
+
+        // Toolbar
+        const toolbar = document.createElement('div');
+        toolbar.className = 'pugh-toolbar';
+        const addCritBtn = document.createElement('button');
+        addCritBtn.textContent = '+ Add Criteria';
+        addCritBtn.addEventListener('click', () => this.addPughCriteria());
+        const addColBtn = document.createElement('button');
+        addColBtn.textContent = '+ Add Solution';
+        addColBtn.addEventListener('click', () => this.addPughColumn());
+        toolbar.appendChild(addCritBtn);
+        toolbar.appendChild(addColBtn);
+        this.pughPanelBody.appendChild(toolbar);
+
+        if (m.columns.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'pugh-empty-state';
+            empty.textContent = 'No solutions yet - click "+ Add Solution" to start comparing options.';
+            this.pughPanelBody.appendChild(empty);
+            return;
+        }
+
+        const wrap = document.createElement('div');
+        wrap.className = 'pugh-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'pugh-table';
+
+        // Header row
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        const critTh = document.createElement('th');
+        critTh.className = 'pugh-criteria-cell';
+        critTh.textContent = 'Criteria';
+        headRow.appendChild(critTh);
+        const weightTh = document.createElement('th');
+        weightTh.textContent = 'Weight';
+        headRow.appendChild(weightTh);
+
+        m.columns.forEach(col => {
+            const th = document.createElement('th');
+            th.className = 'pugh-col-header';
+
+            const row = document.createElement('div');
+            row.className = 'pugh-col-header-row';
+
+            // A textarea (not a single-line input) so long solution names wrap onto
+            // multiple lines instead of being clipped or scrolling horizontally.
+            const titleInput = document.createElement('textarea');
+            titleInput.className = 'pugh-col-title-input';
+            titleInput.rows = 1;
+            titleInput.value = col.title || '';
+            titleInput.placeholder = 'Solution name';
+            titleInput.addEventListener('input', () => {
+                col.title = titleInput.value;
+                this._pendingPughSave = true;
+                this.resizeReflectionAnswer(titleInput);
+            });
+            titleInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    titleInput.blur();
+                }
+            });
+            titleInput.addEventListener('blur', () => {
+                if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
+            });
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'pugh-delete-col-btn';
+            delBtn.title = 'Delete this solution column';
+            delBtn.textContent = '\u00d7';
+            delBtn.addEventListener('click', () => this.deletePughColumn(col.id));
+
+            row.appendChild(titleInput);
+            row.appendChild(delBtn);
+            th.appendChild(row);
+            headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        // Highest base score per column, used to highlight that single cell (or
+        // cells, in a tie) below - skipped for columns where every score is equal
+        // (nothing to single out) or there's only one criterion to compare.
+        const maxScorePerColumn = {};
+        m.columns.forEach(col => {
+            if (m.criteria.length < 2) { maxScorePerColumn[col.id] = null; return; }
+            const scores = m.criteria.map(crit => this.getPughScore(crit.id, col.id));
+            const allEqual = scores.every(s => s === scores[0]);
+            maxScorePerColumn[col.id] = allEqual ? null : Math.max(...scores);
+        });
+
+        // Body rows (one per criterion)
+        const tbody = document.createElement('tbody');
+        m.criteria.forEach(crit => {
+            const tr = document.createElement('tr');
+
+            const nameTd = document.createElement('td');
+            nameTd.className = 'pugh-criteria-cell';
+            const nameRow = document.createElement('div');
+            nameRow.style.display = 'flex';
+            nameRow.style.alignItems = 'center';
+            nameRow.style.gap = '4px';
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.className = 'pugh-criteria-input';
+            nameInput.value = crit.name || '';
+            nameInput.placeholder = 'Criteria name';
+            nameInput.addEventListener('input', () => {
+                crit.name = nameInput.value;
+                this._pendingPughSave = true;
+            });
+            nameInput.addEventListener('blur', () => {
+                if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
+            });
+            const delRowBtn = document.createElement('button');
+            delRowBtn.className = 'pugh-delete-row-btn';
+            delRowBtn.title = 'Delete this criteria';
+            delRowBtn.textContent = '\u00d7';
+            delRowBtn.addEventListener('click', () => this.deletePughCriteria(crit.id));
+            nameRow.appendChild(nameInput);
+            nameRow.appendChild(delRowBtn);
+            nameTd.appendChild(nameRow);
+            tr.appendChild(nameTd);
+
+            const weightTd = document.createElement('td');
+            const weightInput = document.createElement('input');
+            weightInput.type = 'number';
+            weightInput.className = 'pugh-weight-input';
+            weightInput.value = (typeof crit.weight === 'number' && !isNaN(crit.weight)) ? crit.weight : 1;
+            weightInput.addEventListener('input', () => {
+                const v = parseFloat(weightInput.value);
+                crit.weight = isNaN(v) ? 0 : v;
+                this._pendingPughSave = true;
+                this.refreshPughComputedDisplays();
+            });
+            weightInput.addEventListener('blur', () => {
+                if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
+            });
+            weightTd.appendChild(weightInput);
+            tr.appendChild(weightTd);
+
+            m.columns.forEach(col => {
+                const td = document.createElement('td');
+                td.className = 'pugh-score-cell';
+                td.dataset.critId = crit.id;
+                td.dataset.colId = col.id;
+                const score = this.getPughScore(crit.id, col.id);
+                if (maxScorePerColumn[col.id] !== null && score === maxScorePerColumn[col.id]) {
+                    td.classList.add('pugh-top-score-cell');
+                }
+                const scoreInput = document.createElement('input');
+                scoreInput.type = 'number';
+                scoreInput.className = 'pugh-score-input';
+                scoreInput.value = score;
+                scoreInput.dataset.critId = crit.id;
+                scoreInput.dataset.colId = col.id;
+                scoreInput.addEventListener('input', () => {
+                    const v = parseFloat(scoreInput.value);
+                    this.setPughScore(crit.id, col.id, isNaN(v) ? 0 : v);
+                    this._pendingPughSave = true;
+                    this.refreshPughComputedDisplays();
+                });
+                scoreInput.addEventListener('blur', () => {
+                    if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
+                });
+                td.appendChild(scoreInput);
+                tr.appendChild(td);
+            });
+
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        // Totals row - label left-aligned, and one cell per solution column so the
+        // totals line up directly under their column's score cells above.
+        const tfoot = document.createElement('tfoot');
+        const totalsRow = document.createElement('tr');
+        totalsRow.className = 'pugh-total-row';
+        totalsRow.id = 'pugh-totals-row';
+        const totalLabelTd = document.createElement('td');
+        totalLabelTd.colSpan = 2;
+        totalLabelTd.textContent = 'Total Weighted Score';
+        totalLabelTd.style.textAlign = 'left';
+        totalsRow.appendChild(totalLabelTd);
+
+        const totals = m.columns.map(col => this.computePughColumnTotal(col.id));
+        const maxTotal = totals.length ? Math.max(...totals) : null;
+        const hasSpread = totals.some(t => t !== totals[0]);
+        m.columns.forEach((col, i) => {
+            const td = document.createElement('td');
+            td.className = 'pugh-score-cell';
+            td.dataset.colId = col.id;
+            td.textContent = totals[i];
+            if (m.criteria.length > 0 && maxTotal !== null && totals[i] === maxTotal && hasSpread) {
+                td.classList.add('pugh-max-weighted-cell');
+            }
+            totalsRow.appendChild(td);
+        });
+        tfoot.appendChild(totalsRow);
+        table.appendChild(tfoot);
+
+        wrap.appendChild(table);
+        this.pughPanelBody.appendChild(wrap);
+
+        this.applyMobileViewState();
+        this.pughPanelBody.querySelectorAll('.pugh-col-title-input').forEach(ta => {
+            this.resizeReflectionAnswer(ta);
+        });
+    }
+
+    // Cheap update used while typing weights/scores: recomputes the totals row and
+    // the per-column top-score highlight in place, instead of rebuilding (and losing
+    // focus/cursor position in) the whole table.
+    refreshPughComputedDisplays() {
+        const m = this.pughMatrix;
+
+        const maxScorePerColumn = {};
+        m.columns.forEach(col => {
+            if (m.criteria.length < 2) { maxScorePerColumn[col.id] = null; return; }
+            const scores = m.criteria.map(crit => this.getPughScore(crit.id, col.id));
+            const allEqual = scores.every(s => s === scores[0]);
+            maxScorePerColumn[col.id] = allEqual ? null : Math.max(...scores);
+        });
+        this.pughPanelBody.querySelectorAll('.pugh-score-cell[data-crit-id]').forEach(td => {
+            const critId = td.dataset.critId;
+            const colId = td.dataset.colId;
+            const score = this.getPughScore(critId, colId);
+            const isTop = maxScorePerColumn[colId] !== null && score === maxScorePerColumn[colId];
+            td.classList.toggle('pugh-top-score-cell', isTop);
+        });
+
+        const row = document.getElementById('pugh-totals-row');
+        if (!row) return;
+        const totals = m.columns.map(col => this.computePughColumnTotal(col.id));
+        const maxTotal = totals.length ? Math.max(...totals) : null;
+        const hasSpread = totals.some(t => t !== totals[0]);
+        const cells = row.querySelectorAll('td[data-col-id]');
+        cells.forEach((td, i) => {
+            td.textContent = totals[i];
+            const isMax = m.criteria.length > 0 && maxTotal !== null && totals[i] === maxTotal && hasSpread;
+            td.classList.toggle('pugh-max-weighted-cell', isMax);
+        });
     }
 
     exportAsJSON() {
@@ -2663,7 +3340,9 @@ class FlowchartViewer {
             })),
             orientation: this.orientation,
             showPlaceholders: this.showPlaceholders,
-            transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k }
+            transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k },
+            pughMatrix: this.pughMatrix,
+            globalNotes: this.globalNotes
         }, null, 2);
     }
 
