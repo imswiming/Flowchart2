@@ -676,7 +676,7 @@ class FlowchartViewer {
                 if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
                     this.currentSlotIndex = 0;
                 }
-                this.loadFlowchartFromList(this.currentSlotIndex);
+                this.loadFlowchartFromList(this.currentSlotIndex, { skipSaveCurrent: true });
                 this._applyingRemote = false;
                 this.showNotification('Synced latest changes from another device.');
             }
@@ -903,10 +903,14 @@ class FlowchartViewer {
         this.showNotification('New flowchart created!');
     }
     
-    loadFlowchartFromList(index) {
+    // `skipSaveCurrent` is used when reloading the slot that's already open (e.g. a
+    // cloud sync pull applying a remote update in place) - saving "current" first in
+    // that case would just re-serialize the stale in-memory tree straight back over
+    // the freshly-pulled remote data before it's ever read.
+    loadFlowchartFromList(index, options = {}) {
         if (index >= this.flowchartList.length) return;
         
-        if (this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
+        if (!options.skipSaveCurrent && this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
             this.saveCurrentFlowchart();
         }
         
