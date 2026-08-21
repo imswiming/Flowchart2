@@ -1025,14 +1025,6 @@ body {
     /* Mobile-only: match the top mobile toolbar buttons (.zoom-btn) - same
        background colour, no border/stroke - instead of the light #f0f0f0 desktop
        styling from the general node-edit-popup button rule above. */
-    #node-action-btns button,
-    #node-sibling-btns button,
-    #node-move-btns button {
-        background: var(--control-bg) !important;
-        color: var(--text) !important;
-        border: none !important;
-    }
-
     #node-action-btns button {
         flex: 0 1 auto !important;
         min-width: 0 !important;
