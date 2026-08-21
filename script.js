@@ -1,5 +1,9 @@
 class FlowchartViewer {
     constructor() {
+        // Shared with computeIndentedContour/updateStickyAncestors/renderFlowchart so
+        // there's one source of truth for the node box's width in local (pre-zoom)
+        // units, rather than three separately hardcoded copies of the same number.
+        this.NODE_WIDTH = 120;
         this.flowchartContainer = document.getElementById('flowchart');
         this.flowchartPanel = document.getElementById('flowchart-panel');
         // Top-right controls: previously zoom in/out/reset, now undo/redo/open.
@@ -1401,7 +1405,11 @@ class FlowchartViewer {
         const leftBound = this.getStickyLeftBound();
         const k = this.transform.k;
         const tx = this.transform.x;
-        const localStickyX = (leftBound - tx) / k;
+        // Nodes are drawn centered on their x - shifting the docked position right by
+        // a full node width (rather than leaving it exactly at leftBound, which would
+        // land the node's center right on the boundary and hide its left half) puts
+        // the whole node clear of the boundary/panel, with a bit of breathing room.
+        const localStickyX = (leftBound - tx) / k + this.NODE_WIDTH;
 
         root.eachAfter(d => {
             const trueScreenX = d.x * k + tx;
@@ -2457,7 +2465,7 @@ class FlowchartViewer {
         });
         if (!targetEl) return;
 
-        const NODE_WIDTH = 120;
+        const NODE_WIDTH = this.NODE_WIDTH;
         const LINE_HEIGHT = 18;
         const PADDING_Y = 12;
         const FONT_SIZE = 13;
@@ -4572,7 +4580,7 @@ class FlowchartViewer {
                 this.refreshRadialButtons();
             });
 
-        const NODE_WIDTH = 120;
+        const NODE_WIDTH = this.NODE_WIDTH;
         const LINE_HEIGHT = 18;
         const PADDING_Y = 12;
         const FONT_SIZE = 13;
@@ -4741,7 +4749,7 @@ class FlowchartViewer {
         });
         if (!targetDatum) return;
 
-        const NODE_WIDTH = 120;
+        const NODE_WIDTH = this.NODE_WIDTH;
         const LINE_HEIGHT = 18;
         const PADDING_Y = 12;
         const btnWidth = 52;
