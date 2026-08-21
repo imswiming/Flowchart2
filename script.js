@@ -218,6 +218,11 @@ class FlowchartViewer {
         this.nodeEditInput = document.getElementById('node-edit-input');
         this.nodeEditForm = document.getElementById('node-edit-form');
         this.nodeBeingEdited = null;
+        // Set the instant a brand-new node's data is created (before it's even in a
+        // rendered hierarchy yet), so childrenAccessor can keep it visible despite
+        // "hide placeholders" being on - nodeBeingEdited itself isn't set until
+        // showNodeEditPopup runs afterwards, which is too late for that first render.
+        this._pendingEditData = null;
 
         // Current active flowchart index
         this.currentSlotIndex = null;
@@ -1392,11 +1397,11 @@ class FlowchartViewer {
 
     // Keeps a node "docked" at the left edge of the visible flowchart area while its
     // true position has been panned off-screen to the left, as long as at least one of
-    // its children (directly, or via its own sticky docking) is still on-screen or
-    // itself docked - i.e. there's a connector line the person would otherwise lose
-    // track of. Docked nodes/links shift right and left along with the pan, and
-    // release back to their true position once panning left brings that position back
-    // past the left bound. Runs after every render and on every pan/zoom tick.
+    // its *real* (non-empty) children is still on-screen or itself docked - i.e.
+    // there's a connector line to real content the person would otherwise lose track
+    // of. Docked nodes/links shift right and left along with the pan, and release back
+    // to their true position once panning left brings that position back past the
+    // docking point. Runs after every render and on every pan/zoom tick.
     updateStickyAncestors() {
         const root = this._lastRenderedRoot;
         const g = this._flowchartG;
@@ -1405,17 +1410,34 @@ class FlowchartViewer {
         const leftBound = this.getStickyLeftBound();
         const k = this.transform.k;
         const tx = this.transform.x;
-        // Nodes are drawn centered on their x - shifting the docked position right by
-        // a full node width (rather than leaving it exactly at leftBound, which would
-        // land the node's center right on the boundary and hide its left half) puts
-        // the whole node clear of the boundary/panel, with a bit of breathing room.
-        const localStickyX = (leftBound - tx) / k + this.NODE_WIDTH;
+        // Nodes are drawn centered on their x - docking a node exactly at leftBound
+        // would put its center right on the boundary and hide its left half, so the
+        // docked position sits one full node-width to the right of it instead.
+        // Using that same dockedScreenX value as the *trigger* threshold too (instead
+        // of triggering right at leftBound and then jumping the node forward by a
+        // node-width once docked) means a node's true position and its docked position
+        // coincide exactly at the moment it needs to dock, so there's no visible jump
+        // at the handoff - and a grandparent further up the chain sees its already-
+        // docked child sitting at this same dockedScreenX, so its own handoff is just
+        // as seamless.
+        const dockedScreenX = leftBound + this.NODE_WIDTH * k;
+        const localStickyX = (dockedScreenX - tx) / k;
 
         root.eachAfter(d => {
             const trueScreenX = d.x * k + tx;
-            const childPastBound = Boolean(d.children) && d.children.some(child => child._effectiveScreenX >= leftBound);
-            if (trueScreenX < leftBound && childPastBound) {
-                d._effectiveScreenX = leftBound;
+            // Placeholder/empty children (typically a trailing "add new" stub sitting
+            // rightmost under a node) don't count as a reason to keep the parent
+            // docked - otherwise the parent would stay stuck to the edge even once
+            // every *real* child has scrolled out of view, just because an empty stub
+            // is still hanging on screen. Real children are checked against leftBound
+            // (not dockedScreenX) here - any child visible at all past the boundary is
+            // reason enough to keep the parent docked, even if that child itself
+            // hasn't reached full dockedScreenX clearance yet.
+            const childPastBound = Boolean(d.children) && d.children.some(child =>
+                !this.isEmptyIndentedNode(child) && child._effectiveScreenX >= leftBound
+            );
+            if (trueScreenX < dockedScreenX && childPastBound) {
+                d._effectiveScreenX = dockedScreenX;
                 d._stickyRenderX = localStickyX;
             } else {
                 d._effectiveScreenX = trueScreenX;
@@ -2029,6 +2051,7 @@ class FlowchartViewer {
             this.rootData = newParent;
         }
 
+        this._pendingEditData = newParent;
         this.renderFlowchart(this.rootData);
         let found = null;
         d3.hierarchy(this.rootData).each(node => {
@@ -2099,11 +2122,19 @@ class FlowchartViewer {
         if (!parent.data.children) parent.data.children = [];
         const siblings = parent.data.children;
         // Siblings start out empty (placeholder styling) - only newly spawned *child*
-        // nodes default to green (see addChildNode).
-        const newSibling = this.createPlaceholderNode();
+        // nodes default to green (see addChildNode). Deliberately NOT built via
+        // createPlaceholderNode()/_isPlaceholder: that flag means "hideable decorative
+        // stub", which is right for the automatic trailing "add new" placeholder
+        // (ensureRightmostPlaceholderNodes) but wrong here - this node exists because
+        // the person explicitly asked to add a sibling and is about to type into it, so
+        // it must stay visible even with "Hide Placeholders" on. It still starts out
+        // blank and placeholder-*colored* purely for the visual "click to fill in" look
+        // (saveNodeEdit resets that color once a real name is typed in).
+        const newSibling = { name: '', color: this.getPlaceholderColor() };
         const idxPos = siblings.indexOf(d.data);
         const insertAt = direction < 0 ? idxPos : idxPos + 1;
         siblings.splice(insertAt, 0, newSibling);
+        this._pendingEditData = newSibling;
         this.renderFlowchart(this.rootData);
         let found = null;
         d3.hierarchy(this.rootData).each(node => {
@@ -2185,6 +2216,10 @@ class FlowchartViewer {
         if (!d || !d.data) return;
 
         this.nodeBeingEdited = d;
+        // nodeBeingEdited now covers keeping this node visible (see childrenAccessor);
+        // the pending-data flag was only needed to bridge the gap between creating the
+        // node and this popup actually opening for it.
+        if (this._pendingEditData === d.data) this._pendingEditData = null;
         this._suppressPopupHide = false;
         
         // Get the display name without prefixes/suffixes
@@ -2536,7 +2571,7 @@ class FlowchartViewer {
     saveNodeEdit(deferRender = false) {
         if (!this.nodeBeingEdited) return;
         const originalData = this.nodeBeingEdited.data;
-        const wasPlaceholder = this.isPlaceholderNodeData(originalData);
+        const wasPlaceholderLook = this.isPlaceholderNodeData(originalData) || originalData.color === this.getPlaceholderColor();
         const isRootPlaceholder = this.isRootPlaceholderNode(this.nodeBeingEdited);
         let newName = this.getNodeNameFromInput(originalData.color);
 
@@ -2559,7 +2594,13 @@ class FlowchartViewer {
 
         if (nameChanged || needsWrap) {
             this.pushUndo();
-            if (wasPlaceholder) {
+            // markNodeAsReal is a no-op on a node that was never placeholder-flagged or
+            // placeholder-colored, so it's safe to call any time the name actually
+            // changed - this also catches a newly created sibling that starts out
+            // *looking* like a placeholder (blank name, placeholder-gray color) without
+            // necessarily carrying the _isPlaceholder flag itself, so its color still
+            // resets to green once a real name is typed in.
+            if (wasPlaceholderLook) {
                 this.markNodeAsReal(originalData);
             }
             originalData.name = newName;
@@ -4385,7 +4426,14 @@ class FlowchartViewer {
             // The root placeholder (the tree's own top node) is never filtered here since this
             // accessor only ever hides *children* of a node, never the node passed in as root.
             if (this.showPlaceholders) return d.children;
-            return d.children.filter(child => !this.isPlaceholderNodeData(child));
+            // The node currently open in the edit popup is always kept, even on the off
+            // chance it's flagged placeholder (e.g. via the explicit "Empty" button) -
+            // otherwise, with "hide placeholders" on, editing a node and picking that
+            // color would yank it off the canvas out from under the person mid-edit.
+            const editingData = this.nodeBeingEdited ? this.nodeBeingEdited.data : null;
+            return d.children.filter(child =>
+                !this.isPlaceholderNodeData(child) || child === editingData || child === this._pendingEditData
+            );
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
         this._lastRenderedRoot = root;
