@@ -1,150 +1,634 @@
-The outline below represents a tree-structured flowchart. Format:
-- Each line is one node; indentation (4 spaces per level) shows parent/child nesting - a node's children are the lines directly below it indented one level deeper.
-- Every node line starts with "- ".
-- A line prefixed "(solution) " is a Solution node (green).
-- A line prefixed "(assumption) " is an Assumption node (pink).
-- A line with neither prefix is a plain/neutral node.
-- A line may end with a "[color=NAME]" tag (blue, yellow, or empty) to set a non-default color; omit it for plain/solution/assumption nodes.
-When editing or regenerating this tree, keep the same indentation, "- " bullets, and prefixes/tags so it can be re-imported.
+<!DOCTYPE html>
+<html lang="en">
 
-=== TREE START (parse everything below this line) ===
--  [color=empty]
-    - (solution) Flatpack Backyard gym/monkey bars
-        - (solution) Prototyping methods
-            - (solution) Straws
-            - (solution) Popsicle sticks
-            - (solution) Timber
-            - (solution) Plumbing pipes
-            -  [color=empty]
-        - Box restricted to 1170x570x270 mass = 28kg [color=yellow]
-            - (solution) Tape measure pullout
-                - (assumption) weak torsional resistance
-                -  [color=empty]
-            - (solution) Multiple pieces connected
-            - (solution) Inflatable
-            - (solution) Flatpack lasercut
-            - (solution) Tensegrity
-            - (solution) Cables of unlimited length
-            - (solution) Single piece/ origami/ compliant
-                -  [color=empty]
-            - (solution) Folded or rolled sheet metal, when unfolded it forms C channel
-                -  [color=empty]
-            - (solution) Nested pipes (like telescopic)
-            -  [color=empty]
-        - Maximal rigidity across multiple chains of connections [color=yellow]
-            - (solution) Threaded connections
-                - (assumption) not as manufacturable?
-                    - (solution) Injection mould
-                    - (solution) Cast
-                    - (solution) Machine
-                    - (solution) Roll-form the threads instead of cutting them — cold-rolled threads on tube ends are cheap, fast, and actually stronger (work-hardened) than cut threads, no material removal needed.
-                    -  [color=empty]
-                - (assumption) How do you connect ends where you cannot rotate the object at the end
-                    - (solution) Dont use threads at the ends, only between members
-                    - (solution) Pipe union joint
-                        - (assumption) how do you tighten multiple joins at the same time (eg two bars for monkey bars)
-                            - (solution) Sleeve
-                                - (solution) Start turning both pipes at same time
-                                    - (assumption) difficult to start two joins at the same time and have them butt at the same time
-                                        - (solution) Internal sleeve can be started offset on one pipe and they will still meet perfectly (even if sleeve is offset inside)
-                                        -  [color=empty]
-                                    -  [color=empty]
-                                - (solution) Start turning pipes at different points
-                                -  [color=empty]
-                            - (solution) Collar
-                                - (assumption) how to get collar on pipe but behind butt (manufacturing)
-                                    - (solution) Short strip of thread on male pipe, once collar is past it thread acts as butt
-                                        - (assumption) thread on male pipe alone is acting as butt, is this strong enough?
-                                        -  [color=empty]
-                                    -  [color=empty]
-                                -  [color=empty]
-                            -  [color=empty]
-                        -  [color=empty]
-                    -  [color=empty]
-                - (solution) Locating features embeded along length of pole
-                    - (assumption) need pole to sit in exact position
-                        - (solution) Can use spring at the end of travel to start compressing joint before it reaches the end
-                        - (solution) Use tight thread tolerance
-                        - (solution) Use very short thread
-                        - (solution) Pipe union
-                        -  [color=empty]
-                    -  [color=empty]
-                - (solution) Locating features attached to pole
-                -  [color=empty]
-            - (solution) Cam connection like flask bottle
-                - (assumption) needs compression?
-                    - (solution) Spring
-                    -  [color=empty]
-                - (assumption) Compression strength not as high as thread
-                -  [color=empty]
-            - (solution) Prestress across members
-                - (assumption) Need opposing force to tension
-                    - (solution) Curved bars that bend straight under tension
-                    - (solution) Curved connectors
-                    - (solution) Run cable around both sides
-                    - (solution) Each connector has a spring at the join, compress along span with tension
-                    -  [color=empty]
-                - (solution) Inside tubes
-                    - (assumption) how to tension cable while it is inside the tubes
-                        - (solution) Have one pipe with exposed hole with access to tensioner
-                        - (solution) Tension from outside
-                        -  [color=empty]
-                    -  [color=empty]
-                - (solution) Outside tube
-                    - (assumption) aesthetics
-                    -  [color=empty]
-                -  [color=empty]
-            - (solution) Tapered socket connection
-                - (assumption) Must push hard to force joints together
-                -  [color=empty]
-            - (solution) Large overlap between connectors
-                - (assumption) loose tolerances compound along length
-                -  [color=empty]
-            - (solution) Cross bracing
-                - (assumption) space obstruction
-                    - (solution) Place them strategically
-                    -  [color=empty]
-                -  [color=empty]
-            - (solution) Fabric or foldable/rollable sheet metal/mesh
-            - (solution) Bend/bow pipes away from gravity so they sit flat when put together
-            - (solution) Strengthening junctions
-                - (solution) T shape bracing at corners
-                    - (solution) Flat/folded sheet metal
-                        - (solution) Through bolt to pipe
-                            - (assumption) wiggle at connections between pipe, bolt, and plate
-                            -  [color=empty]
-                        - (solution) Threaded holes in pipes
-                        - (solution) Folded sheet around pipe
-                        - (solution) External thread on pipe that threads into saddle thread
-                        - (solution) Outer sleeve that clamps plate to pipe
-                        -  [color=empty]
-                    -  [color=empty]
-                - (solution) Cable
-                - (solution) Long arms for junction connector
-                - (solution) No bracing
-                -  [color=empty]
-            -  [color=empty]
-        - Ease of assembly [color=yellow]
-            - (solution) Minimal bolts
-            - (solution) No bolts
-            - (solution) Tabs
-            - (solution) Continuous outer sleeve
-            - (solution) Pins with lynchpin or similar to position without having to bolt tight
-            - (solution) Non circular socket no bolts + tension
-            -  [color=empty]
-        - Manufacturibility [color=yellow]
-            - (solution) Minimal/no machining
-                - (solution) Socket and spigot pipes
-                - (solution) Flatpack
-                -  [color=empty]
-            - (solution) Machining
-                - (solution) Threads
-                - (solution) Casting
-                - (solution) Injection moulding
-                -  [color=empty]
-            -  [color=empty]
-        - Aesthetics [color=yellow]
-        - Functionality (usability/ ergonomics) [color=yellow]
-        - Level of entertainment [color=yellow]
-        -  [color=empty]
-    -  [color=empty]
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
+  <title>Flowchart Editor</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="script.js" defer></script>
+  <style>
+    /* Hamburger menu styles */
+    .hamburger-menu {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      background: var(--control-bg);
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      pointer-events: all;
+    }
+
+    .hamburger-menu span {
+      display: block;
+      width: 25px;
+      height: 3px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: 0.3s;
+    }
+
+    .hamburger-menu.active span:nth-child(1) {
+      transform: rotate(45deg) translate(5px, 5px);
+    }
+
+    .hamburger-menu.active span:nth-child(2) {
+      opacity: 0;
+    }
+
+    .hamburger-menu.active span:nth-child(3) {
+      transform: rotate(-45deg) translate(5px, -5px);
+    }
+
+    .hamburger-dropdown {
+      position: absolute;
+      top: 60px;
+      left: 15px;
+      background: var(--popup-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 0;
+      z-index: 201;
+      display: none;
+      flex-direction: column;
+      min-width: 180px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      pointer-events: all;
+    }
+
+    .hamburger-dropdown.open {
+      display: flex;
+    }
+
+    .hamburger-dropdown .menu-item {
+      padding: 10px 20px;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+      border: none;
+      background: transparent;
+      text-align: left;
+      width: 100%;
+      white-space: nowrap;
+    }
+
+    .hamburger-dropdown .menu-item:hover {
+      background: var(--control-hover);
+    }
+
+    .hamburger-dropdown .menu-item:not(:last-child) {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .hamburger-dropdown .menu-item.disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    @media (max-width: 600px) {
+      .hamburger-menu {
+        display: flex;
+      }
+
+      .zoom-controls {
+        top: 15px;
+        right: 15px;
+        flex-direction: row;
+        gap: 6px;
+      }
+
+      #top-cloud-sync-btn {
+        display: none !important;
+      }
+
+      .reset-view-controls .desktop-controls {
+        display: none !important;
+      }
+
+      .reset-view-controls {
+        position: static;
+        width: 100vw;
+        align-items: stretch;
+        margin: 0;
+        right: 0;
+        bottom: 0;
+      }
+
+      .reset-view-controls>div {
+        flex-direction: column !important;
+        gap: 6px !important;
+        width: 100%;
+      }
+
+      #connection-controls-row {
+        width: 100% !important;
+        justify-content: stretch !important;
+        padding: 0 10px;
+        box-sizing: border-box;
+      }
+
+      #connection-controls {
+        flex-direction: column !important;
+        gap: 6px !important;
+        width: 100%;
+      }
+
+      .reset-view-btn,
+      #connection-controls button {
+        width: 100% !important;
+        min-width: 0 !important;
+        font-size: 15px !important;
+        margin-top: 0 !important;
+        box-sizing: border-box;
+      }
+
+      #flowchart {
+        position: fixed !important;
+        inset: 0 !important;
+        height: 100vh !important;
+        min-height: 400px !important;
+        width: 100vw !important;
+        min-width: 0 !important;
+        display: block !important;
+        background: var(--bg) !important;
+        overflow: auto !important;
+      }
+
+      /* Other mobile styles from original CSS */
+      #export-popup,
+      #import-popup,
+      #cloud-sync-popup {
+        min-width: 95vw !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        padding: 10px 4vw !important;
+      }
+
+      #export-textarea,
+      #import-textarea {
+        font-size: 13px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+      }
+
+      #node-edit-popup {
+        min-width: 90vw !important;
+        max-width: 95vw !important;
+        width: 95vw !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        padding: 10px 8px !important;
+      }
+
+      #node-edit-input {
+        font-size: 15px !important;
+      }
+
+      #storage-popup {
+        min-width: 95vw !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        padding: 12px 4vw !important;
+        max-height: 80vh !important;
+      }
+
+      #storage-slots {
+        max-height: 50vh !important;
+      }
+
+      .storage-slot {
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+      }
+
+      .storage-slot button {
+        font-size: 12px !important;
+        padding: 4px 8px !important;
+      }
+
+      #node-action-btns {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        justify-content: center !important;
+      }
+
+      #node-action-btns button {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        font-size: 13px !important;
+        padding: 6px 12px !important;
+        white-space: nowrap !important;
+      }
+
+      #node-sibling-btns {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        justify-content: center !important;
+      }
+
+      #node-sibling-btns button {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        font-size: 13px !important;
+        padding: 6px 12px !important;
+        white-space: nowrap !important;
+      }
+
+      #node-move-btns {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        justify-content: center !important;
+      }
+
+      #node-move-btns button {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        font-size: 13px !important;
+        padding: 6px 12px !important;
+        white-space: nowrap !important;
+      }
+
+      #node-color-btns {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+        justify-content: center !important;
+      }
+
+      #node-color-btns button {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        font-size: 12px !important;
+        padding: 4px 10px !important;
+        white-space: nowrap !important;
+      }
+
+      #export-popup div:last-child button,
+      #import-popup div:last-child button {
+        font-size: 14px !important;
+        padding: 6px 12px !important;
+      }
+
+      html,
+      body,
+      .container,
+      .flowchart-panel {
+        position: fixed !important;
+        inset: 0 !important;
+        height: 100vh !important;
+        min-height: 100vh !important;
+        width: 100vw !important;
+        min-width: 0 !important;
+        overflow: auto !important;
+        background: var(--bg) !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="flowchart-panel" id="flowchart-panel">
+      <div id="flowchart"></div>
+
+      <!-- Hamburger Menu (visible on mobile) -->
+      <div class="hamburger-menu" id="hamburger-menu" aria-label="Menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <!-- Hamburger Dropdown -->
+      <div class="hamburger-dropdown" id="hamburger-dropdown">
+        <button class="menu-item" id="hamburger-undo">↩ Undo</button>
+        <button class="menu-item" id="hamburger-redo">↪ Redo</button>
+        <button class="menu-item" id="hamburger-reset-view">⟲ Reset View</button>
+        <button class="menu-item" id="hamburger-orientation">↕ Top-Down</button>
+        <button class="menu-item" id="hamburger-arrangement">📐 Centered Layout</button>
+        <button class="menu-item" id="hamburger-export">⬇ Export All</button>
+        <button class="menu-item" id="hamburger-import">⬆ Import All</button>
+        <button class="menu-item" id="hamburger-ai-export">🤖 Export to AI</button>
+        <button class="menu-item" id="hamburger-ai-import">🤖 Import from AI</button>
+        <button class="menu-item" id="hamburger-open">📂 Open</button>
+        <button class="menu-item" id="hamburger-toggle-placeholders">👻 Hide Placeholders</button>
+        <button class="menu-item" id="hamburger-cloud-sync">☁ Cloud Sync</button>
+        <button class="menu-item" id="hamburger-pugh-matrix">📊 Pugh Matrix</button>
+        <button class="menu-item" id="hamburger-notes">📝 Notes</button>
+      </div>
+
+      <div class="zoom-controls">
+        <div class="zoom-btn" id="top-undo-btn" title="Undo">↩</div>
+        <div class="zoom-btn" id="top-redo-btn" title="Redo">↪</div>
+        <div class="zoom-btn" id="top-open-btn" title="Open">📂</div>
+        <div class="zoom-btn" id="top-toggle-placeholders-btn" title="Show/Hide Placeholders">👻</div>
+        <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
+        <div class="zoom-btn" id="top-pugh-matrix-btn" title="Pugh Matrix">📊</div>
+        <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
+        <div class="zoom-btn" id="top-toggle-reflection-btn" title="Toggle text fields/chart view" style="display:none;">⇄</div>
+      </div>
+
+      <div class="reset-view-controls">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <!-- Desktop controls (hidden on mobile) -->
+          <div class="desktop-controls" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div class="reset-view-btn" id="undo-btn">Undo</div>
+            <div class="reset-view-btn" id="redo-btn">Redo</div>
+            <div class="reset-view-btn" id="reset-view">Reset View</div>
+            <div class="reset-view-btn" id="orientation-btn">↕ Top-Down</div>
+            <div class="reset-view-btn" id="arrangement-btn">📐 Centered Layout</div>
+            <div class="reset-view-btn" id="export-btn">Export All</div>
+            <div class="reset-view-btn" id="import-btn">Import All</div>
+            <div class="reset-view-btn" id="ai-export-btn" style="background:#00a67e;color:white;">🤖 Export to AI</div>
+            <div class="reset-view-btn" id="ai-import-btn" style="background:#00a67e;color:white;">🤖 Import from AI</div>
+            <div class="reset-view-btn" id="open-btn">📂 Open</div>
+            <div class="reset-view-btn" id="toggle-placeholders-btn">👻 Hide Placeholders</div>
+            <div class="reset-view-btn" id="cloud-sync-btn">☁ Cloud Sync</div>
+            <div class="reset-view-btn" id="pugh-matrix-btn">📊 Pugh Matrix</div>
+            <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
+          </div>
+          <div id="cloud-sync-status" style="display:none; font-size:12px; color:var(--text); opacity:0.75; margin-top:2px; text-align:right;"></div>
+
+          <!-- Move connection controls row -->
+          <div id="connection-controls-row"
+            style="display:none; width:100%; justify-content:flex-start; margin-bottom:4px;">
+            <div id="connection-controls" style="display:flex; gap: 4px;">
+              <button id="move-connection-left" class="reset-view-btn" style="width:auto; margin-top:0;">&larr; Move
+                Left</button>
+              <button id="move-connection-right" class="reset-view-btn" style="width:auto; margin-top:0;">Move Right
+                &rarr;</button>
+              <button id="delete-connection-btn" class="reset-view-btn"
+                style="width:auto; background:#ffe0e0; border-color:#ffaaaa; color:#a00;">Delete
+                Connector</button>
+            </div>
+          </div>
+
+          <!-- Node delete button row -->
+          <div id="node-controls-row" style="display:none; width:100%; justify-content:flex-end; margin-top:4px;">
+            <!-- Delete Node button removed -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Left panel: guided questions (Assumption/Simplify nodes) or Pugh Matrix, with
+         a persistent global Notes strip pinned below whichever one is showing -->
+    <div id="reflection-panel">
+      <div id="reflection-panel-header">
+        <button id="reflection-panel-back-btn" title="Back to node edit view">⇄</button>
+        <div id="left-panel-tabs">
+          <button class="left-panel-tab active" id="left-panel-tab-questions" data-mode="questions">Questions</button>
+          <button class="left-panel-tab" id="left-panel-tab-pugh" data-mode="pugh">Pugh Matrix</button>
+        </div>
+        <button id="notes-unfold-btn" title="Show Questions/Pugh Matrix">&#9650; Show</button>
+        <div id="left-panel-zoom-controls">
+          <button id="left-panel-zoom-out" title="Zoom out">&minus;</button>
+          <span id="left-panel-zoom-level">100%</span>
+          <button id="left-panel-zoom-in" title="Zoom in">&plus;</button>
+        </div>
+        <button id="reflection-panel-close" title="Close">&times;</button>
+      </div>
+      <div id="left-panel-main">
+        <div id="reflection-panel-body"></div>
+        <div id="pugh-panel-body" style="display:none;"></div>
+      </div>
+      <div id="notes-resize-handle" title="Drag to resize"></div>
+      <div id="notes-panel-body"></div>
+      <div id="reflection-panel-resize-handle"></div>
+    </div>
+
+    <!-- Node text edit popup -->
+    <div id="node-edit-popup"
+      style="display:none; position:absolute; left:50%; bottom:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:16px; min-width:260px; max-width:min(520px, 90vw); box-sizing:border-box;">
+      <form id="node-edit-form" style="display:flex; gap:10px; align-items:center;">
+        <textarea id="node-edit-input" rows="1" wrap="soft"
+          style="flex:1; width:100%; font-size:16px; padding:4px 8px; border-radius:4px; border:1px solid #aaa; font-family:Arial, sans-serif; resize:none; overflow:hidden; white-space:pre-wrap; word-wrap:break-word; line-height:1.3; min-height:26px; max-height:40vh; box-sizing:border-box;"></textarea>
+      </form>
+    </div>
+
+    <!-- Export popup -->
+    <div id="export-popup"
+      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:16px; min-width:340px;">
+      <div style="margin-bottom:8px; font-weight:bold;">Exported Flowcharts</div>
+      <textarea id="export-textarea"
+        style="width:100%; height:300px; font-size:14px; border-radius:4px; border:1px solid #aaa; resize:vertical;"
+        readonly></textarea>
+      <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+        <button id="close-export-btn"
+          style="font-size:15px; padding:6px 18px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
+      </div>
+    </div>
+
+    <!-- Import popup -->
+    <div id="import-popup"
+      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:16px; min-width:340px;">
+      <div style="margin-bottom:8px; font-weight:bold;">Import Flowcharts (JSON)</div>
+      <textarea id="import-textarea"
+        style="width:100%; height:200px; font-size:14px; border-radius:4px; border:1px solid #aaa; resize:vertical;"></textarea>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
+        <button id="import-confirm-btn"
+          style="font-size:15px; padding:6px 18px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer;">Import</button>
+        <button id="close-import-btn"
+          style="font-size:15px; padding:6px 18px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Storage popup -->
+    <div id="storage-popup">
+      <div style="margin-bottom:8px; font-weight:bold;">Saved Flowcharts</div>
+      <div style="margin-bottom:12px;">
+        <button id="new-flowchart-btn" style="padding:8px 16px; background:#00a67e; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
+          + New Flowchart
+        </button>
+      </div>
+      <div id="storage-slots"></div>
+      <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+        <button id="close-storage-btn"
+          style="font-size:15px; padding:6px 18px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
+      </div>
+    </div>
+
+    <!-- Cloud Sync popup -->
+    <div id="cloud-sync-popup"
+      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
+      <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (Supabase)</div>
+      <div style="margin-bottom:10px; line-height:1.4;">
+        Free tier, generous limits. Create a project at <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">supabase.com/dashboard</a>,
+        then in the SQL Editor run:
+        <pre style="white-space:pre-wrap; background:#f4f4f4; border:1px solid #ddd; border-radius:4px; padding:8px; margin:6px 0; font-size:12px;">create table flowchart_sync (
+  id text primary key,
+  updated_at bigint,
+  data jsonb
+);
+alter table flowchart_sync enable row level security;
+create policy "allow all" on flowchart_sync
+  for all using (true) with check (true);</pre>
+        Then go to <b>Project Settings &gt; API</b>, copy the <b>Project URL</b> and the <b>anon public</b> key below,
+        and click "Create New Sync" once. Enter the same URL, key, and Sync ID on your other devices to sync between them.
+      </div>
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Project URL</label>
+      <input id="cloud-sync-url-input" type="text" placeholder="https://xxxxxxxx.supabase.co"
+        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Anon/Public API Key</label>
+      <input id="cloud-sync-key-input" type="text" placeholder="eyJhbGciOi..."
+        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
+      <label style="display:block; margin-bottom:4px; font-weight:bold;">Sync ID</label>
+      <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <input id="cloud-sync-bin-input" type="text" placeholder="Leave blank, then Create New Sync"
+          style="flex:1; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa;">
+        <button id="cloud-sync-create-bin-btn"
+          style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Sync</button>
+      </div>
+      <div id="cloud-sync-popup-status" style="min-height:18px; margin-bottom:8px; font-size:13px;"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+        <button id="cloud-sync-disconnect-btn"
+          style="font-size:13px; padding:6px 12px; border:1px solid #ffaaaa; border-radius:5px; background:#ffe0e0; color:#a00; cursor:pointer;">Disconnect</button>
+        <div style="display:flex; gap:8px;">
+          <button id="cloud-sync-save-btn"
+            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer;">Save & Sync Now</button>
+          <button id="close-cloud-sync-btn"
+            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== KEYBOARD OVERLAY (don't let the on-screen keyboard push the chart up) =====
+    // Two things normally make the keyboard "push" mobile content up:
+    //  1. CSS vh units and window.innerHeight can track the shrunk visual viewport in
+    //     some browsers once the keyboard opens.
+    //  2. The browser scrolls the page to bring the focused input into view.
+    // interactive-widget=overlays-content (see the viewport meta tag) fixes both for
+    // browsers that support it. This is the fallback for the rest (notably iOS Safari):
+    // pin --app-height to the pre-keyboard layout height, and cancel any scroll the
+    // visual viewport reports once the keyboard is open.
+    (function() {
+      let lastWidth = window.innerWidth;
+      const setAppHeight = () => {
+        document.documentElement.style.setProperty('--app-height', window.innerHeight + 'px');
+      };
+      setAppHeight();
+
+      window.addEventListener('resize', () => {
+        const widthChanged = window.innerWidth !== lastWidth;
+        lastWidth = window.innerWidth;
+        // The keyboard opening changes height without changing width; a real window
+        // resize or orientation change changes width too (or there's no visualViewport
+        // available to otherwise tell the two apart).
+        if (widthChanged || !window.visualViewport) {
+          setAppHeight();
+        }
+      });
+      window.addEventListener('orientationchange', () => {
+        setTimeout(() => {
+          lastWidth = window.innerWidth;
+          setAppHeight();
+        }, 100);
+      });
+
+      if (window.visualViewport) {
+        const vv = window.visualViewport;
+        const resetScroll = () => {
+          if (window.scrollX !== 0 || window.scrollY !== 0) {
+            window.scrollTo(0, 0);
+          }
+        };
+        vv.addEventListener('resize', resetScroll);
+        vv.addEventListener('scroll', resetScroll);
+      }
+    })();
+
+    // Hamburger menu toggle
+    document.addEventListener('DOMContentLoaded', function() {
+      const hamburgerBtn = document.getElementById('hamburger-menu');
+      const dropdown = document.getElementById('hamburger-dropdown');
+
+      // Toggle dropdown on hamburger click
+      hamburgerBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        this.classList.toggle('active');
+        dropdown.classList.toggle('open');
+      });
+
+      // Close dropdown when clicking outside
+      document.addEventListener('click', function(e) {
+        if (!hamburgerBtn.contains(e.target) && !dropdown.contains(e.target)) {
+          hamburgerBtn.classList.remove('active');
+          dropdown.classList.remove('open');
+        }
+      });
+
+      // Map hamburger menu items to their corresponding buttons
+      const mappings = {
+        'hamburger-undo': 'undo-btn',
+        'hamburger-redo': 'redo-btn',
+        'hamburger-reset-view': 'reset-view',
+        'hamburger-export': 'export-btn',
+        'hamburger-import': 'import-btn',
+        'hamburger-ai-export': 'ai-export-btn',
+        'hamburger-ai-import': 'ai-import-btn',
+        'hamburger-open': 'open-btn',
+        'hamburger-cloud-sync': 'cloud-sync-btn',
+        'hamburger-pugh-matrix': 'pugh-matrix-btn',
+        'hamburger-notes': 'notes-btn'
+      };
+
+      // For each hamburger item, find the original button and trigger click
+      Object.keys(mappings).forEach(hamburgerId => {
+        const menuItem = document.getElementById(hamburgerId);
+        const targetId = mappings[hamburgerId];
+        const targetBtn = document.getElementById(targetId);
+
+        if (menuItem && targetBtn) {
+          menuItem.addEventListener('click', function(e) {
+            e.stopPropagation();
+            targetBtn.click();
+            // Close the dropdown after action
+            hamburgerBtn.classList.remove('active');
+            dropdown.classList.remove('open');
+          });
+        }
+      });
+
+      // Keep undo/redo button states in sync with the hamburger menu items
+      const undoBtn = document.getElementById('undo-btn');
+      const redoBtn = document.getElementById('redo-btn');
+      const hamburgerUndo = document.getElementById('hamburger-undo');
+      const hamburgerRedo = document.getElementById('hamburger-redo');
+
+      function updateHamburgerStates() {
+        if (undoBtn && hamburgerUndo) {
+          const isDisabled = undoBtn.style.opacity === '0.5' || undoBtn.style.pointerEvents === 'none';
+          hamburgerUndo.classList.toggle('disabled', isDisabled);
+        }
+        if (redoBtn && hamburgerRedo) {
+          const isDisabled = redoBtn.style.opacity === '0.5' || redoBtn.style.pointerEvents === 'none';
+          hamburgerRedo.classList.toggle('disabled', isDisabled);
+        }
+      }
+
+      // Observe changes to undo/redo buttons
+      if (undoBtn && redoBtn) {
+        const observer = new MutationObserver(updateHamburgerStates);
+        observer.observe(undoBtn, { attributes: true, attributeFilter: ['style'] });
+        observer.observe(redoBtn, { attributes: true, attributeFilter: ['style'] });
+        // Initial update
+        setTimeout(updateHamburgerStates, 100);
+      }
+
+    });
+  </script>
+</body>
+
+</html>
