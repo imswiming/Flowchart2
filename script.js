@@ -1411,17 +1411,16 @@ class FlowchartViewer {
         const k = this.transform.k;
         const tx = this.transform.x;
         // Nodes are drawn centered on their x - docking a node exactly at leftBound
-        // would put its center right on the boundary and hide its left half, so the
-        // docked position sits one full node-width to the right of it instead.
-        // Using that same dockedScreenX value as the *trigger* threshold too (instead
-        // of triggering right at leftBound and then jumping the node forward by a
-        // node-width once docked) means a node's true position and its docked position
-        // coincide exactly at the moment it needs to dock, so there's no visible jump
-        // at the handoff - and a grandparent further up the chain sees its already-
-        // docked child sitting at this same dockedScreenX, so its own handoff is just
-        // as seamless.
+        // would put its center right on the boundary and hide its left half, so a
+        // docked node's normal resting spot is one full node-width to the right of it
+        // instead. But that's only a *ceiling* - a docked parent must never render to
+        // the right of the qualifying child it's docked on behalf of (that child is
+        // itself moving left as panning continues, and would otherwise end up passing
+        // underneath/behind a parent stuck at a fixed spot). So the actual docked
+        // position is whichever is smaller: this normal offset, or that child's own
+        // current position - the parent tracks the child down until the child itself
+        // goes out of view, rather than sitting still while the child scrolls past it.
         const dockedScreenX = leftBound + this.NODE_WIDTH * k;
-        const localStickyX = (dockedScreenX - tx) / k;
 
         root.eachAfter(d => {
             const trueScreenX = d.x * k + tx;
@@ -1433,12 +1432,26 @@ class FlowchartViewer {
             // (not dockedScreenX) here - any child visible at all past the boundary is
             // reason enough to keep the parent docked, even if that child itself
             // hasn't reached full dockedScreenX clearance yet.
-            const childPastBound = Boolean(d.children) && d.children.some(child =>
-                !this.isEmptyIndentedNode(child) && child._effectiveScreenX >= leftBound
-            );
-            if (trueScreenX < dockedScreenX && childPastBound) {
-                d._effectiveScreenX = dockedScreenX;
-                d._stickyRenderX = localStickyX;
+            const relevantChildren = d.children
+                ? d.children.filter(child => !this.isEmptyIndentedNode(child) && child._effectiveScreenX >= leftBound)
+                : [];
+
+            if (relevantChildren.length === 0) {
+                d._effectiveScreenX = trueScreenX;
+                d._stickyRenderX = d.x;
+                return;
+            }
+
+            const minChildX = Math.min(...relevantChildren.map(child => child._effectiveScreenX));
+            // Same handoff trick as before, generalized: using this same ceiling value
+            // as both the trigger threshold and the docked position itself means the
+            // node's true and docked positions always coincide exactly at the moment
+            // it needs to dock, so there's never a visible jump.
+            const dockCeiling = Math.min(dockedScreenX, minChildX);
+
+            if (trueScreenX < dockCeiling) {
+                d._effectiveScreenX = dockCeiling;
+                d._stickyRenderX = (dockCeiling - tx) / k;
             } else {
                 d._effectiveScreenX = trueScreenX;
                 d._stickyRenderX = d.x;
