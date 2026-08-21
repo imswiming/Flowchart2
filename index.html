@@ -105,6 +105,10 @@
         gap: 6px;
       }
 
+      #top-cloud-sync-btn {
+        display: none !important;
+      }
+
       .reset-view-controls .desktop-controls {
         display: none !important;
       }
@@ -385,6 +389,12 @@
         <div id="left-panel-tabs">
           <button class="left-panel-tab active" id="left-panel-tab-questions" data-mode="questions">Questions</button>
           <button class="left-panel-tab" id="left-panel-tab-pugh" data-mode="pugh">Pugh Matrix</button>
+        </div>
+        <button id="notes-unfold-btn" title="Show Questions/Pugh Matrix">&#9650; Show</button>
+        <div id="left-panel-zoom-controls">
+          <button id="left-panel-zoom-out" title="Zoom out">&minus;</button>
+          <span id="left-panel-zoom-level">100%</span>
+          <button id="left-panel-zoom-in" title="Zoom in">&plus;</button>
         </div>
         <button id="reflection-panel-close" title="Close">&times;</button>
       </div>
