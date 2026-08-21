@@ -1036,6 +1036,7 @@ class FlowchartViewer {
                     if (flowGroup) {
                         d3.select(flowGroup).attr('transform', this.transform);
                     }
+                    this.updateStickyAncestors();
                     this.hideContextMenu();
                     // Dragging/zooming the background hides the radial add-buttons too;
                     // they only come back if the node is clicked again. Gated to real user
@@ -1105,13 +1106,17 @@ class FlowchartViewer {
 
     // On mobile, tapping a node centers it horizontally and vertically in the middle of
     // the top half of the screen, and opens the keyboard via showNodeEditPopup's focus
-    // call. This happens instantly, synchronously alongside opening the popup. Desktop
-    // is unaffected.
+    // call. This happens instantly, synchronously alongside opening the popup. On
+    // desktop, nothing is re-centered (the person's own pan/zoom is left alone) - but
+    // ensureNodeInView still nudges the view just enough to keep the node on-screen, so
+    // e.g. adding a child far out along an already-scrolled-to-the-edge branch doesn't
+    // leave the brand new node clipped off the visible canvas.
     centerNodeOnMobile(d, callback) {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
         const svg = d3.select('#flowchart svg');
         if (!isMobile || !this._zoomBehavior || svg.empty() || !d ||
             !Number.isFinite(d.x) || !Number.isFinite(d.y)) {
+            if (!isMobile) this.ensureNodeInView(d);
             callback();
             return;
         }
@@ -1125,6 +1130,49 @@ class FlowchartViewer {
         const newTransform = d3.zoomIdentity.translate(tx, ty).scale(k);
         svg.call(this._zoomBehavior.transform, newTransform);
         callback();
+    }
+
+    // Pans (never zooms) just enough to bring node `d` fully into view within the
+    // current viewport, if it isn't already - used after adding a node so a newly
+    // created node can never end up positioned outside/clipped by the visible canvas
+    // just because the person had already panned or zoomed in on a different area.
+    // A no-op if the node is already fully visible.
+    ensureNodeInView(d, margin = 60) {
+        if (!d || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
+        const svg = d3.select('#flowchart svg');
+        if (!this._zoomBehavior || svg.empty()) return;
+
+        const width = this.flowchartPanel.clientWidth;
+        const height = this.flowchartPanel.clientHeight;
+        const k = this.transform.k;
+        const screenX = d.x * k + this.transform.x;
+        const screenY = d.y * k + this.transform.y;
+
+        // Generous half-width/height allowance (actual node box is smaller, but
+        // multi-line text can grow it, and it's better to over- than under-estimate
+        // here) so the whole node box clears the edge, not just its center point.
+        const halfNodeW = 70 * k;
+        const halfNodeH = 50 * k;
+
+        let dx = 0;
+        let dy = 0;
+        if (screenX - halfNodeW < margin) {
+            dx = margin - (screenX - halfNodeW);
+        } else if (screenX + halfNodeW > width - margin) {
+            dx = (width - margin) - (screenX + halfNodeW);
+        }
+        if (screenY - halfNodeH < margin) {
+            dy = margin - (screenY - halfNodeH);
+        } else if (screenY + halfNodeH > height - margin) {
+            dy = (height - margin) - (screenY + halfNodeH);
+        }
+
+        if (dx === 0 && dy === 0) return;
+
+        const newTransform = d3.zoomIdentity
+            .translate(this.transform.x + dx, this.transform.y + dy)
+            .scale(k);
+        svg.call(this._zoomBehavior.transform, newTransform);
     }
 
     resetView() {
@@ -1168,15 +1216,24 @@ class FlowchartViewer {
     // frame (x = secondary/sibling-spread axis, y = primary/depth axis), same as
     // d3.tree(), so the existing LR swap that runs after layout still applies.
     //
-    // Each sibling after the first starts only once the *entire* previous sibling's
-    // subtree has been cleared - i.e. at the point its deepest-reaching leaf ended,
-    // not just wherever the two subtrees would first collide row-by-row. That keeps
-    // every subtree in its own lane: no sibling (or its descendants) ever ends up
-    // positioned above/left of another subtree's children just because there
-    // happened to be a gap at that particular row. This is done with a contour: for
-    // each node, node._contour[r] tracks the min/max secondary-axis extent reached
-    // by its subtree r rows below itself, and combinedMax tracks the single furthest
+    // Each *real* (non-empty) sibling after the first starts only once the entire
+    // previous sibling's subtree has been cleared - i.e. at the point its
+    // deepest-reaching leaf ended, not just wherever the two subtrees would first
+    // collide row-by-row - so no real subtree ever ends up positioned above/left of
+    // a neighboring subtree's children. Empty/placeholder siblings are exempt from
+    // this and keep the old tight, row-by-row packing (they're just visual stubs
+    // with no children of their own, so there's nothing for them to visually
+    // collide with - no reason to waste space waiting for a whole neighboring
+    // subtree to clear). This is done with a contour: for each node,
+    // node._contour[r] tracks the min/max secondary-axis extent reached by its
+    // subtree r rows below itself, and combinedMax tracks the single furthest
     // extent reached by anything already placed, across every row.
+    isEmptyIndentedNode(node) {
+        const data = node && node.data;
+        if (!data) return true;
+        return this.isPlaceholderNodeData(data) || !(data.name || '').trim();
+    }
+
     computeIndentedContour(node, secondarySpacing) {
         const children = node.children;
         if (!children || children.length === 0) {
@@ -1210,20 +1267,36 @@ class FlowchartViewer {
         children[0]._secondaryOffset = 0;
         mergeInto(children[0]._contour, 0);
 
-        // Each later sibling starts right after the previous sibling's subtree ended
-        // at its furthest (deepest-reaching) point - not just wherever it first would
-        // have collided - so no part of it can ever sit above/left of a neighboring
-        // subtree's children.
         for (let i = 1; i < children.length; i++) {
             const child = children[i];
             const childContour = child._contour;
-            let childMin = Infinity;
-            childContour.forEach(c => {
-                if (c) childMin = Math.min(childMin, c.min);
-            });
-            if (!isFinite(childMin)) childMin = 0;
+            let offset;
 
-            const offset = (combinedMax + secondarySpacing) - childMin;
+            if (this.isEmptyIndentedNode(child)) {
+                // Empty/placeholder: pack in tightly, row by row - only rows where it
+                // would actually collide with something already placed push it further out.
+                offset = 0;
+                for (let row = 0; row < childContour.length; row++) {
+                    const c = childContour[row];
+                    if (!c) continue;
+                    const parentRow = row + 1;
+                    const existing = combined[parentRow];
+                    if (existing) {
+                        const required = (existing.max + secondarySpacing) - c.min;
+                        if (required > offset) offset = required;
+                    }
+                }
+            } else {
+                // Real node: start only once the previous sibling's entire subtree - down
+                // to its deepest leaf - has been cleared.
+                let childMin = Infinity;
+                childContour.forEach(c => {
+                    if (c) childMin = Math.min(childMin, c.min);
+                });
+                if (!isFinite(childMin)) childMin = 0;
+                offset = (combinedMax + secondarySpacing) - childMin;
+            }
+
             child._secondaryOffset = offset;
             mergeInto(childContour, offset);
         }
@@ -1242,6 +1315,116 @@ class FlowchartViewer {
         (node.children || []).forEach(child => {
             this.assignIndentedPositions(child, secondaryStart + (child._secondaryOffset || 0), depth + 1, primarySpacing);
         });
+    }
+
+    // The parent-to-child connector path (rounded elbow, or a straight line when
+    // source/target line up) for the main hierarchy links. Pulled out into its own
+    // method so updateStickyAncestors can redraw a link using an adjusted (sticky)
+    // endpoint instead of a node's true position, using the exact same path shape.
+    computeLinkPathD(sourceX, sourceY, targetX, targetY, cornerRadius = 10) {
+        if (this.orientation === 'LR') {
+            // Any link whose source and target sit at the same height gets a plain
+            // horizontal line. This covers a lone child, an odd-count symmetric middle
+            // child under the centered layout, AND the first child under the indented
+            // layout (which is deliberately kept flush with its parent's row) - so the
+            // parent-to-first-child segment is a straight line rather than the mismatched
+            // up/down curve pair that appeared when sourceY and targetY were nearly
+            // equal but not treated as a straight case.
+            const isStraightLink = Math.abs(sourceY - targetY) < 1;
+
+            if (isStraightLink) {
+                return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
+            }
+
+            const dir = Math.sign(targetX - sourceX) || 1;
+            const connectionX = Math.round((sourceX + dir * 80) / 10) * 10;
+            const yDirection = sourceY < targetY ? 1 : -1;
+            const curveStartY = sourceY + yDirection * cornerRadius;
+            const curveEndY = targetY - yDirection * cornerRadius;
+            return `
+                M ${sourceX},${sourceY}
+                L ${connectionX - dir * cornerRadius},${sourceY}
+                Q ${connectionX},${sourceY} ${connectionX},${curveStartY}
+                L ${connectionX},${curveEndY}
+                Q ${connectionX},${targetY} ${connectionX + dir * cornerRadius},${targetY}
+                L ${targetX},${targetY}
+            `;
+        }
+
+        const dir = Math.sign(targetX - sourceX) || 1;
+        if (sourceX === targetX) {
+            return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
+        }
+        const connectionY = Math.round((targetY - 80) / 10) * 10;
+        return `
+            M ${sourceX},${sourceY}
+            L ${sourceX},${connectionY - cornerRadius}
+            Q ${sourceX},${connectionY} ${sourceX + dir * cornerRadius},${connectionY}
+            L ${targetX - dir * cornerRadius},${connectionY}
+            Q ${targetX},${connectionY} ${targetX},${connectionY + cornerRadius}
+            L ${targetX},${targetY}
+        `;
+    }
+
+    // How far from the left edge of the flowchart viewport sticky nodes/labels should
+    // stop - accounts for the Questions/Pugh Matrix panel, which is an absolutely
+    // positioned overlay on the left rather than something that shrinks the flowchart,
+    // so without this a sticky node would end up rendered underneath it.
+    getStickyLeftBound() {
+        const margin = 20;
+        if (this.reflectionPanel && this.flowchartPanel) {
+            const panelStyle = window.getComputedStyle(this.reflectionPanel);
+            if (panelStyle.display !== 'none') {
+                const panelRect = this.reflectionPanel.getBoundingClientRect();
+                const flowRect = this.flowchartPanel.getBoundingClientRect();
+                const panelRightEdge = panelRect.right - flowRect.left;
+                if (panelRect.width > 0 && panelRightEdge > margin) {
+                    return panelRightEdge + margin;
+                }
+            }
+        }
+        return margin;
+    }
+
+    // Keeps a node "docked" at the left edge of the visible flowchart area while its
+    // true position has been panned off-screen to the left, as long as at least one of
+    // its children (directly, or via its own sticky docking) is still on-screen or
+    // itself docked - i.e. there's a connector line the person would otherwise lose
+    // track of. Docked nodes/links shift right and left along with the pan, and
+    // release back to their true position once panning left brings that position back
+    // past the left bound. Runs after every render and on every pan/zoom tick.
+    updateStickyAncestors() {
+        const root = this._lastRenderedRoot;
+        const g = this._flowchartG;
+        if (!root || !g || g.empty()) return;
+
+        const leftBound = this.getStickyLeftBound();
+        const k = this.transform.k;
+        const tx = this.transform.x;
+        const localStickyX = (leftBound - tx) / k;
+
+        root.eachAfter(d => {
+            const trueScreenX = d.x * k + tx;
+            const childPastBound = Boolean(d.children) && d.children.some(child => child._effectiveScreenX >= leftBound);
+            if (trueScreenX < leftBound && childPastBound) {
+                d._effectiveScreenX = leftBound;
+                d._stickyRenderX = localStickyX;
+            } else {
+                d._effectiveScreenX = trueScreenX;
+                d._stickyRenderX = d.x;
+            }
+        });
+
+        const snap10 = v => Math.round(v / 10) * 10;
+
+        g.selectAll('.node')
+            .attr('transform', d => `translate(${snap10(d._stickyRenderX)},${d.y})`);
+
+        g.selectAll('path.link:not(.custom-link)')
+            .attr('d', d => this.computeLinkPathD(
+                snap10(d.source._stickyRenderX), snap10(d.source.y),
+                snap10(d.target._stickyRenderX), snap10(d.target.y)
+            ));
     }
 
     applyIndentedLayout(root, secondarySpacing, primarySpacing) {
@@ -1811,6 +1994,10 @@ class FlowchartViewer {
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.autosave();
+
+        const renderedNode = this.findRenderedNode(newChild);
+        if (renderedNode) this.centerNodeOnMobile(renderedNode, () => {});
+
         return newChild;
     }
 
@@ -2023,8 +2210,8 @@ class FlowchartViewer {
             
             const greenBtn = document.createElement('button');
             greenBtn.textContent = 'Green';
-            greenBtn.style.background = 'var(--control-bg)';
-            greenBtn.style.color = 'var(--text)';
+            greenBtn.style.background = '#00a67e';
+            greenBtn.style.color = 'white';
             greenBtn.style.border = 'none';
             greenBtn.style.borderRadius = '5px';
             greenBtn.style.padding = '6px 16px';
@@ -2052,8 +2239,8 @@ class FlowchartViewer {
             
             const pinkBtn = document.createElement('button');
             pinkBtn.textContent = 'Pink';
-            pinkBtn.style.background = 'var(--control-bg)';
-            pinkBtn.style.color = 'var(--text)';
+            pinkBtn.style.background = '#e75480';
+            pinkBtn.style.color = 'white';
             pinkBtn.style.border = 'none';
             pinkBtn.style.borderRadius = '5px';
             pinkBtn.style.padding = '6px 16px';
@@ -2081,8 +2268,8 @@ class FlowchartViewer {
             
             const blueBtn = document.createElement('button');
             blueBtn.textContent = 'Blue';
-            blueBtn.style.background = 'var(--control-bg)';
-            blueBtn.style.color = 'var(--text)';
+            blueBtn.style.background = '#0074d9';
+            blueBtn.style.color = 'white';
             blueBtn.style.border = 'none';
             blueBtn.style.borderRadius = '5px';
             blueBtn.style.padding = '6px 16px';
@@ -2110,8 +2297,8 @@ class FlowchartViewer {
             
             const yellowBtn = document.createElement('button');
             yellowBtn.textContent = 'Yellow';
-            yellowBtn.style.background = 'var(--control-bg)';
-            yellowBtn.style.color = 'var(--text)';
+            yellowBtn.style.background = '#ffcc00';
+            yellowBtn.style.color = 'black';
             yellowBtn.style.border = 'none';
             yellowBtn.style.borderRadius = '5px';
             yellowBtn.style.padding = '6px 16px';
@@ -2139,8 +2326,8 @@ class FlowchartViewer {
             
             const emptyBtn = document.createElement('button');
             emptyBtn.textContent = 'Empty';
-            emptyBtn.style.background = 'var(--control-bg)';
-            emptyBtn.style.color = 'var(--text)';
+            emptyBtn.style.background = '#323a4a';
+            emptyBtn.style.color = 'white';
             emptyBtn.style.border = 'none';
             emptyBtn.style.borderRadius = '5px';
             emptyBtn.style.padding = '6px 16px';
@@ -2483,6 +2670,7 @@ class FlowchartViewer {
                 const newWidth = Math.max(220, Math.min(startWidth + delta, maxWidth));
                 this._reflectionPanelWidth = newWidth;
                 this.reflectionPanel.style.width = newWidth + 'px';
+                this.updateStickyAncestors();
             };
             const onEnd = () => {
                 if (!dragging) return;
@@ -2906,12 +3094,14 @@ class FlowchartViewer {
             if (panelActive) {
                 this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
             }
+            this.updateStickyAncestors();
             return;
         }
 
         this.topToggleReflectionBtn.style.display = (this._leftPanelMode === 'questions') ? 'flex' : 'none';
         this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
         this.nodeEditPopup.style.display = (!panelActive && this.nodeBeingEdited) ? 'block' : 'none';
+        this.updateStickyAncestors();
     }
 
     // Toggles between the node edit menu and the reflection/question-boxes view on
@@ -4177,6 +4367,7 @@ class FlowchartViewer {
             .attr('viewBox', `0 0 ${width} ${height}`);
 
         const g = svg.append('g');
+        this._flowchartG = g;
 
         this.setupZoom(svg, g);
 
@@ -4189,6 +4380,7 @@ class FlowchartViewer {
             return d.children.filter(child => !this.isPlaceholderNodeData(child));
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
+        this._lastRenderedRoot = root;
 
         if (this.arrangement === 'indented') {
             const secondarySpacing = this.orientation === 'LR' ? this.lrNodeSpacing : this.tbHorizontalSpacing;
@@ -4215,7 +4407,7 @@ class FlowchartViewer {
         }
 
         const cornerRadius = 10;
-        g.append('g')
+        const linkGroup = g.append('g')
             .selectAll('path')
             .data(root.links())
             .enter()
@@ -4223,53 +4415,7 @@ class FlowchartViewer {
             .attr('class', 'link')
             .attr('d', d => {
                 const snap10 = v => Math.round(v / 10) * 10;
-                const sourceX = snap10(d.source.x);
-                const sourceY = snap10(d.source.y);
-                const targetX = snap10(d.target.x);
-                const targetY = snap10(d.target.y);
-
-                if (this.orientation === 'LR') {
-                    // Any link whose source and target sit at the same height gets a plain
-                    // horizontal line. This covers a lone child, an odd-count symmetric middle
-                    // child under the centered layout, AND the first child under the indented
-                    // layout (which is deliberately kept flush with its parent's row) - so the
-                    // parent-to-first-child segment is a straight line rather than the mismatched
-                    // up/down curve pair that appeared when sourceY and targetY were nearly
-                    // equal but not treated as a straight case.
-                    const isStraightLink = Math.abs(sourceY - targetY) < 1;
-
-                    if (isStraightLink) {
-                        return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
-                    }
-
-                    const dir = Math.sign(targetX - sourceX) || 1;
-                    const connectionX = snap10(sourceX + dir * 80);
-                    const yDirection = sourceY < targetY ? 1 : -1;
-                    const curveStartY = sourceY + yDirection * cornerRadius;
-                    const curveEndY = targetY - yDirection * cornerRadius;
-                    return `
-                        M ${sourceX},${sourceY}
-                        L ${connectionX - dir * cornerRadius},${sourceY}
-                        Q ${connectionX},${sourceY} ${connectionX},${curveStartY}
-                        L ${connectionX},${curveEndY}
-                        Q ${connectionX},${targetY} ${connectionX + dir * cornerRadius},${targetY}
-                        L ${targetX},${targetY}
-                    `;
-                }
-
-                const dir = Math.sign(targetX - sourceX) || 1;
-                if (sourceX === targetX) {
-                    return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
-                }
-                const connectionY = snap10(targetY - 80);
-                return `
-                    M ${sourceX},${sourceY}
-                    L ${sourceX},${connectionY - cornerRadius}
-                    Q ${sourceX},${connectionY} ${sourceX + dir * cornerRadius},${connectionY}
-                    L ${targetX - dir * cornerRadius},${connectionY}
-                    Q ${targetX},${connectionY} ${targetX},${connectionY + cornerRadius}
-                    L ${targetX},${targetY}
-                `;
+                return this.computeLinkPathD(snap10(d.source.x), snap10(d.source.y), snap10(d.target.x), snap10(d.target.y), cornerRadius);
             });
 
         if (this.customConnections.length > 0) {
@@ -4470,7 +4616,7 @@ class FlowchartViewer {
         .attr('x', -NODE_WIDTH/2)
         .attr('y', d => -((d._lines.length * LINE_HEIGHT + PADDING_Y)/2))
         .attr('fill', d => {
-            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+            if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
             const sourceNodes = new Set(this.customConnections.map(conn => conn.source));
@@ -4483,13 +4629,13 @@ class FlowchartViewer {
             return d.data.color || '#00a67e';
         })
         .attr('stroke', d => {
-            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+            if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
             return d.data._collapsed ? '#ffcc00' : '#999';
         })
         .attr('stroke-width', d => {
-            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+            if (this.isPlaceholderNodeData(d.data)) {
                 return '0';
             }
             return d.data._collapsed ? '3px' : '1.5px';
@@ -4500,7 +4646,7 @@ class FlowchartViewer {
         .attr('font-size', FONT_SIZE)
         .attr('font-weight', 'bold')
         .attr('fill', d => {
-            if (this.isPlaceholderNodeData(d.data) || !(d.data.name || '').trim()) {
+            if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
             const fill = d.data.color || '#00a67e';
@@ -4564,6 +4710,8 @@ class FlowchartViewer {
         } else {
             g.attr('transform', this.transform);
         }
+
+        this.updateStickyAncestors();
 
         this.updateUndoRedoButtons();
         this.refreshRadialButtons();
