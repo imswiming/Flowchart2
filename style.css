@@ -106,6 +106,64 @@ body {
     border-color: var(--accent);
 }
 
+/* Shown only on mobile, only while the Notes textarea is being edited (see
+   foldNotesSection/unfoldNotesSection) - folds away the Questions/Pugh Matrix
+   content above Notes to give the keyboard more room, and unfolds it again
+   (also blurring Notes, closing the keyboard) when tapped. */
+#notes-unfold-btn {
+    display: none;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: bold;
+    padding: 5px 12px;
+    border-radius: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#notes-unfold-btn:hover {
+    background: var(--control-hover);
+}
+
+#left-panel-zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-weight: normal;
+}
+
+#left-panel-zoom-controls button {
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 1;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+#left-panel-zoom-controls button:hover {
+    background: var(--control-hover);
+}
+
+#left-panel-zoom-level {
+    font-size: 11px;
+    color: var(--muted);
+    min-width: 34px;
+    text-align: center;
+}
+
 #reflection-panel-close,
 #reflection-panel-back-btn {
     background: none;
@@ -140,6 +198,10 @@ body {
     flex-direction: column;
     gap: 16px;
     min-height: 0;
+    /* Set/updated in JS by the +/- zoom controls in the panel header. `zoom` (rather
+       than transform: scale) resizes layout flow itself - tables, wrapping, font size -
+       not just a visual overlay, so scrollable/overflow content sizes correctly too. */
+    zoom: var(--panel-zoom, 1);
 }
 
 .reflection-question {
@@ -190,6 +252,7 @@ body {
     flex-direction: column;
     padding: 4px 12px 12px;
     overflow: hidden;
+    zoom: var(--panel-zoom, 1);
 }
 
 #notes-panel-label {
@@ -206,7 +269,7 @@ body {
     flex: 1;
     width: 100%;
     box-sizing: border-box;
-    font-family: 'Courier New', Consolas, monospace;
+    font-family: inherit;
     font-size: 13px;
     padding: 10px;
     border-radius: 5px;
@@ -230,6 +293,7 @@ body {
     flex-direction: column;
     gap: 10px;
     min-height: 0;
+    zoom: var(--panel-zoom, 1);
 }
 
 .pugh-toolbar {
@@ -958,6 +1022,17 @@ body {
         justify-content: center !important;
     }
     
+    /* Mobile-only: match the top mobile toolbar buttons (.zoom-btn) - same
+       background colour, no border/stroke - instead of the light #f0f0f0 desktop
+       styling from the general node-edit-popup button rule above. */
+    #node-action-btns button,
+    #node-sibling-btns button,
+    #node-move-btns button {
+        background: var(--control-bg) !important;
+        color: var(--text) !important;
+        border: none !important;
+    }
+
     #node-action-btns button {
         flex: 0 1 auto !important;
         min-width: 0 !important;
