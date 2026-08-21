@@ -16,6 +16,12 @@ class FlowchartViewer {
         this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
         this.leftPanelTabQuestions = document.getElementById('left-panel-tab-questions');
         this.leftPanelTabPugh = document.getElementById('left-panel-tab-pugh');
+        this.leftPanelTabsContainer = document.getElementById('left-panel-tabs');
+        this.notesUnfoldBtn = document.getElementById('notes-unfold-btn');
+        this.leftPanelZoomOutBtn = document.getElementById('left-panel-zoom-out');
+        this.leftPanelZoomInBtn = document.getElementById('left-panel-zoom-in');
+        this.leftPanelZoomLevel = document.getElementById('left-panel-zoom-level');
+        this.leftPanelZoomControls = document.getElementById('left-panel-zoom-controls');
         this.leftPanelMain = document.getElementById('left-panel-main');
         this.pughPanelBody = document.getElementById('pugh-panel-body');
         this.notesPanelBody = document.getElementById('notes-panel-body');
@@ -165,6 +171,7 @@ class FlowchartViewer {
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
         this.setupPughPanel();
+        this.setupLeftPanelZoom();
         this.updateLeftPanelTabs();
         this.renderNotesPanel();
         this.setupNotesResizeHandle();
@@ -676,7 +683,7 @@ class FlowchartViewer {
                 if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
                     this.currentSlotIndex = 0;
                 }
-                this.loadFlowchartFromList(this.currentSlotIndex, { skipSaveCurrent: true });
+                this.loadFlowchartFromList(this.currentSlotIndex);
                 this._applyingRemote = false;
                 this.showNotification('Synced latest changes from another device.');
             }
@@ -903,14 +910,10 @@ class FlowchartViewer {
         this.showNotification('New flowchart created!');
     }
     
-    // `skipSaveCurrent` is used when reloading the slot that's already open (e.g. a
-    // cloud sync pull applying a remote update in place) - saving "current" first in
-    // that case would just re-serialize the stale in-memory tree straight back over
-    // the freshly-pulled remote data before it's ever read.
-    loadFlowchartFromList(index, options = {}) {
+    loadFlowchartFromList(index) {
         if (index >= this.flowchartList.length) return;
         
-        if (!options.skipSaveCurrent && this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
+        if (this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
             this.saveCurrentFlowchart();
         }
         
@@ -1165,13 +1168,15 @@ class FlowchartViewer {
     // frame (x = secondary/sibling-spread axis, y = primary/depth axis), same as
     // d3.tree(), so the existing LR swap that runs after layout still applies.
     //
-    // Siblings are packed as tightly as possible rather than each reserving its full
-    // subtree's bounding-box width: a sibling with no children, or whose descendants
-    // never reach a row (depth) actually occupied by an earlier sibling's descendants,
-    // is pulled in until it's just one spacing unit away from what's already placed -
-    // it only backs off further where two subtrees would truly collide row-by-row.
-    // This is done with a contour: for each node, node._contour[r] tracks the
-    // min/max secondary-axis extent reached by its subtree r rows below itself.
+    // Each sibling after the first starts only once the *entire* previous sibling's
+    // subtree has been cleared - i.e. at the point its deepest-reaching leaf ended,
+    // not just wherever the two subtrees would first collide row-by-row. That keeps
+    // every subtree in its own lane: no sibling (or its descendants) ever ends up
+    // positioned above/left of another subtree's children just because there
+    // happened to be a gap at that particular row. This is done with a contour: for
+    // each node, node._contour[r] tracks the min/max secondary-axis extent reached
+    // by its subtree r rows below itself, and combinedMax tracks the single furthest
+    // extent reached by anything already placed, across every row.
     computeIndentedContour(node, secondarySpacing) {
         const children = node.children;
         if (!children || children.length === 0) {
@@ -1184,6 +1189,7 @@ class FlowchartViewer {
         // Contour of everything placed under this node so far, in this node's own
         // local frame (this node sits at local x = 0).
         const combined = [];
+        let combinedMax = 0;
         const mergeInto = (childContour, offset) => {
             childContour.forEach((c, row) => {
                 if (!c) return;
@@ -1195,6 +1201,7 @@ class FlowchartViewer {
                     combined[parentRow].min = Math.min(combined[parentRow].min, shifted.min);
                     combined[parentRow].max = Math.max(combined[parentRow].max, shifted.max);
                 }
+                combinedMax = Math.max(combinedMax, shifted.max);
             });
         };
 
@@ -1203,22 +1210,20 @@ class FlowchartViewer {
         children[0]._secondaryOffset = 0;
         mergeInto(children[0]._contour, 0);
 
-        // Each later sibling is pulled in as close as it can get: only rows where its
-        // own subtree would actually overlap something already placed push it further out.
+        // Each later sibling starts right after the previous sibling's subtree ended
+        // at its furthest (deepest-reaching) point - not just wherever it first would
+        // have collided - so no part of it can ever sit above/left of a neighboring
+        // subtree's children.
         for (let i = 1; i < children.length; i++) {
             const child = children[i];
             const childContour = child._contour;
-            let offset = 0;
-            for (let row = 0; row < childContour.length; row++) {
-                const c = childContour[row];
-                if (!c) continue;
-                const parentRow = row + 1;
-                const existing = combined[parentRow];
-                if (existing) {
-                    const required = (existing.max + secondarySpacing) - c.min;
-                    if (required > offset) offset = required;
-                }
-            }
+            let childMin = Infinity;
+            childContour.forEach(c => {
+                if (c) childMin = Math.min(childMin, c.min);
+            });
+            if (!isFinite(childMin)) childMin = 0;
+
+            const offset = (combinedMax + secondarySpacing) - childMin;
             child._secondaryOffset = offset;
             mergeInto(childContour, offset);
         }
@@ -2018,8 +2023,8 @@ class FlowchartViewer {
             
             const greenBtn = document.createElement('button');
             greenBtn.textContent = 'Green';
-            greenBtn.style.background = '#00a67e';
-            greenBtn.style.color = 'white';
+            greenBtn.style.background = 'var(--control-bg)';
+            greenBtn.style.color = 'var(--text)';
             greenBtn.style.border = 'none';
             greenBtn.style.borderRadius = '5px';
             greenBtn.style.padding = '6px 16px';
@@ -2047,8 +2052,8 @@ class FlowchartViewer {
             
             const pinkBtn = document.createElement('button');
             pinkBtn.textContent = 'Pink';
-            pinkBtn.style.background = '#e75480';
-            pinkBtn.style.color = 'white';
+            pinkBtn.style.background = 'var(--control-bg)';
+            pinkBtn.style.color = 'var(--text)';
             pinkBtn.style.border = 'none';
             pinkBtn.style.borderRadius = '5px';
             pinkBtn.style.padding = '6px 16px';
@@ -2076,8 +2081,8 @@ class FlowchartViewer {
             
             const blueBtn = document.createElement('button');
             blueBtn.textContent = 'Blue';
-            blueBtn.style.background = '#0074d9';
-            blueBtn.style.color = 'white';
+            blueBtn.style.background = 'var(--control-bg)';
+            blueBtn.style.color = 'var(--text)';
             blueBtn.style.border = 'none';
             blueBtn.style.borderRadius = '5px';
             blueBtn.style.padding = '6px 16px';
@@ -2105,8 +2110,8 @@ class FlowchartViewer {
             
             const yellowBtn = document.createElement('button');
             yellowBtn.textContent = 'Yellow';
-            yellowBtn.style.background = '#ffcc00';
-            yellowBtn.style.color = 'black';
+            yellowBtn.style.background = 'var(--control-bg)';
+            yellowBtn.style.color = 'var(--text)';
             yellowBtn.style.border = 'none';
             yellowBtn.style.borderRadius = '5px';
             yellowBtn.style.padding = '6px 16px';
@@ -2134,8 +2139,8 @@ class FlowchartViewer {
             
             const emptyBtn = document.createElement('button');
             emptyBtn.textContent = 'Empty';
-            emptyBtn.style.background = '#323a4a';
-            emptyBtn.style.color = 'white';
+            emptyBtn.style.background = 'var(--control-bg)';
+            emptyBtn.style.color = 'var(--text)';
             emptyBtn.style.border = 'none';
             emptyBtn.style.borderRadius = '5px';
             emptyBtn.style.padding = '6px 16px';
@@ -2459,6 +2464,10 @@ class FlowchartViewer {
             this.topToggleReflectionBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
         }
 
+        if (this.notesUnfoldBtn) {
+            this.notesUnfoldBtn.addEventListener('click', () => this.unfoldNotesSection());
+        }
+
         if (this.reflectionPanelBackBtn) {
             this.reflectionPanelBackBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
         }
@@ -2517,10 +2526,29 @@ class FlowchartViewer {
         const BULLET = '\u2022 ';
 
         const ensureLeadingBullet = () => {
-            if (textarea.value && !textarea.value.startsWith(BULLET)) {
+            if (textarea.value && !textarea.value.startsWith('\u2022')) {
                 const cursor = textarea.selectionStart;
                 textarea.value = BULLET + textarea.value;
                 textarea.selectionStart = textarea.selectionEnd = cursor + BULLET.length;
+            }
+        };
+
+        // Collapses however many spaces follow the bullet on the current line down to
+        // exactly one, so there's always a single space between the bullet and the text
+        // no matter how many spaces were typed or pasted in.
+        const normalizeCurrentLineSpacing = () => {
+            const value = textarea.value;
+            const cursor = textarea.selectionStart;
+            const lineStart = value.lastIndexOf('\n', cursor - 1) + 1;
+            let lineEnd = value.indexOf('\n', cursor);
+            if (lineEnd === -1) lineEnd = value.length;
+            const line = value.slice(lineStart, lineEnd);
+            const match = line.match(/^\u2022( *)/);
+            if (match && match[1].length !== 1) {
+                const rebuilt = BULLET + line.slice(match[0].length);
+                const delta = rebuilt.length - line.length;
+                textarea.value = value.slice(0, lineStart) + rebuilt + value.slice(lineEnd);
+                textarea.selectionStart = textarea.selectionEnd = Math.max(lineStart, cursor + delta);
             }
         };
 
@@ -2550,6 +2578,7 @@ class FlowchartViewer {
 
         textarea.addEventListener('input', () => {
             ensureLeadingBullet();
+            normalizeCurrentLineSpacing();
             this.resizeReflectionAnswer(textarea);
             onChange(textarea.value);
         });
@@ -2579,8 +2608,14 @@ class FlowchartViewer {
             const indentLen = line.length - rest.length;
             let bulletLen = 0;
             for (const b of BULLETS) {
-                if (rest.startsWith(b + ' ')) {
-                    bulletLen = b.length + 1;
+                if (rest.startsWith(b)) {
+                    // Consume the bullet plus *every* trailing space, not just one - this
+                    // is what lets us always rebuild the line with exactly one space
+                    // between the bullet and its text (see buildLine), collapsing any
+                    // extra spaces the person typed instead of leaving them in the content.
+                    let consumed = b.length;
+                    while (rest[consumed] === ' ') consumed++;
+                    if (consumed > b.length) bulletLen = consumed;
                     break;
                 }
             }
@@ -2588,6 +2623,27 @@ class FlowchartViewer {
         };
 
         const buildLine = (level, content) => INDENT.repeat(level) + bulletFor(level) + ' ' + content;
+
+        // Rebuilds just the line the cursor is currently on through parseLine/buildLine,
+        // which both enforces a single space after the bullet and re-derives the bullet
+        // glyph from the line's (possibly just-changed) indent level. Keeps the cursor
+        // anchored relative to the content rather than the raw character offset, so
+        // collapsing extra spaces doesn't make the cursor jump somewhere unexpected.
+        const normalizeCurrentLineSpacing = () => {
+            const value = textarea.value;
+            const cursor = textarea.selectionStart;
+            const lineStart = value.lastIndexOf('\n', cursor - 1) + 1;
+            let lineEnd = value.indexOf('\n', cursor);
+            if (lineEnd === -1) lineEnd = value.length;
+            const line = value.slice(lineStart, lineEnd);
+            const rebuilt = buildLine(parseLine(line).level, parseLine(line).content);
+            if (rebuilt !== line) {
+                const delta = rebuilt.length - line.length;
+                textarea.value = value.slice(0, lineStart) + rebuilt + value.slice(lineEnd);
+                const newCursor = Math.max(lineStart, cursor + delta);
+                textarea.selectionStart = textarea.selectionEnd = newCursor;
+            }
+        };
 
         const ensureLeadingBullet = () => {
             if (textarea.value && !BULLETS.some(b => textarea.value.startsWith(b))) {
@@ -2658,11 +2714,64 @@ class FlowchartViewer {
 
                 this.resizeReflectionAnswer(textarea);
                 onChange(textarea.value);
+                return;
+            }
+
+            // Space and Backspace right at the start of a bullet's text (i.e. the
+            // cursor sits immediately after the indent+bullet+space prefix, before
+            // any actual content) double up as quick indent/outdent shortcuts,
+            // mirroring Tab/Shift+Tab without requiring the modifier line to be
+            // selected first.
+            if ((e.key === ' ' || e.key === 'Backspace') && start === end) {
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                let lineEnd = value.indexOf('\n', start);
+                if (lineEnd === -1) lineEnd = value.length;
+                const lineText = value.slice(lineStart, lineEnd);
+                const { level, prefixLen, content } = parseLine(lineText);
+
+                if (start === lineStart + prefixLen) {
+                    if (e.key === ' ') {
+                        // Indent this line one level deeper.
+                        e.preventDefault();
+                        const newLine = buildLine(level + 1, content);
+                        textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                        const newPrefixLen = parseLine(newLine).prefixLen;
+                        textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
+                        this.resizeReflectionAnswer(textarea);
+                        onChange(textarea.value);
+                        return;
+                    }
+
+                    // Backspace: outdent one level, or - if already at the leftmost
+                    // level - merge this line's text onto the end of the line above it.
+                    if (level > 0) {
+                        e.preventDefault();
+                        const newLine = buildLine(level - 1, content);
+                        textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                        const newPrefixLen = parseLine(newLine).prefixLen;
+                        textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
+                    } else if (lineStart > 0) {
+                        e.preventDefault();
+                        const prevLineStart = value.lastIndexOf('\n', lineStart - 2) + 1;
+                        const prevLine = value.slice(prevLineStart, lineStart - 1);
+                        const mergedLine = prevLine + content;
+                        const newCursor = prevLineStart + prevLine.length;
+                        textarea.value = value.slice(0, prevLineStart) + mergedLine + value.slice(lineEnd);
+                        textarea.selectionStart = textarea.selectionEnd = newCursor;
+                    } else {
+                        // First line, nothing above it and nowhere left to outdent to -
+                        // fall back to letting the browser handle the backspace normally.
+                        return;
+                    }
+                    this.resizeReflectionAnswer(textarea);
+                    onChange(textarea.value);
+                }
             }
         });
 
         textarea.addEventListener('input', () => {
             ensureLeadingBullet();
+            normalizeCurrentLineSpacing();
             this.resizeReflectionAnswer(textarea);
             onChange(textarea.value);
         });
@@ -2746,6 +2855,7 @@ class FlowchartViewer {
         } else {
             this._reflectionPanelActive = false;
         }
+        this.unfoldNotesSection();
         this.applyMobileViewState();
         if (this.nodeEditPopup.style.display === 'block' &&
             window.matchMedia('(max-width: 600px)').matches) {
@@ -2766,6 +2876,7 @@ class FlowchartViewer {
         this.reflectionPanelBody.innerHTML = '';
         this._leftPanelMode = 'questions';
         this._pughPanelActive = false;
+        this._notesFolded = false;
         this.pughMatrix = this.getDefaultPughMatrix();
         this.globalNotes = '';
         this.updateLeftPanelTabs();
@@ -2789,6 +2900,7 @@ class FlowchartViewer {
         const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive : questionsActive;
 
         if (!isMobile) {
+            if (this._notesFolded) this.unfoldNotesSection();
             this.topToggleReflectionBtn.style.display = 'none';
             this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
             if (panelActive) {
@@ -2816,6 +2928,34 @@ class FlowchartViewer {
         } else if (this.nodeEditPopup.style.display === 'block') {
             this.nodeEditInput.focus();
             this.nodeEditInput.select();
+        }
+    }
+
+    // On mobile, editing Notes hides the Questions/Pugh Matrix content sitting above
+    // it so the on-screen keyboard has room, leaving just a "Show" button in the
+    // header to bring it back. Desktop always shows everything, so this is a no-op
+    // there.
+    foldNotesSection() {
+        if (!window.matchMedia('(max-width: 600px)').matches) return;
+        if (this._notesFolded) return;
+        this._notesFolded = true;
+        if (this.leftPanelMain) this.leftPanelMain.style.display = 'none';
+        if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = 'none';
+        if (this.leftPanelZoomControls) this.leftPanelZoomControls.style.display = 'none';
+        if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'inline-flex';
+    }
+
+    // Reverses foldNotesSection - restores the Questions/Pugh Matrix content and tabs,
+    // and blurs the Notes textarea (closing the on-screen keyboard) since the whole
+    // point of tapping "Show" is to get back to editing/viewing that content instead.
+    unfoldNotesSection() {
+        this._notesFolded = false;
+        if (this.leftPanelMain) this.leftPanelMain.style.display = '';
+        if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = '';
+        if (this.leftPanelZoomControls) this.leftPanelZoomControls.style.display = '';
+        if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'none';
+        if (this.notesTextarea && document.activeElement === this.notesTextarea) {
+            this.notesTextarea.blur();
         }
     }
 
@@ -2880,6 +3020,40 @@ class FlowchartViewer {
         return { criteria, columns, scores };
     }
 
+    // Wires up the +/- zoom buttons in the left panel header. These scale the
+    // Questions/Pugh Matrix/Notes sections (including their tables and font size)
+    // up or down via CSS `zoom`, independent of the flowchart's own zoom. The level
+    // persists across sessions since it's a display preference, not chart data.
+    setupLeftPanelZoom() {
+        const MIN_ZOOM = 0.6;
+        const MAX_ZOOM = 2.0;
+        const STEP = 0.1;
+        const stored = parseFloat(localStorage.getItem('flowchart-panel-zoom'));
+        this.panelZoom = (!isNaN(stored) && stored >= MIN_ZOOM && stored <= MAX_ZOOM) ? stored : 1;
+
+        const applyPanelZoom = () => {
+            document.documentElement.style.setProperty('--panel-zoom', this.panelZoom);
+            if (this.leftPanelZoomLevel) {
+                this.leftPanelZoomLevel.textContent = Math.round(this.panelZoom * 100) + '%';
+            }
+            localStorage.setItem('flowchart-panel-zoom', String(this.panelZoom));
+        };
+        applyPanelZoom();
+
+        if (this.leftPanelZoomInBtn) {
+            this.leftPanelZoomInBtn.addEventListener('click', () => {
+                this.panelZoom = Math.min(MAX_ZOOM, Math.round((this.panelZoom + STEP) * 100) / 100);
+                applyPanelZoom();
+            });
+        }
+        if (this.leftPanelZoomOutBtn) {
+            this.leftPanelZoomOutBtn.addEventListener('click', () => {
+                this.panelZoom = Math.max(MIN_ZOOM, Math.round((this.panelZoom - STEP) * 100) / 100);
+                applyPanelZoom();
+            });
+        }
+    }
+
     // Wires up the left-panel tab switcher. Called once from the constructor.
     setupPughPanel() {
         if (this.leftPanelTabQuestions) {
@@ -2918,6 +3092,13 @@ class FlowchartViewer {
         if (mode === 'pugh') {
             this._pughPanelActive = true;
             this.renderPughPanel();
+        } else if (mode === 'questions') {
+            // Mirrors the 'pugh' branch above (which flips _pughPanelActive on) so
+            // switching tabs always shows that tab's content - otherwise, if
+            // _reflectionPanelActive happened to be false (e.g. never turned on, or
+            // switched off earlier), applyMobileViewState would see panelActive as
+            // false and close the whole left panel instead of showing Questions.
+            this._reflectionPanelActive = true;
         }
         this.updateLeftPanelTabs();
         this.applyMobileViewState();
@@ -2960,6 +3141,9 @@ class FlowchartViewer {
         this.setupIndentableTextarea(notesArea, (value) => {
             this.globalNotes = value;
             this._pendingNotesSave = true;
+        });
+        notesArea.addEventListener('focus', () => {
+            this.foldNotesSection();
         });
         notesArea.addEventListener('blur', () => {
             if (this._pendingNotesSave) {
@@ -3260,7 +3444,7 @@ class FlowchartViewer {
         const totalLabelTd = document.createElement('td');
         totalLabelTd.colSpan = 2;
         totalLabelTd.textContent = 'Total Weighted Score';
-        totalLabelTd.style.textAlign = 'left';
+        totalLabelTd.style.textAlign = 'right';
         totalsRow.appendChild(totalLabelTd);
 
         const totals = m.columns.map(col => this.computePughColumnTotal(col.id));
@@ -3374,8 +3558,32 @@ class FlowchartViewer {
     }
 
     // ===== AI EXPORT (Auto-copy to clipboard) =====
+    // Marks the end of the human-readable explanation block and the start of the
+    // actual tree data in AI exports/imports (see exportToAi/convertToTreeDiagram
+    // and parseTreeDiagram).
+    static AI_TREE_MARKER = '=== TREE START (parse everything below this line) ===';
+
+    // The block of instructions prepended to every AI export, explaining the
+    // indentation/bullet/prefix format well enough that an LLM reading it can
+    // understand - and correctly modify - the tree structure below it.
+    getAiTreeInstructions() {
+        return [
+            'The outline below represents a tree-structured flowchart. Format:',
+            '- Each line is one node; indentation (4 spaces per level) shows parent/child nesting - a node\'s children are the lines directly below it indented one level deeper.',
+            '- Every node line starts with "- ".',
+            '- A line prefixed "(solution) " is a Solution node (green).',
+            '- A line prefixed "(assumption) " is an Assumption node (pink).',
+            '- A line with neither prefix is a plain/neutral node.',
+            '- A line may end with a "[color=NAME]" tag (blue, yellow, or empty) to set a non-default color; omit it for plain/solution/assumption nodes.',
+            'When editing or regenerating this tree, keep the same indentation, "- " bullets, and prefixes/tags so it can be re-imported.',
+            '',
+            FlowchartViewer.AI_TREE_MARKER,
+            ''
+        ].join('\n');
+    }
+
     exportToAi() {
-        const treeString = this.convertToTreeDiagram();
+        const treeString = this.getAiTreeInstructions() + this.convertToTreeDiagram();
         
         // Copy to clipboard
         navigator.clipboard.writeText(treeString).then(() => {
@@ -3452,6 +3660,12 @@ class FlowchartViewer {
 
         const getLabel = (node) => {
             let name = node.name || '';
+            // Node names for Assumption (pink) nodes already carry a literal
+            // "Assumption: " prefix baked into their data (see getNodeNameFromInput) -
+            // strip it here so it isn't doubled up with the "(assumption)" marker below.
+            if (name.startsWith('Assumption: ')) {
+                name = name.substring('Assumption: '.length);
+            }
             // Remove "(Simplify?)" suffix for display
             if (name.endsWith(' (Simplify?)')) {
                 name = name.substring(0, name.length - ' (Simplify?)'.length);
@@ -3530,6 +3744,14 @@ class FlowchartViewer {
                     color = '#e75480';
                 }
                 
+                // Assumption (pink) nodes carry a literal "Assumption: " prefix baked
+                // into their name everywhere else in the app (see getNodeNameFromInput) -
+                // restore it here so an AI-imported assumption node behaves the same as
+                // one created through the UI (node text, edit popup stripping, etc.)
+                if (color === '#e75480' && !name.startsWith('Assumption: ')) {
+                    name = 'Assumption: ' + name;
+                }
+                
                 node.name = name;
                 if (color) {
                     node.color = color;
@@ -3568,6 +3790,15 @@ class FlowchartViewer {
     }
 
     parseTreeDiagram(text) {
+        // If this text still has the AI-export instructions block at the top (either
+        // pasted back unchanged, or echoed back by the AI along with its response),
+        // ignore everything up to and including the marker line - only what follows
+        // it is actual tree data.
+        const markerIndex = text.indexOf(FlowchartViewer.AI_TREE_MARKER);
+        if (markerIndex !== -1) {
+            text = text.slice(markerIndex + FlowchartViewer.AI_TREE_MARKER.length);
+        }
+
         const lines = text.split('\n')
             .map(line => line.replace(/\r$/, ''))
             .filter(line => line.trim());
@@ -3955,7 +4186,7 @@ class FlowchartViewer {
             // The root placeholder (the tree's own top node) is never filtered here since this
             // accessor only ever hides *children* of a node, never the node passed in as root.
             if (this.showPlaceholders) return d.children;
-            return d.children.filter(child => !this.isPlaceholderNodeData(child) && (child.name || '').trim());
+            return d.children.filter(child => !this.isPlaceholderNodeData(child));
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
 
