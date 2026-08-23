@@ -335,13 +335,13 @@
         <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
         <div class="zoom-btn" id="top-pugh-matrix-btn" title="Pugh Matrix">📊</div>
         <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
-        <div class="zoom-btn" id="top-toggle-reflection-btn" title="Toggle text fields/chart view" style="display:none;">⇄</div>
+        <div class="zoom-btn" id="top-help-btn" title="Help">?</div>
       </div>
 
       <div class="reset-view-controls">
         <div style="display: flex; flex-direction: column; gap: 4px;">
           <!-- Desktop controls (hidden on mobile) -->
-          <div class="desktop-controls" style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <div class="desktop-controls" style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; padding: 10px; border-radius: 10px; background: var(--popup-bg); box-shadow: 0 2px 10px rgba(0,0,0,0.25);">
             <div class="reset-view-btn" id="undo-btn">Undo</div>
             <div class="reset-view-btn" id="redo-btn">Redo</div>
             <div class="reset-view-btn" id="reset-view">Reset View</div>
@@ -356,6 +356,7 @@
             <div class="reset-view-btn" id="cloud-sync-btn">☁ Cloud Sync</div>
             <div class="reset-view-btn" id="pugh-matrix-btn">📊 Pugh Matrix</div>
             <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
+            <div class="reset-view-btn" id="help-btn" title="Help">? Help</div>
           </div>
           <div id="cloud-sync-status" style="display:none; font-size:12px; color:var(--text); opacity:0.75; margin-top:2px; text-align:right;"></div>
 
@@ -500,6 +501,88 @@ create policy "allow all" on flowchart_sync
             style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
         </div>
       </div>
+    </div>
+
+    <!-- Help popup -->
+    <div id="help-popup"
+      style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:var(--popup-bg); color:var(--text); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,0.4); z-index:4000; width:min(640px, 92vw); max-height:min(80vh, 720px); flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 20px; border-bottom:1px solid var(--border); flex-shrink:0;">
+        <div style="font-weight:bold; font-size:17px;">How to use this app</div>
+        <button id="close-help-btn" style="background:none; border:none; color:var(--text); font-size:22px; line-height:1; cursor:pointer; padding:0 4px;">&times;</button>
+      </div>
+      <div style="overflow-y:auto; padding:16px 20px 20px; font-size:14px; line-height:1.55;">
+
+        <div style="font-weight:bold; margin:10px 0 6px;">Building the tree</div>
+        <ul style="margin:0 0 12px; padding-left:20px;">
+          <li>Tap/click a node to open its edit popup and type a name.</li>
+          <li>Use the radial buttons around a selected node to add a child, a sibling before/after it, or a parent above it.</li>
+          <li>Drag a node (hold Ctrl while dragging on desktop) to move it under a different parent.</li>
+          <li>Double-click a node with children to collapse/expand that branch.</li>
+          <li>The small grey stub at the end of a row of siblings is a placeholder - click it to turn it into a real node. Toggle "Hide Placeholders" (👻) to hide/show these stubs everywhere.</li>
+        </ul>
+
+        <div style="font-weight:bold; margin:10px 0 6px;">Node colors</div>
+        <ul style="margin:0 0 12px; padding-left:20px;">
+          <li><b>Green</b> - a solution/idea node. If it's a leaf (no children), it's automatically tagged "(Simplify?)" and gets guided Simplify questions in the left panel.</li>
+          <li><b>Pink</b> - an Assumption node. Gets guided Assumption questions in the left panel to help you challenge it.</li>
+          <li><b>Blue / Yellow / Empty (grey)</b> - general-purpose colors with no special behavior, useful for your own categorization.</li>
+        </ul>
+
+        <div style="font-weight:bold; margin:10px 0 6px;">Layout controls (bottom/top button row)</div>
+        <ul style="margin:0 0 12px; padding-left:20px;">
+          <li><b>Top-Down / Left-Right</b> - switches whether the tree grows downward or rightward.</li>
+          <li><b>Centered / Indented Layout</b> - Centered balances siblings symmetrically like a classic org chart; Indented lists them like an outline, with the first child continuing in line with its parent.</li>
+          <li><b>Reset View</b> - re-fits and centers the whole tree in the window.</li>
+          <li>Scroll/pinch to zoom, drag the background to pan.</li>
+          <li>As you pan, a parent whose position scrolls out of view "docks" to the edge of the screen as long as one of its children is still visible, so you don't lose track of which branch you're looking at.</li>
+        </ul>
+
+        <div style="font-weight:bold; margin:10px 0 6px;">Questions / Pugh Matrix / Notes panel</div>
+        <ul style="margin:0 0 12px; padding-left:20px;">
+          <li><b>Questions</b> tab shows guided prompts for the selected Assumption/Simplify node.</li>
+          <li><b>Pugh Matrix</b> tab is a weighted-scoring decision matrix - add criteria, set weights, and score your options; a total weighted score is calculated per option.</li>
+          <li><b>Notes</b> is a persistent bulleted outline, always visible under whichever tab is open. Press Tab/Shift+Tab, or Space/Backspace right at the start of a bullet, to indent/outdent. Space on a blank line creates a bullet; Backspace on a bullet's leftmost level removes just the bullet.</li>
+          <li>Use the +/- buttons in the panel header to zoom the panel's text and tables in or out.</li>
+        </ul>
+
+        <div style="font-weight:bold; margin:10px 0 6px;">Saving, sharing, and AI</div>
+        <ul style="margin:0 0 12px; padding-left:20px;">
+          <li><b>Open</b> - browse and load previously saved flowcharts (also lets you export/import as JSON files).</li>
+          <li><b>Export to AI / Import from AI</b> - copies your tree as a plain-text outline (with a short explanation of its format) that you can paste to an AI assistant to discuss, restructure, or expand, then paste its response back in to rebuild the tree.</li>
+          <li><b>Cloud Sync</b> - optional, uses your own free Supabase project to sync one flowchart between devices via a shared Sync ID.</li>
+          <li>Undo/Redo cover all tree edits; your work also autosaves locally as you go.</li>
+        </ul>
+
+      </div>
+    </div>
+
+    <!-- Full-screen drawing overlay, opened from the Notes panel -->
+    <div id="drawing-overlay" style="display:none; position:fixed; inset:0; z-index:5000; background:#1a1e27; touch-action:none; overflow:hidden;">
+      <div id="drawing-toolbar" style="position:absolute; top:0; left:0; right:0; z-index:5010; display:flex; align-items:center; gap:6px; padding:8px 10px; background:rgba(20,24,32,0.92); flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+        <button class="drawing-tool-btn" id="drawing-tool-brush" title="Brush" data-tool="brush">✏️</button>
+        <button class="drawing-tool-btn" id="drawing-tool-eraser" title="Eraser" data-tool="eraser">🧹</button>
+        <button class="drawing-tool-btn" id="drawing-tool-line" title="Line" data-tool="line">╱</button>
+        <button class="drawing-tool-btn" id="drawing-tool-rect" title="Rectangle" data-tool="rect">▭</button>
+        <button class="drawing-tool-btn" id="drawing-tool-ellipse" title="Circle/Ellipse" data-tool="ellipse">◯</button>
+        <button class="drawing-tool-btn" id="drawing-tool-text" title="Text" data-tool="text">T</button>
+        <input type="color" id="drawing-color" value="#ffffff" title="Colour" style="width:30px; height:30px; padding:0; border:none; border-radius:6px; background:none; cursor:pointer;">
+        <input type="range" id="drawing-width" min="1" max="40" value="4" title="Brush width" style="width:80px;">
+        <button class="drawing-tool-btn" id="drawing-undo-btn" title="Undo">↩</button>
+        <button class="drawing-tool-btn" id="drawing-redo-btn" title="Redo">↪</button>
+        <div style="flex:1;"></div>
+        <button class="drawing-tool-btn" id="drawing-cancel-btn" title="Discard">Cancel</button>
+        <button class="drawing-tool-btn" id="drawing-done-btn" title="Save" style="background:#00a67e; color:white;">Done</button>
+      </div>
+      <div id="drawing-canvas-wrap" style="position:absolute; inset:0; transform-origin:0 0;">
+        <canvas id="drawing-canvas"></canvas>
+      </div>
+      <div id="drawing-handle" title="Drag to move · drag after tapping the toggle to draw">
+        <div id="drawing-handle-crosshair">
+          <div class="crosshair-line crosshair-h"></div>
+          <div class="crosshair-line crosshair-v"></div>
+        </div>
+      </div>
+      <button id="drawing-toggle-btn" title="Tap, then drag the handle to draw">✎</button>
     </div>
   </div>
 

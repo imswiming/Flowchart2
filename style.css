@@ -664,22 +664,33 @@ body {
 }
 
 .reset-view-btn {
-    width: 90px;
-    height: 32px;
+    height: 34px;
+    min-width: 90px;
+    padding: 0 14px;
     background: var(--control-bg) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 3px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
     user-select: none;
-    margin-top: 10px;
+    transition: background-color 120ms ease, transform 80ms ease;
 }
 
 .reset-view-btn:hover {
     background: var(--control-hover) !important;
+}
+
+.reset-view-btn:active {
+    transform: scale(0.97);
+}
+
+#help-btn {
+    font-weight: 700;
 }
 
 .context-menu {
@@ -1084,4 +1095,147 @@ body {
         font-size: 14px !important;
         padding: 6px 12px !important;
     }
+}
+
+/* ===== Notes header row + insert-drawing button + drawing thumbnail strip ===== */
+#notes-panel-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+
+#notes-insert-drawing-btn {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+#notes-insert-drawing-btn:hover {
+    background: var(--control-hover);
+}
+
+#notes-drawings-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    flex-shrink: 0;
+    padding: 6px 0 2px;
+}
+
+.notes-drawing-thumb {
+    height: 54px;
+    width: 74px;
+    object-fit: contain;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.notes-drawing-thumb:hover {
+    outline: 2px solid var(--accent);
+}
+
+/* ===== Full-screen drawing overlay ===== */
+#drawing-canvas {
+    display: block;
+    background: #ffffff;
+    touch-action: none;
+}
+
+.drawing-tool-btn {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 16px;
+    width: 38px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.drawing-tool-btn:hover {
+    background: var(--control-hover);
+}
+
+.drawing-tool-btn.active {
+    outline: 2px solid #00a67e;
+}
+
+#drawing-handle {
+    position: absolute;
+    width: 46px;
+    height: 46px;
+    margin-left: -23px;
+    margin-top: -23px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    z-index: 5020;
+    touch-action: none;
+    cursor: grab;
+}
+
+#drawing-handle.armed {
+    border-color: #00a67e;
+    background: rgba(0, 166, 126, 0.25);
+}
+
+#drawing-handle-crosshair {
+    position: absolute;
+    top: -22px;
+    left: -22px;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+}
+
+.crosshair-line {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.crosshair-h {
+    top: 9px;
+    left: 0;
+    width: 20px;
+    height: 2px;
+}
+
+.crosshair-v {
+    top: 0;
+    left: 9px;
+    width: 2px;
+    height: 20px;
+}
+
+#drawing-toggle-btn {
+    position: absolute;
+    width: 34px;
+    height: 34px;
+    margin-top: -17px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    color: #fff;
+    font-size: 15px;
+    z-index: 5020;
+    cursor: pointer;
+    touch-action: none;
+}
+
+#drawing-toggle-btn.armed {
+    background: #00a67e;
+    border-color: #00a67e;
 }

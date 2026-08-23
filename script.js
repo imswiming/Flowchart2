@@ -11,7 +11,6 @@ class FlowchartViewer {
         this.topUndoBtn = document.getElementById('top-undo-btn');
         this.topRedoBtn = document.getElementById('top-redo-btn');
         this.topOpenBtn = document.getElementById('top-open-btn');
-        this.topToggleReflectionBtn = document.getElementById('top-toggle-reflection-btn');
         this.topTogglePlaceholdersBtn = document.getElementById('top-toggle-placeholders-btn');
         this.reflectionPanel = document.getElementById('reflection-panel');
         this.reflectionPanelBody = document.getElementById('reflection-panel-body');
@@ -172,6 +171,9 @@ class FlowchartViewer {
         // height is user-resizable (drag the handle above it) and remembered across
         // sessions, same as the panel's own width.
         this.globalNotes = '';
+        // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
+        // globalNotes that references them - see renderNotesDrawingsStrip.
+        this.notesDrawings = {};
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
         this.setupPughPanel();
@@ -179,6 +181,7 @@ class FlowchartViewer {
         this.updateLeftPanelTabs();
         this.renderNotesPanel();
         this.setupNotesResizeHandle();
+        this.setupDrawingOverlay();
 
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
@@ -267,6 +270,22 @@ class FlowchartViewer {
         if (this.cloudSyncSaveBtn) this.cloudSyncSaveBtn.addEventListener('click', () => this.saveCloudSyncSettings());
         if (this.cloudSyncCreateBinBtn) this.cloudSyncCreateBinBtn.addEventListener('click', () => this.createCloudBin());
         if (this.cloudSyncDisconnectBtn) this.cloudSyncDisconnectBtn.addEventListener('click', () => this.disconnectCloudSync());
+
+        // Help popup
+        this.helpBtn = document.getElementById('help-btn');
+        this.topHelpBtn = document.getElementById('top-help-btn');
+        this.helpPopup = document.getElementById('help-popup');
+        this.closeHelpBtn = document.getElementById('close-help-btn');
+        const showHelp = () => { if (this.helpPopup) this.helpPopup.style.display = 'flex'; };
+        const hideHelp = () => { if (this.helpPopup) this.helpPopup.style.display = 'none'; };
+        if (this.helpBtn) this.helpBtn.addEventListener('click', showHelp);
+        if (this.topHelpBtn) this.topHelpBtn.addEventListener('click', showHelp);
+        if (this.closeHelpBtn) this.closeHelpBtn.addEventListener('click', hideHelp);
+        if (this.helpPopup) {
+            this.helpPopup.addEventListener('click', (e) => {
+                if (e.target === this.helpPopup) hideHelp();
+            });
+        }
 
         // Pugh Matrix event listeners
         if (this.pughMatrixBtn) this.pughMatrixBtn.addEventListener('click', () => this.openPughPanel());
@@ -960,6 +979,7 @@ class FlowchartViewer {
 
                 this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
                 this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
+                this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.renderNotesPanel();
                 
                 if (parsed.customConnections) {
@@ -1395,79 +1415,120 @@ class FlowchartViewer {
         return margin;
     }
 
-    // Keeps a node "docked" at the left edge of the visible flowchart area while its
-    // true position has been panned off-screen to the left, as long as at least one of
-    // its *real* (non-empty) children is still on-screen or itself docked - i.e.
-    // there's a connector line to real content the person would otherwise lose track
-    // of. Docked nodes/links shift right and left along with the pan, and release back
-    // to their true position once panning left brings that position back past the
-    // docking point. Runs after every render and on every pan/zoom tick.
+    // How far from the top edge of the flowchart viewport sticky nodes/labels should
+    // stop, when docking along the vertical axis (see updateStickyAncestors). Unlike
+    // the left bound, the Questions/Pugh Matrix panel spans the full height along the
+    // left rather than occupying a horizontal band across the top, so it isn't a
+    // vertical obstruction the same way - just a flat margin from the top.
+    getStickyTopBound() {
+        return 20;
+    }
+
+    // Keeps a node "docked" at the edge of the visible flowchart area while its true
+    // position has been panned off-screen, as long as at least one of its *real*
+    // (non-empty) children is still on-screen or itself docked - i.e. there's a
+    // connector line to real content the person would otherwise lose track of.
+    // Docking happens along whichever axis *siblings spread on*, not the depth axis -
+    // that's the axis where this actually comes up: a parent sits at one particular
+    // spot relative to its (possibly many, spread-out) children, and panning along
+    // that spread to browse them can scroll the parent out of view while some of its
+    // children remain visible. For the default Top-Down orientation, siblings spread
+    // horizontally, so docking happens against the left edge, following the pan
+    // left/right. For Left-Right, siblings spread vertically instead, so docking
+    // happens against the top edge, following the pan up/down. Docked nodes/links
+    // shift with the pan along that axis, and release back to their true position
+    // once panning brings that position back past the docking point. Runs after every
+    // render and on every pan/zoom tick.
     updateStickyAncestors() {
         const root = this._lastRenderedRoot;
         const g = this._flowchartG;
         if (!root || !g || g.empty()) return;
 
-        const leftBound = this.getStickyLeftBound();
+        const isLR = this.orientation === 'LR';
         const k = this.transform.k;
-        const tx = this.transform.x;
-        // Nodes are drawn centered on their x - docking a node exactly at leftBound
-        // would put its center right on the boundary and hide its left half, so a
-        // docked node's normal resting spot is one full node-width to the right of it
-        // instead. But that's only a *ceiling* - a docked parent must never render to
-        // the right of the qualifying child it's docked on behalf of (that child is
-        // itself moving left as panning continues, and would otherwise end up passing
-        // underneath/behind a parent stuck at a fixed spot). So the actual docked
-        // position is whichever is smaller: this normal offset, or that child's own
-        // current position - the parent tracks the child down until the child itself
-        // goes out of view, rather than sitting still while the child scrolls past it.
-        const dockedScreenX = leftBound + this.NODE_WIDTH * k;
+        // t is the pan offset along the sibling-spread axis; bound is the edge sticky
+        // nodes dock against on that same axis.
+        const t = isLR ? this.transform.y : this.transform.x;
+        const bound = isLR ? this.getStickyTopBound() : this.getStickyLeftBound();
+        // Nodes are drawn centered on their position along this axis - docking a node
+        // exactly at bound would put its center right on the boundary and hide half of
+        // it, so a docked node's normal resting spot is one full node-width/height
+        // clearance past it instead. (There's no fixed NODE_HEIGHT the way there's a
+        // fixed NODE_WIDTH, since box height depends on line count - this is a
+        // reasonable single-line approximation.)
+        const nodeClearance = isLR ? 40 : this.NODE_WIDTH;
+        const dockedScreenPos = bound + nodeClearance * k;
+        const getPos = d => isLR ? d.y : d.x;
 
         root.eachAfter(d => {
-            const trueScreenX = d.x * k + tx;
-            // Placeholder/empty children (typically a trailing "add new" stub sitting
-            // rightmost under a node) don't count as a reason to keep the parent
-            // docked - otherwise the parent would stay stuck to the edge even once
-            // every *real* child has scrolled out of view, just because an empty stub
-            // is still hanging on screen. Real children are checked against leftBound
-            // (not dockedScreenX) here - any child visible at all past the boundary is
-            // reason enough to keep the parent docked, even if that child itself
-            // hasn't reached full dockedScreenX clearance yet.
+            const truePos = getPos(d) * k + t;
+            // Placeholder/empty children (typically a trailing "add new" stub) don't
+            // count as a reason to keep the parent docked - otherwise the parent would
+            // stay stuck to the edge even once every *real* child has scrolled out of
+            // view, just because an empty stub is still hanging on screen. Real
+            // children are checked against bound (not dockedScreenPos) here - any
+            // child visible at all past the boundary is reason enough to keep the
+            // parent docked, even if that child itself hasn't reached full clearance.
             const relevantChildren = d.children
-                ? d.children.filter(child => !this.isEmptyIndentedNode(child) && child._effectiveScreenX >= leftBound)
+                ? d.children.filter(child => !this.isEmptyIndentedNode(child) && child._effectiveScreenPos >= bound)
                 : [];
 
             if (relevantChildren.length === 0) {
-                d._effectiveScreenX = trueScreenX;
-                d._stickyRenderX = d.x;
+                d._effectiveScreenPos = truePos;
+                d._stickyRenderPos = getPos(d);
+                d._docked = false;
                 return;
             }
 
-            const minChildX = Math.min(...relevantChildren.map(child => child._effectiveScreenX));
-            // Same handoff trick as before, generalized: using this same ceiling value
-            // as both the trigger threshold and the docked position itself means the
+            // Each child contributes either its own true position (if it isn't itself
+            // docked - it's just sitting wherever it naturally is, so tracking it makes
+            // sense) or the standard clearance offset (if it's ALREADY docked - its own
+            // compressed/tracked position must not propagate further up the chain, or
+            // every ancestor above a terminating branch would compress together with
+            // it, one after another, instead of only the immediate parent doing so).
+            const minChildPos = Math.min(...relevantChildren.map(child =>
+                child._docked ? dockedScreenPos : child._effectiveScreenPos
+            ));
+            // A docked parent must never render past the qualifying child it's docked
+            // on behalf of (that child is itself moving along with the pan, and would
+            // otherwise end up passing underneath/behind a parent stuck at a fixed
+            // spot) - so the ceiling is whichever is smaller: the normal clearance
+            // offset, or that child's own current position. The parent tracks the
+            // child down until the child itself goes out of view, rather than sitting
+            // still while the child scrolls past it. Using this same ceiling value as
+            // both the trigger threshold and the docked position itself means the
             // node's true and docked positions always coincide exactly at the moment
             // it needs to dock, so there's never a visible jump.
-            const dockCeiling = Math.min(dockedScreenX, minChildX);
+            const dockCeiling = Math.min(dockedScreenPos, minChildPos);
 
-            if (trueScreenX < dockCeiling) {
-                d._effectiveScreenX = dockCeiling;
-                d._stickyRenderX = (dockCeiling - tx) / k;
+            if (truePos < dockCeiling) {
+                d._effectiveScreenPos = dockCeiling;
+                d._stickyRenderPos = (dockCeiling - t) / k;
+                d._docked = true;
             } else {
-                d._effectiveScreenX = trueScreenX;
-                d._stickyRenderX = d.x;
+                d._effectiveScreenPos = truePos;
+                d._stickyRenderPos = getPos(d);
+                d._docked = false;
             }
         });
 
         const snap10 = v => Math.round(v / 10) * 10;
 
         g.selectAll('.node')
-            .attr('transform', d => `translate(${snap10(d._stickyRenderX)},${d.y})`);
+            .attr('transform', d => isLR
+                ? `translate(${d.x},${snap10(d._stickyRenderPos)})`
+                : `translate(${snap10(d._stickyRenderPos)},${d.y})`);
 
         g.selectAll('path.link:not(.custom-link)')
-            .attr('d', d => this.computeLinkPathD(
-                snap10(d.source._stickyRenderX), snap10(d.source.y),
-                snap10(d.target._stickyRenderX), snap10(d.target.y)
-            ));
+            .attr('d', d => isLR
+                ? this.computeLinkPathD(
+                    snap10(d.source.x), snap10(d.source._stickyRenderPos),
+                    snap10(d.target.x), snap10(d.target._stickyRenderPos)
+                  )
+                : this.computeLinkPathD(
+                    snap10(d.source._stickyRenderPos), snap10(d.source.y),
+                    snap10(d.target._stickyRenderPos), snap10(d.target.y)
+                  ));
     }
 
     applyIndentedLayout(root, secondarySpacing, primarySpacing) {
@@ -2709,10 +2770,6 @@ class FlowchartViewer {
             this.reflectionPanelClose.addEventListener('click', () => this.hideReflectionPanel());
         }
 
-        if (this.topToggleReflectionBtn) {
-            this.topToggleReflectionBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
-        }
-
         if (this.notesUnfoldBtn) {
             this.notesUnfoldBtn.addEventListener('click', () => this.unfoldNotesSection());
         }
@@ -2756,8 +2813,12 @@ class FlowchartViewer {
             }, { passive: true });
             window.addEventListener('touchmove', (e) => {
                 if (!dragging) return;
+                // Non-passive so preventDefault can stop the browser from claiming this
+                // as a page scroll/swipe gesture based on the drag's initial direction
+                // (see the equivalent fix on the notes resize handle for the same bug).
+                e.preventDefault();
                 onMove(e.touches[0].clientX);
-            }, { passive: true });
+            }, { passive: false });
             window.addEventListener('touchend', onEnd);
         }
     }
@@ -2869,7 +2930,15 @@ class FlowchartViewer {
                     break;
                 }
             }
-            return { level, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
+            const hasBullet = bulletLen > 0;
+            // A line with no bullet is plain text (e.g. the mandatory blank first line,
+            // or any line whose bullet was just removed via Backspace) - report it as
+            // level 0 with no prefix and the whole line as its content, rather than
+            // treating stray leading spaces as a bullet's indent.
+            if (!hasBullet) {
+                return { level: 0, hasBullet: false, prefixLen: 0, content: line };
+            }
+            return { level, hasBullet: true, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
         };
 
         const buildLine = (level, content) => INDENT.repeat(level) + bulletFor(level) + ' ' + content;
@@ -2879,6 +2948,7 @@ class FlowchartViewer {
         // glyph from the line's (possibly just-changed) indent level. Keeps the cursor
         // anchored relative to the content rather than the raw character offset, so
         // collapsing extra spaces doesn't make the cursor jump somewhere unexpected.
+        // Plain (bulletless) lines are left untouched - there's no bullet spacing to fix.
         const normalizeCurrentLineSpacing = () => {
             const value = textarea.value;
             const cursor = textarea.selectionStart;
@@ -2886,7 +2956,9 @@ class FlowchartViewer {
             let lineEnd = value.indexOf('\n', cursor);
             if (lineEnd === -1) lineEnd = value.length;
             const line = value.slice(lineStart, lineEnd);
-            const rebuilt = buildLine(parseLine(line).level, parseLine(line).content);
+            const parsed = parseLine(line);
+            if (!parsed.hasBullet) return;
+            const rebuilt = buildLine(parsed.level, parsed.content);
             if (rebuilt !== line) {
                 const delta = rebuilt.length - line.length;
                 textarea.value = value.slice(0, lineStart) + rebuilt + value.slice(lineEnd);
@@ -2895,22 +2967,18 @@ class FlowchartViewer {
             }
         };
 
-        const ensureLeadingBullet = () => {
-            if (textarea.value && !BULLETS.some(b => textarea.value.startsWith(b))) {
+        // The notes box always keeps a blank line pinned at the very top, above
+        // anything the person writes, so their content never starts on line 1 itself.
+        const ensureBlankFirstLine = () => {
+            if (!textarea.value.startsWith('\n')) {
                 const cursor = textarea.selectionStart;
-                const prefix = bulletFor(0) + ' ';
-                textarea.value = prefix + textarea.value;
-                textarea.selectionStart = textarea.selectionEnd = cursor + prefix.length;
+                textarea.value = '\n' + textarea.value;
+                textarea.selectionStart = textarea.selectionEnd = cursor + 1;
             }
         };
 
         textarea.addEventListener('focus', () => {
-            if (!textarea.value) {
-                textarea.value = bulletFor(0) + ' ';
-                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-            } else {
-                ensureLeadingBullet();
-            }
+            ensureBlankFirstLine();
             this.resizeReflectionAnswer(textarea);
         });
 
@@ -2919,13 +2987,24 @@ class FlowchartViewer {
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
 
+            // Never allow deleting the mandatory blank first line - the box should
+            // always open with an empty line at the top, so backspacing at the very
+            // start of the second line (right up against that boundary) does nothing
+            // rather than merging up into it.
+            if (e.key === 'Backspace' && start === end && start === 1 && value[0] === '\n') {
+                e.preventDefault();
+                return;
+            }
+
             if (e.key === 'Enter') {
                 e.preventDefault();
                 const lineStart = value.lastIndexOf('\n', start - 1) + 1;
                 let lineEnd = value.indexOf('\n', start);
                 if (lineEnd === -1) lineEnd = value.length;
-                const { level } = parseLine(value.slice(lineStart, lineEnd));
-                const insertion = '\n' + buildLine(level, '');
+                const parsed = parseLine(value.slice(lineStart, lineEnd));
+                // Only continue the bullet onto the new line if the current line
+                // actually has one - a plain line just gets a plain new line under it.
+                const insertion = parsed.hasBullet ? '\n' + buildLine(parsed.level, '') : '\n';
                 textarea.value = value.slice(0, start) + insertion + value.slice(end);
                 const newPos = start + insertion.length;
                 textarea.selectionStart = textarea.selectionEnd = newPos;
@@ -2971,15 +3050,29 @@ class FlowchartViewer {
             // cursor sits immediately after the indent+bullet+space prefix, before
             // any actual content) double up as quick indent/outdent shortcuts,
             // mirroring Tab/Shift+Tab without requiring the modifier line to be
-            // selected first.
+            // selected first. Space on a completely blank (bulletless) line instead
+            // creates a new bullet right there.
             if ((e.key === ' ' || e.key === 'Backspace') && start === end) {
                 const lineStart = value.lastIndexOf('\n', start - 1) + 1;
                 let lineEnd = value.indexOf('\n', start);
                 if (lineEnd === -1) lineEnd = value.length;
                 const lineText = value.slice(lineStart, lineEnd);
-                const { level, prefixLen, content } = parseLine(lineText);
+                const parsed = parseLine(lineText);
+                const { level, prefixLen, content, hasBullet } = parsed;
 
-                if (start === lineStart + prefixLen) {
+                if (e.key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
+                    // Blank, bulletless line - turn it into a bullet instead of typing
+                    // a literal space character.
+                    e.preventDefault();
+                    const newLine = buildLine(0, '');
+                    textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                    textarea.selectionStart = textarea.selectionEnd = lineStart + newLine.length;
+                    this.resizeReflectionAnswer(textarea);
+                    onChange(textarea.value);
+                    return;
+                }
+
+                if (hasBullet && start === lineStart + prefixLen) {
                     if (e.key === ' ') {
                         // Indent this line one level deeper.
                         e.preventDefault();
@@ -2993,25 +3086,18 @@ class FlowchartViewer {
                     }
 
                     // Backspace: outdent one level, or - if already at the leftmost
-                    // level - merge this line's text onto the end of the line above it.
+                    // level - remove the bullet entirely, turning the line into plain
+                    // text (keeping whatever content it already had) rather than
+                    // merging it into the line above.
+                    e.preventDefault();
                     if (level > 0) {
-                        e.preventDefault();
                         const newLine = buildLine(level - 1, content);
                         textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
                         const newPrefixLen = parseLine(newLine).prefixLen;
                         textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                    } else if (lineStart > 0) {
-                        e.preventDefault();
-                        const prevLineStart = value.lastIndexOf('\n', lineStart - 2) + 1;
-                        const prevLine = value.slice(prevLineStart, lineStart - 1);
-                        const mergedLine = prevLine + content;
-                        const newCursor = prevLineStart + prevLine.length;
-                        textarea.value = value.slice(0, prevLineStart) + mergedLine + value.slice(lineEnd);
-                        textarea.selectionStart = textarea.selectionEnd = newCursor;
                     } else {
-                        // First line, nothing above it and nowhere left to outdent to -
-                        // fall back to letting the browser handle the backspace normally.
-                        return;
+                        textarea.value = value.slice(0, lineStart) + content + value.slice(lineEnd);
+                        textarea.selectionStart = textarea.selectionEnd = lineStart;
                     }
                     this.resizeReflectionAnswer(textarea);
                     onChange(textarea.value);
@@ -3020,7 +3106,7 @@ class FlowchartViewer {
         });
 
         textarea.addEventListener('input', () => {
-            ensureLeadingBullet();
+            ensureBlankFirstLine();
             normalizeCurrentLineSpacing();
             this.resizeReflectionAnswer(textarea);
             onChange(textarea.value);
@@ -3129,6 +3215,7 @@ class FlowchartViewer {
         this._notesFolded = false;
         this.pughMatrix = this.getDefaultPughMatrix();
         this.globalNotes = '';
+        this.notesDrawings = {};
         this.updateLeftPanelTabs();
         this.renderNotesPanel();
         this.applyMobileViewState();
@@ -3146,12 +3233,16 @@ class FlowchartViewer {
     // nodes never yanks it away or forces it open.
     applyMobileViewState() {
         const isMobile = window.matchMedia('(max-width: 600px)').matches;
-        const questionsActive = Boolean(this._reflectionQuestions) && this._reflectionPanelActive;
+        // Visibility of the Questions tab should only depend on whether that tab is
+        // active, same as Pugh - NOT on whether a node with guided questions happens
+        // to be loaded right now. Tying it to _reflectionQuestions meant tapping the
+        // Questions tab with no such node selected computed panelActive as false and
+        // closed the whole panel instead of just showing its (empty) Questions view.
+        const questionsActive = this._reflectionPanelActive;
         const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive : questionsActive;
 
         if (!isMobile) {
             if (this._notesFolded) this.unfoldNotesSection();
-            this.topToggleReflectionBtn.style.display = 'none';
             this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
             if (panelActive) {
                 this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
@@ -3160,7 +3251,6 @@ class FlowchartViewer {
             return;
         }
 
-        this.topToggleReflectionBtn.style.display = (this._leftPanelMode === 'questions') ? 'flex' : 'none';
         this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
         this.nodeEditPopup.style.display = (!panelActive && this.nodeBeingEdited) ? 'block' : 'none';
         this.updateStickyAncestors();
@@ -3381,15 +3471,26 @@ class FlowchartViewer {
         this.notesPanelBody.innerHTML = '';
         this.notesPanelBody.style.height = this._notesPanelHeight + 'px';
 
+        const header = document.createElement('div');
+        header.id = 'notes-panel-header-row';
         const label = document.createElement('div');
         label.id = 'notes-panel-label';
         label.textContent = 'Notes';
-        this.notesPanelBody.appendChild(label);
+        const insertDrawingBtn = document.createElement('button');
+        insertDrawingBtn.id = 'notes-insert-drawing-btn';
+        insertDrawingBtn.type = 'button';
+        insertDrawingBtn.textContent = '🎨 Insert Drawing';
+        insertDrawingBtn.title = 'Insert a drawing at the cursor';
+        insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
+        header.appendChild(label);
+        header.appendChild(insertDrawingBtn);
+        this.notesPanelBody.appendChild(header);
 
         const notesArea = document.createElement('textarea');
         notesArea.className = 'reflection-notes-global';
         notesArea.placeholder = 'Notes...';
-        notesArea.value = this.globalNotes || '';
+        const savedNotes = this.globalNotes || '';
+        notesArea.value = savedNotes.startsWith('\n') ? savedNotes : '\n' + savedNotes;
         this.setupIndentableTextarea(notesArea, (value) => {
             this.globalNotes = value;
             this._pendingNotesSave = true;
@@ -3398,13 +3499,72 @@ class FlowchartViewer {
             this.foldNotesSection();
         });
         notesArea.addEventListener('blur', () => {
+            this._notesCursorPos = notesArea.selectionStart;
             if (this._pendingNotesSave) {
                 this._pendingNotesSave = false;
                 this.autosave();
             }
         });
+        notesArea.addEventListener('keyup', () => { this._notesCursorPos = notesArea.selectionStart; });
+        notesArea.addEventListener('click', () => { this._notesCursorPos = notesArea.selectionStart; });
         this.notesTextarea = notesArea;
         this.notesPanelBody.appendChild(notesArea);
+
+        this.renderNotesDrawingsStrip();
+    }
+
+    // Drawing markers embedded in the notes text look like [[drawing:ID]], each on
+    // its own line - one per inserted drawing, in the order they appear in the text.
+    // A plain <textarea> can't render an inline image in place of that marker, so as
+    // a practical stand-in, every drawing referenced anywhere in the notes gets a
+    // small preview thumbnail in a strip under the textarea; tapping one reopens it
+    // for editing. The marker line itself is what anchors *where* in the outline the
+    // drawing conceptually sits.
+    getNotesDrawingIds() {
+        const text = this.globalNotes || '';
+        const ids = [];
+        const re = /\[\[drawing:([a-zA-Z0-9_-]+)\]\]/g;
+        let m;
+        while ((m = re.exec(text))) ids.push(m[1]);
+        return ids;
+    }
+
+    renderNotesDrawingsStrip() {
+        if (!this.notesPanelBody) return;
+        let strip = document.getElementById('notes-drawings-strip');
+        if (strip) strip.remove();
+
+        const ids = this.getNotesDrawingIds();
+        if (ids.length === 0) return;
+
+        strip = document.createElement('div');
+        strip.id = 'notes-drawings-strip';
+        (this.notesDrawings || {});
+        ids.forEach(id => {
+            const drawing = this.notesDrawings && this.notesDrawings[id];
+            if (!drawing) return;
+            const thumb = document.createElement('img');
+            thumb.className = 'notes-drawing-thumb';
+            thumb.src = drawing.dataUrl;
+            thumb.title = 'Tap to edit this drawing';
+            thumb.addEventListener('click', () => this.editNotesDrawing(id));
+            strip.appendChild(thumb);
+        });
+        this.notesPanelBody.appendChild(strip);
+    }
+
+    // Opens the full-screen drawing overlay for a brand new drawing, to be inserted
+    // at wherever the cursor last was in the notes textarea.
+    startNewNotesDrawing() {
+        if (this.notesTextarea) {
+            this._notesCursorPos = this.notesTextarea.selectionStart;
+        }
+        this.openDrawingOverlay(null);
+    }
+
+    // Opens the full-screen drawing overlay pre-loaded with an existing drawing.
+    editNotesDrawing(id) {
+        this.openDrawingOverlay(id);
     }
 
     // Lets the person drag the handle above the Notes strip to resize it vertically,
@@ -3450,9 +3610,379 @@ class FlowchartViewer {
         }, { passive: true });
         window.addEventListener('touchmove', (e) => {
             if (!dragging) return;
+            // Must be a non-passive listener so preventDefault can actually stop the
+            // browser from treating this as a page/panel scroll instead of a resize -
+            // without it, the browser decides the gesture type from the very first
+            // touchmove's direction, and a downward drag (unlike an upward one) was
+            // getting claimed as a native scroll before this handler ever got to act,
+            // which is why only "drag up first" reliably worked.
+            e.preventDefault();
             onMove(e.touches[0].clientY);
-        }, { passive: true });
+        }, { passive: false });
         window.addEventListener('touchend', onEnd);
+    }
+
+    // ===================== Drawing overlay (Notes drawings) =====================
+    // A full-screen canvas editor opened from the Notes panel. Its interaction model
+    // mirrors a "precision drawing" pattern from apps like Android's Notes: a
+    // draggable handle (with a crosshair, shown only while just repositioning it)
+    // lets you see exactly where you're about to act despite your finger covering
+    // the screen, and a separate toggle button arms the *next* drag of that handle
+    // to actually draw with the current tool - releasing the drag both finishes that
+    // one stroke/shape and disarms back to plain repositioning, so drawing is always
+    // a single deliberate motion rather than an ambiguous free-touch gesture.
+    setupDrawingOverlay() {
+        this.drawingOverlay = document.getElementById('drawing-overlay');
+        this.drawingCanvas = document.getElementById('drawing-canvas');
+        this.drawingCanvasWrap = document.getElementById('drawing-canvas-wrap');
+        this.drawingHandle = document.getElementById('drawing-handle');
+        this.drawingToggleBtn = document.getElementById('drawing-toggle-btn');
+        if (!this.drawingOverlay || !this.drawingCanvas) return;
+
+        const ctx = this.drawingCanvas.getContext('2d');
+        this._drawingCtx = ctx;
+
+        const state = {
+            tool: 'brush',
+            color: '#ffffff',
+            width: 4,
+            editingId: null,
+            armed: false,
+            drawing: false,
+            path: null,           // brush/eraser: array of {x,y} points
+            startPoint: null,     // line/rect/ellipse/text: canvas-space start point
+            beforeSnapshot: null, // ImageData captured right before the in-progress action
+            undoStack: [],
+            redoStack: [],
+            scale: 1,
+            panX: 0,
+            panY: 0,
+            handleX: 0,
+            handleY: 0
+        };
+        this._drawingState = state;
+
+        const clampScale = s => Math.max(0.3, Math.min(6, s));
+
+        const applyPanZoom = () => {
+            this.drawingCanvasWrap.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+        };
+
+        const positionHandleGroup = (x, y) => {
+            state.handleX = x;
+            state.handleY = y;
+            this.drawingHandle.style.left = x + 'px';
+            this.drawingHandle.style.top = y + 'px';
+            this.drawingToggleBtn.style.left = (x + 46) + 'px';
+            this.drawingToggleBtn.style.top = y + 'px';
+        };
+
+        // Converts a client (viewport) point into the canvas's own pixel space,
+        // accounting for the pan/zoom transform and any canvas-vs-display size
+        // mismatch, by reading back the actually-rendered bounding box - this way it
+        // stays correct regardless of how the transform is implemented.
+        const toCanvasPoint = (clientX, clientY) => {
+            const rect = this.drawingCanvas.getBoundingClientRect();
+            const scaleX = this.drawingCanvas.width / rect.width;
+            const scaleY = this.drawingCanvas.height / rect.height;
+            return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+        };
+
+        const pushUndoSnapshot = () => {
+            state.undoStack.push(ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height));
+            if (state.undoStack.length > 40) state.undoStack.shift();
+            state.redoStack = [];
+        };
+
+        const setTool = (tool) => {
+            state.tool = tool;
+            document.querySelectorAll('.drawing-tool-btn[data-tool]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tool === tool);
+            });
+        };
+
+        document.querySelectorAll('.drawing-tool-btn[data-tool]').forEach(btn => {
+            btn.addEventListener('click', () => setTool(btn.dataset.tool));
+        });
+        setTool('brush');
+
+        const colorInput = document.getElementById('drawing-color');
+        const widthInput = document.getElementById('drawing-width');
+        if (colorInput) colorInput.addEventListener('input', () => { state.color = colorInput.value; });
+        if (widthInput) widthInput.addEventListener('input', () => { state.width = parseInt(widthInput.value, 10) || 1; });
+
+        const restoreSnapshot = (imgData) => {
+            ctx.putImageData(imgData, 0, 0);
+        };
+
+        document.getElementById('drawing-undo-btn').addEventListener('click', () => {
+            if (state.undoStack.length === 0) return;
+            state.redoStack.push(ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height));
+            restoreSnapshot(state.undoStack.pop());
+        });
+        document.getElementById('drawing-redo-btn').addEventListener('click', () => {
+            if (state.redoStack.length === 0) return;
+            state.undoStack.push(ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height));
+            restoreSnapshot(state.redoStack.pop());
+        });
+
+        document.getElementById('drawing-cancel-btn').addEventListener('click', () => this.closeDrawingOverlay(false));
+        document.getElementById('drawing-done-btn').addEventListener('click', () => this.closeDrawingOverlay(true));
+
+        // ---- Toggle button: arms the *next* handle drag to draw ----
+        this.drawingToggleBtn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            state.armed = !state.drawing && !state.armed;
+            this.drawingHandle.classList.toggle('armed', state.armed);
+            this.drawingToggleBtn.classList.toggle('armed', state.armed);
+        });
+
+        // ---- Handle: plain drag repositions it; an armed drag draws instead ----
+        let handlePointerId = null;
+
+        const beginDrawAction = (canvasPt) => {
+            state.drawing = true;
+            state.beforeSnapshot = ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height);
+            this.drawingHandle.classList.add('armed');
+            if (state.tool === 'brush' || state.tool === 'eraser') {
+                state.path = [canvasPt];
+                ctx.save();
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = state.width;
+                if (state.tool === 'eraser') {
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.strokeStyle = 'rgba(0,0,0,1)';
+                } else {
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.strokeStyle = state.color;
+                }
+                ctx.beginPath();
+                ctx.moveTo(canvasPt.x, canvasPt.y);
+            } else {
+                state.startPoint = canvasPt;
+            }
+        };
+
+        const continueDrawAction = (canvasPt) => {
+            if (state.tool === 'brush' || state.tool === 'eraser') {
+                state.path.push(canvasPt);
+                ctx.lineTo(canvasPt.x, canvasPt.y);
+                ctx.stroke();
+            } else if (state.tool === 'line' || state.tool === 'rect' || state.tool === 'ellipse') {
+                restoreSnapshot(state.beforeSnapshot);
+                ctx.save();
+                ctx.strokeStyle = state.color;
+                ctx.lineWidth = state.width;
+                ctx.lineCap = 'round';
+                const { x: x0, y: y0 } = state.startPoint;
+                const { x: x1, y: y1 } = canvasPt;
+                ctx.beginPath();
+                if (state.tool === 'line') {
+                    ctx.moveTo(x0, y0);
+                    ctx.lineTo(x1, y1);
+                } else if (state.tool === 'rect') {
+                    ctx.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+                } else {
+                    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+                    const rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
+                    ctx.ellipse(cx, cy, Math.max(rx, 0.01), Math.max(ry, 0.01), 0, 0, Math.PI * 2);
+                }
+                ctx.stroke();
+                ctx.restore();
+            }
+            // Text tool has no live preview - it's stamped once on release.
+        };
+
+        const endDrawAction = (canvasPt) => {
+            if (state.tool === 'brush' || state.tool === 'eraser') {
+                ctx.restore();
+            } else if (state.tool === 'text') {
+                const text = window.prompt('Text:', '');
+                if (text) {
+                    ctx.save();
+                    ctx.fillStyle = state.color;
+                    ctx.font = `${Math.max(14, state.width * 6)}px sans-serif`;
+                    ctx.textBaseline = 'top';
+                    ctx.fillText(text, state.startPoint.x, state.startPoint.y);
+                    ctx.restore();
+                } else {
+                    // Nothing typed - discard, restore to how it was before this action.
+                    restoreSnapshot(state.beforeSnapshot);
+                }
+            }
+            // beforeSnapshot already captures the pre-action state - commit it to the
+            // undo stack now that the action is finished, rather than at action start,
+            // so an action the person backs out of (e.g. an empty text prompt) never
+            // leaves a redundant no-op entry on the stack.
+            state.undoStack.push(state.beforeSnapshot);
+            if (state.undoStack.length > 40) state.undoStack.shift();
+            state.redoStack = [];
+            state.beforeSnapshot = null;
+            state.drawing = false;
+            state.armed = false;
+            this.drawingHandle.classList.remove('armed');
+            this.drawingToggleBtn.classList.remove('armed');
+        };
+
+        this.drawingHandle.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handlePointerId = e.pointerId;
+            this.drawingHandle.setPointerCapture(handlePointerId);
+            if (state.armed) {
+                beginDrawAction(toCanvasPoint(e.clientX, e.clientY));
+            }
+        });
+        this.drawingHandle.addEventListener('pointermove', (e) => {
+            if (e.pointerId !== handlePointerId) return;
+            if (state.drawing) {
+                continueDrawAction(toCanvasPoint(e.clientX, e.clientY));
+                // The handle still visually follows the finger/cursor while drawing,
+                // it just also draws at the same time.
+                positionHandleGroup(
+                    e.clientX - this.drawingOverlay.getBoundingClientRect().left,
+                    e.clientY - this.drawingOverlay.getBoundingClientRect().top
+                );
+            } else {
+                positionHandleGroup(
+                    e.clientX - this.drawingOverlay.getBoundingClientRect().left,
+                    e.clientY - this.drawingOverlay.getBoundingClientRect().top
+                );
+            }
+        });
+        const finishHandlePointer = (e) => {
+            if (e.pointerId !== handlePointerId) return;
+            handlePointerId = null;
+            if (state.drawing) {
+                endDrawAction(toCanvasPoint(e.clientX, e.clientY));
+            }
+        };
+        this.drawingHandle.addEventListener('pointerup', finishHandlePointer);
+        this.drawingHandle.addEventListener('pointercancel', finishHandlePointer);
+
+        // ---- Tapping elsewhere on the canvas teleports the handle group there ----
+        this.drawingCanvasWrap.addEventListener('pointerdown', (e) => {
+            if (e.target !== this.drawingCanvas && e.target !== this.drawingCanvasWrap) return;
+            const overlayRect = this.drawingOverlay.getBoundingClientRect();
+            positionHandleGroup(e.clientX - overlayRect.left, e.clientY - overlayRect.top);
+        });
+
+        // ---- Two-finger pan + pinch zoom on the canvas area ----
+        let pinch = null;
+        this.drawingOverlay.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                const [a, b] = e.touches;
+                pinch = {
+                    dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+                    midX: (a.clientX + b.clientX) / 2,
+                    midY: (a.clientY + b.clientY) / 2,
+                    startScale: state.scale,
+                    startPanX: state.panX,
+                    startPanY: state.panY
+                };
+            }
+        }, { passive: true });
+        this.drawingOverlay.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && pinch) {
+                e.preventDefault();
+                const [a, b] = e.touches;
+                const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+                const midX = (a.clientX + b.clientX) / 2;
+                const midY = (a.clientY + b.clientY) / 2;
+                state.scale = clampScale(pinch.startScale * (dist / pinch.dist));
+                state.panX = pinch.startPanX + (midX - pinch.midX);
+                state.panY = pinch.startPanY + (midY - pinch.midY);
+                applyPanZoom();
+            }
+        }, { passive: false });
+        this.drawingOverlay.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) pinch = null;
+        });
+        // Desktop equivalent: mouse wheel zooms.
+        this.drawingOverlay.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            state.scale = clampScale(state.scale * (e.deltaY < 0 ? 1.1 : 0.9));
+            applyPanZoom();
+        }, { passive: false });
+
+        this._drawingHelpers = { toCanvasPoint, positionHandleGroup, applyPanZoom, pushUndoSnapshot, setTool };
+    }
+
+    // Opens the full-screen drawing overlay. Pass an existing drawing id to edit it,
+    // or null/undefined to start a brand new blank drawing.
+    openDrawingOverlay(existingId) {
+        if (!this.drawingOverlay) return;
+        const state = this._drawingState;
+        const ctx = this._drawingCtx;
+        const canvas = this.drawingCanvas;
+
+        this.drawingOverlay.style.display = 'block';
+        // Size the canvas 1:1 with CSS pixels for the whole editing session (no
+        // devicePixelRatio scaling) - toCanvasPoint derives drawing coordinates from
+        // the canvas's actual rendered bounding box, so keeping canvas.width/height
+        // equal to its displayed CSS size keeps that mapping simple and exact,
+        // rather than needing every draw call to also account for a separate DPI
+        // transform on the context.
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        state.scale = 1;
+        state.panX = 0;
+        state.panY = 0;
+        state.undoStack = [];
+        state.redoStack = [];
+        state.editingId = existingId || null;
+        this.drawingCanvasWrap.style.transform = 'translate(0px, 0px) scale(1)';
+        this._drawingHelpers.positionHandleGroup(window.innerWidth / 2, window.innerHeight / 2);
+
+        if (existingId && this.notesDrawings[existingId]) {
+            const img = new Image();
+            img.onload = () => {
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            };
+            img.src = this.notesDrawings[existingId].dataUrl;
+        }
+    }
+
+    closeDrawingOverlay(save) {
+        if (!this.drawingOverlay) return;
+        const state = this._drawingState;
+
+        if (save) {
+            const dataUrl = this.drawingCanvas.toDataURL('image/png');
+            let id = state.editingId;
+            if (!id) {
+                id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            }
+            this.notesDrawings[id] = { dataUrl };
+
+            if (!state.editingId && this.notesTextarea) {
+                // Brand new drawing - insert its marker at wherever the cursor last was.
+                const marker = '[[drawing:' + id + ']]';
+                const value = this.globalNotes || '';
+                const pos = Math.min(this._notesCursorPos || value.length, value.length);
+                const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+                let lineEnd = value.indexOf('\n', pos);
+                if (lineEnd === -1) lineEnd = value.length;
+                const lineText = value.slice(lineStart, lineEnd);
+                // Drop it on its own new line rather than mixed into existing text.
+                const insertion = (lineText.trim() ? '\n' : '') + marker + '\n';
+                this.globalNotes = value.slice(0, lineEnd) + insertion + value.slice(lineEnd);
+            }
+
+            this.renderNotesPanel();
+            this.autosave();
+        }
+
+        this.drawingOverlay.style.display = 'none';
     }
 
     addPughCriteria() {
@@ -3782,7 +4312,8 @@ class FlowchartViewer {
             showPlaceholders: this.showPlaceholders,
             transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k },
             pughMatrix: this.pughMatrix,
-            globalNotes: this.globalNotes
+            globalNotes: this.globalNotes,
+            notesDrawings: this.notesDrawings
         }, null, 2);
     }
 
@@ -4599,9 +5130,18 @@ class FlowchartViewer {
             this.deselectConnection();
         }
 
+        // Empty/placeholder nodes are drawn first (painted underneath) and real nodes
+        // after (painted on top) - otherwise, as a sticky node slides past an empty
+        // stub sitting further along the same row/column, whichever one happened to
+        // come later in root.descendants() would visually cover the other, and empty
+        // stubs shouldn't be able to obscure a real node passing behind them.
+        const orderedDescendants = root.descendants().slice().sort((a, b) =>
+            (this.isEmptyIndentedNode(a) ? 0 : 1) - (this.isEmptyIndentedNode(b) ? 0 : 1)
+        );
+
         const node = g.append('g')
             .selectAll('.node')
-            .data(root.descendants())
+            .data(orderedDescendants)
             .enter()
             .append('g')
             .attr('class', 'node')
@@ -4636,6 +5176,14 @@ class FlowchartViewer {
             })
             .on('contextmenu', (event, d) => {
                 event.preventDefault();
+                // Long-press (which fires as 'contextmenu' on mobile) is imprecise
+                // enough that a press near - but not really on - a node can still
+                // register as landing on it, opening the edit popup for a node the
+                // person didn't mean to touch. A plain tap already opens the same
+                // popup reliably via the 'click' handler above, so on mobile there's
+                // no need for long-press to do anything beyond blocking the browser's
+                // own native context menu.
+                if (window.matchMedia('(max-width: 600px)').matches) return;
                 this.showNodeEditPopup(d);
                 this.selectNode(d);
                 this.refreshRadialButtons();
