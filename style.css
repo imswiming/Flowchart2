@@ -1175,21 +1175,29 @@ body {
 
 #drawing-handle {
     position: absolute;
+    left: 50%;
+    top: 50%;
     width: 46px;
     height: 46px;
     margin-left: -23px;
     margin-top: -23px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.18);
-    border: 2px solid rgba(255, 255, 255, 0.85);
+    /* Bright orange with a dark outline (via box-shadow, not border, so the outline
+       doesn't eat into the border-radius) - visible against a white canvas, a dark
+       drawing, or the dark overlay background alike. Plain white on white paper was
+       basically invisible. */
+    background: rgba(255, 153, 0, 0.35);
+    border: 2px solid #ff9900;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
     z-index: 5020;
     touch-action: none;
     cursor: grab;
 }
 
 #drawing-handle.armed {
-    border-color: #00a67e;
-    background: rgba(0, 166, 126, 0.25);
+    border-color: #00e676;
+    background: rgba(0, 230, 118, 0.3);
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
 }
 
 #drawing-handle-crosshair {
@@ -1203,7 +1211,8 @@ body {
 
 .crosshair-line {
     position: absolute;
-    background: rgba(255, 255, 255, 0.9);
+    background: #ff9900;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
 }
 
 .crosshair-h {
@@ -1222,12 +1231,15 @@ body {
 
 #drawing-toggle-btn {
     position: absolute;
+    left: calc(50% + 46px);
+    top: 50%;
     width: 34px;
     height: 34px;
     margin-top: -17px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.18);
-    border: 2px solid rgba(255, 255, 255, 0.85);
+    background: rgba(255, 153, 0, 0.35);
+    border: 2px solid #ff9900;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
     color: #fff;
     font-size: 15px;
     z-index: 5020;
@@ -1236,6 +1248,7 @@ body {
 }
 
 #drawing-toggle-btn.armed {
-    background: #00a67e;
-    border-color: #00a67e;
+    background: #00e676;
+    border-color: #00e676;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
 }

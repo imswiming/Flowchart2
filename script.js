@@ -651,8 +651,17 @@ class FlowchartViewer {
         this.updateCloudSyncStatus('syncing');
         try {
             const updatedAt = Date.now();
-            const payload = { updated_at: updatedAt, data: { flowchartList: this.flowchartList } };
-            const serialized = JSON.stringify(payload);
+            const dataJson = JSON.stringify({ flowchartList: this.flowchartList });
+            // Skip the upload entirely if nothing has actually changed since the last
+            // successful push - the ~2s debounce can fire on things like a blur event
+            // that didn't change any data, and without this check that still costs a
+            // full re-upload of everything, drawings included, for no reason.
+            if (dataJson === this._lastPushedDataJson) {
+                this._cloudSyncInFlight = false;
+                this.updateCloudSyncStatus('synced');
+                return true;
+            }
+            const serialized = JSON.stringify({ updated_at: updatedAt, data: { flowchartList: this.flowchartList } });
             // Supabase free tier rows via PostgREST handle multi-MB JSON comfortably,
             // but bail out with a clear warning well before anything unreasonable
             // instead of silently losing data.
@@ -673,6 +682,7 @@ class FlowchartViewer {
             });
             if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
+            this._lastPushedDataJson = dataJson;
             this.updateCloudSyncStatus('synced');
             return true;
         } catch (err) {
@@ -689,31 +699,51 @@ class FlowchartViewer {
         if (this._cloudSyncInFlight) return false;
         this._cloudSyncInFlight = true;
         try {
-            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at,data`, {
+            // Two-step check: first ask for just updated_at (a few bytes) rather than
+            // the full row. Every poll used to download the entire data blob - drawings
+            // included - just to see if anything had changed, even though almost every
+            // poll finds nothing new. Only fetching the (potentially multi-MB) `data`
+            // column once we already know the remote copy is actually newer cuts
+            // routine idle-tab bandwidth by roughly the size of that blob, every cycle.
+            const headRes = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at`, {
                 headers: {
                     'apikey': this.cloudApiKey,
                     'Authorization': `Bearer ${this.cloudApiKey}`,
                     'Accept': 'application/json'
                 }
             });
-            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
-            const rows = await res.json();
-            const row = rows && rows[0];
-            if (!row) throw new Error('sync row not found - check the Sync ID');
-            const remoteUpdatedAt = Number(row.updated_at) || 0;
+            if (!headRes.ok) throw new Error(`Supabase API error ${headRes.status}: ${await headRes.text()}`);
+            const headRows = await headRes.json();
+            const headRow = headRows && headRows[0];
+            if (!headRow) throw new Error('sync row not found - check the Sync ID');
+            const remoteUpdatedAt = Number(headRow.updated_at) || 0;
             const knownRemoteAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
-            const remoteList = row.data && row.data.flowchartList;
-            if (remoteUpdatedAt > knownRemoteAt && Array.isArray(remoteList)) {
-                this._applyingRemote = true;
-                this.flowchartList = remoteList;
-                this.saveFlowchartList();
-                localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
-                if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
-                    this.currentSlotIndex = 0;
+
+            if (remoteUpdatedAt > knownRemoteAt) {
+                const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at,data`, {
+                    headers: {
+                        'apikey': this.cloudApiKey,
+                        'Authorization': `Bearer ${this.cloudApiKey}`,
+                        'Accept': 'application/json'
+                    }
+                });
+                if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+                const rows = await res.json();
+                const row = rows && rows[0];
+                const remoteList = row && row.data && row.data.flowchartList;
+                if (Array.isArray(remoteList)) {
+                    this._applyingRemote = true;
+                    this.flowchartList = remoteList;
+                    this._lastPushedDataJson = JSON.stringify({ flowchartList: remoteList });
+                    this.saveFlowchartList();
+                    localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
+                    if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
+                        this.currentSlotIndex = 0;
+                    }
+                    this.loadFlowchartFromList(this.currentSlotIndex);
+                    this._applyingRemote = false;
+                    this.showNotification('Synced latest changes from another device.');
                 }
-                this.loadFlowchartFromList(this.currentSlotIndex);
-                this._applyingRemote = false;
-                this.showNotification('Synced latest changes from another device.');
             }
             this.updateCloudSyncStatus('synced');
             return true;
@@ -3688,6 +3718,19 @@ class FlowchartViewer {
             return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
         };
 
+        // The handle's pointer-tracked position (e.clientX/Y while dragging it) is
+        // its own *center* - but the crosshair sits up-and-left of that (see
+        // #drawing-handle/-crosshair CSS: handle radius 23px + the crosshair box's
+        // own -22px offset + half its 20px size = 35px up and 35px left), and that's
+        // where drawing should actually happen, so the person can see the exact
+        // point being drawn at instead of it being hidden under their finger/the
+        // handle itself. Used for every actual draw action; positionHandleGroup
+        // (which just moves the handle/toggle group around) intentionally still uses
+        // the raw pointer position, not this.
+        const CROSSHAIR_OFFSET = 35;
+        const toCrosshairCanvasPoint = (clientX, clientY) =>
+            toCanvasPoint(clientX - CROSSHAIR_OFFSET, clientY - CROSSHAIR_OFFSET);
+
         const pushUndoSnapshot = () => {
             state.undoStack.push(ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height));
             if (state.undoStack.length > 40) state.undoStack.shift();
@@ -3700,6 +3743,15 @@ class FlowchartViewer {
                 btn.classList.toggle('active', btn.dataset.tool === tool);
             });
         };
+
+        // Assigned as early as possible (before any of the listener wiring below,
+        // which touches more elements and is more likely to hit something
+        // unexpected) - openDrawingOverlay only needs positionHandleGroup to work,
+        // and if some later, non-essential wiring throws, this still lets the handle
+        // itself show up rather than silently leaving it undefined and invisible.
+        this._drawingHelpers = { toCanvasPoint, toCrosshairCanvasPoint, positionHandleGroup, applyPanZoom, pushUndoSnapshot, setTool };
+
+        try {
 
         document.querySelectorAll('.drawing-tool-btn[data-tool]').forEach(btn => {
             btn.addEventListener('click', () => setTool(btn.dataset.tool));
@@ -3832,15 +3884,15 @@ class FlowchartViewer {
             handlePointerId = e.pointerId;
             this.drawingHandle.setPointerCapture(handlePointerId);
             if (state.armed) {
-                beginDrawAction(toCanvasPoint(e.clientX, e.clientY));
+                beginDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
             }
         });
         this.drawingHandle.addEventListener('pointermove', (e) => {
             if (e.pointerId !== handlePointerId) return;
             if (state.drawing) {
-                continueDrawAction(toCanvasPoint(e.clientX, e.clientY));
+                continueDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
                 // The handle still visually follows the finger/cursor while drawing,
-                // it just also draws at the same time.
+                // it just also draws (at the crosshair position) at the same time.
                 positionHandleGroup(
                     e.clientX - this.drawingOverlay.getBoundingClientRect().left,
                     e.clientY - this.drawingOverlay.getBoundingClientRect().top
@@ -3856,7 +3908,7 @@ class FlowchartViewer {
             if (e.pointerId !== handlePointerId) return;
             handlePointerId = null;
             if (state.drawing) {
-                endDrawAction(toCanvasPoint(e.clientX, e.clientY));
+                endDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
             }
         };
         this.drawingHandle.addEventListener('pointerup', finishHandlePointer);
@@ -3907,7 +3959,11 @@ class FlowchartViewer {
             applyPanZoom();
         }, { passive: false });
 
-        this._drawingHelpers = { toCanvasPoint, positionHandleGroup, applyPanZoom, pushUndoSnapshot, setTool };
+        } catch (err) {
+            // Surfaces the real cause in the console instead of leaving the handle/
+            // toggle/crosshair silently un-wired with no clue why.
+            console.error('Drawing overlay setup error:', err);
+        }
     }
 
     // Opens the full-screen drawing overlay. Pass an existing drawing id to edit it,
@@ -3939,7 +3995,14 @@ class FlowchartViewer {
         state.redoStack = [];
         state.editingId = existingId || null;
         this.drawingCanvasWrap.style.transform = 'translate(0px, 0px) scale(1)';
-        this._drawingHelpers.positionHandleGroup(window.innerWidth / 2, window.innerHeight / 2);
+        try {
+            this._drawingHelpers.positionHandleGroup(window.innerWidth / 2, window.innerHeight / 2);
+        } catch (err) {
+            // The handle/toggle already have CSS fallback positions (center of
+            // screen) for exactly this case, so a failure here is non-fatal - just
+            // surface it rather than leaving the rest of this function to guess.
+            console.error('Could not position drawing handle:', err);
+        }
 
         if (existingId && this.notesDrawings[existingId]) {
             const img = new Image();
