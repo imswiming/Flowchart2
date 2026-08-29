@@ -2067,6 +2067,8 @@ class FlowchartViewer {
         const prev = this.undoStack.pop();
         this.rootData = prev.data;
         this.customConnections = prev.connections;
+        this.relinkMorphNodeRefs();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.autosave();
@@ -2082,6 +2084,8 @@ class FlowchartViewer {
         const next = this.redoStack.pop();
         this.rootData = next.data;
         this.customConnections = next.connections;
+        this.relinkMorphNodeRefs();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.autosave();
@@ -3722,6 +3726,41 @@ class FlowchartViewer {
         return changed;
     }
 
+
+    // undo()/redo() swap in a brand new cloned tree (cloneData round-trips through
+    // JSON), so every node data object - including the ones _morphNodeRefs is
+    // holding onto - is a stale object no longer part of this.rootData. resyncMorphRows
+    // can't fix that on its own since it only ever follows refs it's already holding;
+    // it has no way to discover the *new* objects. This re-finds each row's parent
+    // node (and its current green children) inside the fresh tree by name, the same
+    // way addNodeToMorph identifies rows in the first place, and re-points
+    // _morphNodeRefs at them so resyncMorphRows has something live to follow again.
+    // Rows whose node can no longer be found (e.g. undoing past its creation) simply
+    // lose their live link and fall back to their last-known static snapshot, same as
+    // a row loaded from a save file.
+    relinkMorphNodeRefs() {
+        if (!this.morphMatrix || this.morphMatrix.rows.length === 0) return;
+        if (!this._morphNodeRefs) this._morphNodeRefs = {};
+
+        const allNodes = [];
+        const walk = (n) => {
+            if (!n) return;
+            allNodes.push(n);
+            (n.children || []).forEach(walk);
+        };
+        walk(this.rootData);
+
+        this.morphMatrix.rows.forEach(row => {
+            const match = allNodes.find(n => this.stripSimplifySuffix(n.name || '') === row.name);
+            if (match) {
+                const optionRefs = (match.children || [])
+                    .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+                this._morphNodeRefs[row.id] = { nodeRef: match, optionRefs };
+            } else {
+                delete this._morphNodeRefs[row.id];
+            }
+        });
+    }
 
     deleteMorphRow(rowId) {
         this.morphMatrix.rows = this.morphMatrix.rows.filter(r => r.id !== rowId);
