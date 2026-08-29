@@ -2804,6 +2804,7 @@ class FlowchartViewer {
                 this.markNodeAsReal(originalData);
             }
             originalData.name = newName;
+            this.syncMorphMatrixNames(originalData);
             if (needsWrap) {
                 this.rootData = this.wrapRootWithPlaceholder(this.rootData);
             }
@@ -3574,13 +3575,26 @@ class FlowchartViewer {
         return { rows, ideas };
     }
 
+    // Green leaf nodes automatically get a " (Simplify?)" suffix appended to their
+    // displayed name (an internal UI marker, not meant to appear anywhere else) - this
+    // strips it off wherever a node's name is pulled into the Morph Matrix.
+    stripSimplifySuffix(name) {
+        return (name || '').replace(/ \(Simplify\?\)$/, '').trim();
+    }
+
     // Adds a node as a new Morph Matrix row - the row name is the node's own name,
     // and its columns are the node's immediate green-colored children only (any
     // other color, or grandchildren, are ignored). Skips if a row with that exact
     // name already exists, same duplicate-guard pattern as addNodeToPugh.
+    //
+    // Also keeps a live (non-persisted) reference to the underlying node data objects
+    // - see syncMorphMatrixNames, called whenever a node is renamed, so a row/option's
+    // displayed name always tracks the actual node instead of freezing at whatever it
+    // was called when "Add to Morph" was clicked.
     addNodeToMorph() {
         if (!this.nodeBeingEdited) return;
-        const name = (this.nodeBeingEdited.data.name || '').trim();
+        const rawName = this.nodeBeingEdited.data.name || '';
+        const name = this.stripSimplifySuffix(rawName);
         if (!name) {
             this.showNotification('Name the node first.');
             return;
@@ -3592,25 +3606,73 @@ class FlowchartViewer {
             return;
         }
 
-        const children = this.nodeBeingEdited.data.children || [];
-        const options = children
-            .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e')
-            .map(c => c.name.trim());
+        const nodeRef = this.nodeBeingEdited.data;
+        const childRefs = (nodeRef.children || [])
+            .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+        const options = childRefs.map(c => this.stripSimplifySuffix(c.name));
 
         if (options.length === 0) {
             this.showNotification(`"${name}" has no green children to use as options.`);
             return;
         }
 
-        this.morphMatrix.rows.push({ id: this.nextMorphId('row'), name, options });
+        const rowId = this.nextMorphId('row');
+        this.morphMatrix.rows.push({ id: rowId, name, options });
+        // Live refs are kept entirely separate from morphMatrix itself (never
+        // attached to the row object directly) - exportAsJSON/autosave embed
+        // this.morphMatrix as-is without passing it through the sanitizer first, so
+        // anything stored directly on a row would get serialized too: since these
+        // are raw references into the tree (including each node's own .children
+        // array), that would either massively bloat the saved JSON or risk crashing
+        // JSON.stringify outright if anything circular ever showed up. Keeping them
+        // here instead means this.morphMatrix always stays a plain, safe structure.
+        if (!this._morphNodeRefs) this._morphNodeRefs = {};
+        this._morphNodeRefs[rowId] = { nodeRef, optionRefs: childRefs };
         this.renderMorphPanel();
         this.autosave();
         this.showNotification(`Added "${name}" as a Morph Matrix row.`);
     }
 
+    // Called whenever a node's name is saved (see saveNodeEdit) - checks every Morph
+    // Matrix row/option that still has a live reference to that same node and, if its
+    // name has changed since, updates the stored row/option name to match (also
+    // stripping the "(Simplify?)" suffix, same as when the row/option was first
+    // added).
+    syncMorphMatrixNames(changedNodeData) {
+        if (!changedNodeData || !this.morphMatrix || !this._morphNodeRefs) return;
+        let changed = false;
+        this.morphMatrix.rows.forEach(row => {
+            const refs = this._morphNodeRefs[row.id];
+            if (!refs) return;
+            if (refs.nodeRef === changedNodeData) {
+                const newName = this.stripSimplifySuffix(changedNodeData.name);
+                if (newName && row.name !== newName) {
+                    row.name = newName;
+                    changed = true;
+                }
+            }
+            if (Array.isArray(refs.optionRefs)) {
+                refs.optionRefs.forEach((ref, i) => {
+                    if (ref === changedNodeData) {
+                        const newName = this.stripSimplifySuffix(changedNodeData.name);
+                        if (newName && row.options[i] !== newName) {
+                            row.options[i] = newName;
+                            changed = true;
+                        }
+                    }
+                });
+            }
+        });
+        if (changed) {
+            this.renderMorphPanel();
+            this.autosave();
+        }
+    }
+
     deleteMorphRow(rowId) {
         this.morphMatrix.rows = this.morphMatrix.rows.filter(r => r.id !== rowId);
         if (this._morphCurrentSelection) delete this._morphCurrentSelection[rowId];
+        if (this._morphNodeRefs) delete this._morphNodeRefs[rowId];
         this.renderMorphPanel();
         this.autosave();
     }
@@ -4529,6 +4591,21 @@ class FlowchartViewer {
         this.showNotification(`Added "${name}" as a ${kind === 'solution' ? 'solution' : 'criteria'}.`);
     }
 
+    // Adds an accepted Morph Matrix idea into the Pugh Matrix as a new solution
+    // column - same duplicate-name guard as addNodeToPugh.
+    addMorphIdeaToPugh(ideaId) {
+        const idea = this.morphMatrix.ideas.find(i => i.id === ideaId);
+        if (!idea) return;
+        const exists = this.pughMatrix.columns.some(c => c.title.trim().toLowerCase() === idea.text.trim().toLowerCase());
+        if (exists) {
+            this.showNotification(`"${idea.text}" is already a solution in the Pugh Matrix.`);
+            return;
+        }
+        this.pughMatrix.columns.push({ id: this.nextPughId('col'), title: idea.text });
+        this.autosave();
+        this.showNotification(`Added "${idea.text}" as a Pugh Matrix solution.`);
+    }
+
     addPughCriteria() {
         this.pughMatrix.criteria.push({
             id: this.nextPughId('crit'),
@@ -5090,14 +5167,14 @@ class FlowchartViewer {
         const hint = document.createElement('div');
         hint.className = 'pugh-empty-state';
         hint.style.padding = '4px 2px';
-        hint.textContent = 'Use "Add to Morph" in a node\'s edit menu to add it as a row here.';
+        hint.textContent = 'Use "Add to Morph" in a node\'s edit menu to add it as a column here.';
         toolbar.appendChild(hint);
         this.morphPanelBody.appendChild(toolbar);
 
         if (m.rows.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'pugh-empty-state';
-            empty.textContent = 'No rows yet - edit a green parent node with green children and click "Add to Morph".';
+            empty.textContent = 'No columns yet - edit a green parent node with green children and click "Add to Morph".';
             this.morphPanelBody.appendChild(empty);
             return;
         }
@@ -5107,48 +5184,68 @@ class FlowchartViewer {
         const table = document.createElement('table');
         table.className = 'pugh-table morph-table';
 
-        const tbody = document.createElement('tbody');
         const sel = this._morphCurrentSelection || {};
-        m.rows.forEach(row => {
-            const tr = document.createElement('tr');
 
-            const nameTd = document.createElement('td');
-            nameTd.className = 'pugh-criteria-cell';
-            const nameRowDiv = document.createElement('div');
-            nameRowDiv.style.display = 'flex';
-            nameRowDiv.style.alignItems = 'center';
-            nameRowDiv.style.gap = '4px';
+        // Header row: one column per parameter (parent node), with its name + a
+        // delete button - columns are the parents, rows below are the option slots.
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        m.rows.forEach(row => {
+            const th = document.createElement('th');
+            th.className = 'pugh-criteria-cell';
+            const headDiv = document.createElement('div');
+            headDiv.style.display = 'flex';
+            headDiv.style.alignItems = 'center';
+            headDiv.style.justifyContent = 'center';
+            headDiv.style.gap = '4px';
             const nameLabel = document.createElement('div');
             nameLabel.className = 'morph-row-name';
             nameLabel.textContent = row.name;
             const delRowBtn = document.createElement('button');
             delRowBtn.className = 'pugh-delete-row-btn';
-            delRowBtn.title = 'Delete this row';
+            delRowBtn.title = 'Delete this column';
             delRowBtn.textContent = '\u00d7';
             delRowBtn.addEventListener('click', () => this.deleteMorphRow(row.id));
-            nameRowDiv.appendChild(nameLabel);
-            nameRowDiv.appendChild(delRowBtn);
-            nameTd.appendChild(nameRowDiv);
-            tr.appendChild(nameTd);
+            headDiv.appendChild(nameLabel);
+            headDiv.appendChild(delRowBtn);
+            th.appendChild(headDiv);
+            headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
 
-            if (row.options.length === 0) {
-                const emptyTd = document.createElement('td');
-                emptyTd.className = 'pugh-empty-state';
-                emptyTd.textContent = '(no green children found)';
-                tr.appendChild(emptyTd);
-            } else {
-                row.options.forEach(option => {
+        // Body: one row per option "slot" - since different parameters can have
+        // different numbers of green children, pad shorter columns with blank cells
+        // up to the tallest column's option count.
+        const tbody = document.createElement('tbody');
+        const maxOptions = m.rows.reduce((max, row) => Math.max(max, row.options.length), 0);
+        if (maxOptions === 0) {
+            const tr = document.createElement('tr');
+            const emptyTd = document.createElement('td');
+            emptyTd.className = 'pugh-empty-state';
+            emptyTd.colSpan = m.rows.length;
+            emptyTd.textContent = '(no green children found on any row)';
+            tr.appendChild(emptyTd);
+            tbody.appendChild(tr);
+        } else {
+            for (let i = 0; i < maxOptions; i++) {
+                const tr = document.createElement('tr');
+                m.rows.forEach(row => {
+                    const option = row.options[i];
                     const td = document.createElement('td');
-                    td.className = 'morph-option-cell';
-                    if (sel[row.id] === option) td.classList.add('morph-option-selected');
-                    td.textContent = option;
-                    td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
+                    if (option === undefined) {
+                        td.className = 'morph-option-cell-blank';
+                    } else {
+                        td.className = 'morph-option-cell';
+                        if (sel[row.id] === option) td.classList.add('morph-option-selected');
+                        td.textContent = option;
+                        td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
+                    }
                     tr.appendChild(td);
                 });
+                tbody.appendChild(tr);
             }
-
-            tbody.appendChild(tr);
-        });
+        }
         table.appendChild(tbody);
         wrap.appendChild(table);
         this.morphPanelBody.appendChild(wrap);
@@ -5159,7 +5256,7 @@ class FlowchartViewer {
         const ideaText = this.getMorphCurrentIdeaText();
         const previewLabel = document.createElement('div');
         previewLabel.className = 'morph-preview-label';
-        previewLabel.textContent = ideaText ? ('Idea: ' + ideaText) : 'Click a cell in each row to build an idea.';
+        previewLabel.textContent = ideaText ? ('Idea: ' + ideaText) : 'Click a cell in each column to build an idea.';
         const acceptBtn = document.createElement('button');
         acceptBtn.className = 'pugh-rerank-btn';
         acceptBtn.textContent = 'Accept';
@@ -5186,12 +5283,18 @@ class FlowchartViewer {
                 const text = document.createElement('div');
                 text.className = 'morph-idea-text';
                 text.textContent = idea.text;
+                const addToPughBtn = document.createElement('button');
+                addToPughBtn.className = 'pugh-toolbar-mini-btn';
+                addToPughBtn.textContent = '📊 Add to Pugh\'s';
+                addToPughBtn.title = 'Add this idea as a solution in the Pugh Matrix';
+                addToPughBtn.addEventListener('click', () => this.addMorphIdeaToPugh(idea.id));
                 const delBtn = document.createElement('button');
                 delBtn.className = 'pugh-delete-row-btn';
                 delBtn.title = 'Delete this idea';
                 delBtn.textContent = '\u00d7';
                 delBtn.addEventListener('click', () => this.deleteMorphIdea(idea.id));
                 row.appendChild(text);
+                row.appendChild(addToPughBtn);
                 row.appendChild(delBtn);
                 ideasList.appendChild(row);
             });
