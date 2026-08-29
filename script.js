@@ -5131,14 +5131,21 @@ class FlowchartViewer {
             nameTd.appendChild(nameRowDiv);
             tr.appendChild(nameTd);
 
-            row.options.forEach(option => {
-                const td = document.createElement('td');
-                td.className = 'morph-option-cell';
-                if (sel[row.id] === option) td.classList.add('morph-option-selected');
-                td.textContent = option;
-                td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
-                tr.appendChild(td);
-            });
+            if (row.options.length === 0) {
+                const emptyTd = document.createElement('td');
+                emptyTd.className = 'pugh-empty-state';
+                emptyTd.textContent = '(no green children found)';
+                tr.appendChild(emptyTd);
+            } else {
+                row.options.forEach(option => {
+                    const td = document.createElement('td');
+                    td.className = 'morph-option-cell';
+                    if (sel[row.id] === option) td.classList.add('morph-option-selected');
+                    td.textContent = option;
+                    td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
+                    tr.appendChild(td);
+                });
+            }
 
             tbody.appendChild(tr);
         });
