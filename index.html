@@ -566,7 +566,10 @@ create policy "allow all" on flowchart_sync
         <button class="drawing-tool-btn" id="drawing-tool-ellipse" title="Circle/Ellipse" data-tool="ellipse">◯</button>
         <button class="drawing-tool-btn" id="drawing-tool-text" title="Text" data-tool="text">T</button>
         <input type="color" id="drawing-color" value="#ffffff" title="Colour" style="width:30px; height:30px; padding:0; border:none; border-radius:6px; background:none; cursor:pointer;">
-        <input type="range" id="drawing-width" min="1" max="40" value="4" title="Brush width" style="width:80px;">
+        <span style="color:#fff; font-size:12px;">✏️</span>
+        <input type="range" id="drawing-width" min="1" max="40" value="4" title="Brush width" style="width:70px;">
+        <span style="color:#fff; font-size:12px;">🧹</span>
+        <input type="range" id="drawing-eraser-width" min="4" max="100" value="24" title="Eraser width" style="width:70px;">
         <button class="drawing-tool-btn" id="drawing-undo-btn" title="Undo">↩</button>
         <button class="drawing-tool-btn" id="drawing-redo-btn" title="Redo">↪</button>
         <div style="flex:1;"></div>
@@ -577,10 +580,7 @@ create policy "allow all" on flowchart_sync
         <canvas id="drawing-canvas"></canvas>
       </div>
       <div id="drawing-handle" title="Drag to move · drag after tapping the toggle to draw">
-        <div id="drawing-handle-crosshair">
-          <div class="crosshair-line crosshair-h"></div>
-          <div class="crosshair-line crosshair-v"></div>
-        </div>
+        <div id="drawing-size-indicator"></div>
       </div>
       <button id="drawing-toggle-btn" title="Tap, then drag the handle to draw">✎</button>
     </div>

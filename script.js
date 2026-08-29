@@ -164,6 +164,11 @@ class FlowchartViewer {
         this._pughPanelActive = false;
         this._pughIdCounter = 0;
         this.pughMatrix = this.getDefaultPughMatrix();
+        // Ranking mode: a pairwise "beat the baseline" tournament for ordering the
+        // solutions (columns) under whichever single criteria is currently active -
+        // see startOrResumeRankSession/handlePughReRank for the algorithm.
+        this._pughRankMode = false;
+        this._pughActiveCriteriaId = null;
 
         // Notes: a single free-form text field, global to the whole flowchart (not
         // tied to any node). Lives in a persistent strip at the bottom of the same
@@ -174,6 +179,12 @@ class FlowchartViewer {
         // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
         // globalNotes that references them - see renderNotesDrawingsStrip.
         this.notesDrawings = {};
+        // Pasted images/photo links, keyed by the [[image:ID]] marker in globalNotes.
+        // Each entry is either { dataUrl } for an actually-pasted image, or { url }
+        // for a pasted link to one - links are stored as just the URL string (no
+        // bytes at all), which also keeps them out of the cloud-sync payload size,
+        // unlike embedded image data.
+        this.notesImages = {};
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
         this.setupPughPanel();
@@ -1010,6 +1021,7 @@ class FlowchartViewer {
                 this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
                 this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
+                this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
                 this.renderNotesPanel();
                 
                 if (parsed.customConnections) {
@@ -1516,20 +1528,27 @@ class FlowchartViewer {
             // compressed/tracked position must not propagate further up the chain, or
             // every ancestor above a terminating branch would compress together with
             // it, one after another, instead of only the immediate parent doing so).
-            const minChildPos = Math.min(...relevantChildren.map(child =>
-                child._docked ? dockedScreenPos : child._effectiveScreenPos
-            ));
-            // A docked parent must never render past the qualifying child it's docked
-            // on behalf of (that child is itself moving along with the pan, and would
-            // otherwise end up passing underneath/behind a parent stuck at a fixed
-            // spot) - so the ceiling is whichever is smaller: the normal clearance
-            // offset, or that child's own current position. The parent tracks the
-            // child down until the child itself goes out of view, rather than sitting
-            // still while the child scrolls past it. Using this same ceiling value as
-            // both the trigger threshold and the docked position itself means the
-            // node's true and docked positions always coincide exactly at the moment
-            // it needs to dock, so there's never a visible jump.
-            const dockCeiling = Math.min(dockedScreenPos, minChildPos);
+            //
+            // Tracking (compressing toward a child's position, rather than sitting
+            // still at the normal offset) only kicks in once there's exactly ONE
+            // relevant child left. With multiple children still relevant, using the
+            // minimum across all of them meant the parent started lagging/compressing
+            // as soon as *any single* child got close to the boundary - producing a
+            // lag-then-jump pattern for every child it passed, one after another,
+            // instead of staying put until only the final child remains. Now the
+            // parent stays fixed at the normal offset the whole time multiple
+            // children are still relevant, and only starts tracking/compressing once
+            // it's down to that last one - i.e. lags off-screen only as it reaches
+            // the final non-empty leaf among its children, not for every child along
+            // the way.
+            let dockCeiling;
+            if (relevantChildren.length === 1) {
+                const onlyChild = relevantChildren[0];
+                const childContribution = onlyChild._docked ? dockedScreenPos : onlyChild._effectiveScreenPos;
+                dockCeiling = Math.min(dockedScreenPos, childContribution);
+            } else {
+                dockCeiling = dockedScreenPos;
+            }
 
             if (truePos < dockCeiling) {
                 d._effectiveScreenPos = dockCeiling;
@@ -2504,6 +2523,45 @@ class FlowchartViewer {
             colorBtns.appendChild(yellowBtn);
             colorBtns.appendChild(emptyBtn);
             this.nodeEditPopup.insertBefore(colorBtns, this.nodeEditPopup.firstChild);
+
+            // Second row: quick-add this node's name into the Pugh Matrix as either a
+            // solution (column) or a criteria (row), for people who'd rather build the
+            // matrix from the tree than type everything into it separately.
+            const pughAddRow = document.createElement('div');
+            pughAddRow.id = 'node-pugh-add-row';
+            pughAddRow.style.display = 'flex';
+            pughAddRow.style.gap = '8px';
+            pughAddRow.style.marginTop = '8px';
+
+            const addSolutionBtn = document.createElement('button');
+            addSolutionBtn.textContent = '📊 Add Solution';
+            addSolutionBtn.type = 'button';
+            addSolutionBtn.style.flex = '1';
+            addSolutionBtn.style.background = 'var(--control-bg)';
+            addSolutionBtn.style.color = 'var(--text)';
+            addSolutionBtn.style.border = '1px solid var(--border)';
+            addSolutionBtn.style.borderRadius = '5px';
+            addSolutionBtn.style.padding = '6px 10px';
+            addSolutionBtn.style.cursor = 'pointer';
+            addSolutionBtn.onmousedown = (e) => e.preventDefault();
+            addSolutionBtn.onclick = () => this.addNodeToPugh('solution');
+
+            const addCriteriaBtn = document.createElement('button');
+            addCriteriaBtn.textContent = '📊 Add Criteria';
+            addCriteriaBtn.type = 'button';
+            addCriteriaBtn.style.flex = '1';
+            addCriteriaBtn.style.background = 'var(--control-bg)';
+            addCriteriaBtn.style.color = 'var(--text)';
+            addCriteriaBtn.style.border = '1px solid var(--border)';
+            addCriteriaBtn.style.borderRadius = '5px';
+            addCriteriaBtn.style.padding = '6px 10px';
+            addCriteriaBtn.style.cursor = 'pointer';
+            addCriteriaBtn.onmousedown = (e) => e.preventDefault();
+            addCriteriaBtn.onclick = () => this.addNodeToPugh('criteria');
+
+            pughAddRow.appendChild(addSolutionBtn);
+            pughAddRow.appendChild(addCriteriaBtn);
+            this.nodeEditPopup.insertBefore(pughAddRow, colorBtns.nextSibling);
         }
         
         Array.from(colorBtns.children).forEach(btn => {
@@ -2932,9 +2990,22 @@ class FlowchartViewer {
     // indent/dedent the current line - or every line touched by the selection - one
     // level at a time, updating each line's bullet to match its new depth.
     setupIndentableTextarea(textarea, onChange) {
-        const INDENT = '    '; // 4 spaces per indent level
+        const INDENT = '        '; // 8 spaces per indent level (doubled from 4)
         const BULLETS = ['\u2022', '\u25E6', '\u25AA']; // •, ◦, ▪ - cycles for deeper levels
         const bulletFor = (level) => BULLETS[level % BULLETS.length];
+
+        // Finds where the line containing `pos` starts. Plain `value.lastIndexOf('\n',
+        // pos - 1) + 1` looks equivalent but has a boundary bug at pos === 0: with a
+        // negative fromIndex, lastIndexOf clamps to searching only index 0 itself, and
+        // since the notes box always starts with a mandatory blank line (value[0] ===
+        // '\n'), that lookup finds *that* newline and incorrectly returns 1 - as if the
+        // cursor were on the second line - rather than 0, which is where the actual
+        // (empty) first line starts. This one helper is used everywhere a line start is
+        // needed so that boundary case only has to be handled correctly once.
+        const getLineStart = (value, pos) => {
+            if (pos <= 0) return 0;
+            return value.lastIndexOf('\n', pos - 1) + 1;
+        };
 
         // Breaks a line into how many indent levels of leading INDENT it has, how
         // many characters that indent + bullet + trailing space take up, and the
@@ -2982,7 +3053,7 @@ class FlowchartViewer {
         const normalizeCurrentLineSpacing = () => {
             const value = textarea.value;
             const cursor = textarea.selectionStart;
-            const lineStart = value.lastIndexOf('\n', cursor - 1) + 1;
+            const lineStart = getLineStart(value, cursor);
             let lineEnd = value.indexOf('\n', cursor);
             if (lineEnd === -1) lineEnd = value.length;
             const line = value.slice(lineStart, lineEnd);
@@ -3028,7 +3099,7 @@ class FlowchartViewer {
 
             if (e.key === 'Enter') {
                 e.preventDefault();
-                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const lineStart = getLineStart(value, start);
                 let lineEnd = value.indexOf('\n', start);
                 if (lineEnd === -1) lineEnd = value.length;
                 const parsed = parseLine(value.slice(lineStart, lineEnd));
@@ -3048,7 +3119,7 @@ class FlowchartViewer {
 
                 // Expand the affected range to cover every full line touched by the
                 // selection (or just the current line, if nothing is selected).
-                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const lineStart = getLineStart(value, start);
                 let blockEnd = value.indexOf('\n', end);
                 if (blockEnd === -1) blockEnd = value.length;
 
@@ -3076,62 +3147,83 @@ class FlowchartViewer {
                 return;
             }
 
-            // Space and Backspace right at the start of a bullet's text (i.e. the
-            // cursor sits immediately after the indent+bullet+space prefix, before
-            // any actual content) double up as quick indent/outdent shortcuts,
-            // mirroring Tab/Shift+Tab without requiring the modifier line to be
-            // selected first. Space on a completely blank (bulletless) line instead
-            // creates a new bullet right there.
-            if ((e.key === ' ' || e.key === 'Backspace') && start === end) {
-                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-                let lineEnd = value.indexOf('\n', start);
-                if (lineEnd === -1) lineEnd = value.length;
-                const lineText = value.slice(lineStart, lineEnd);
-                const parsed = parseLine(lineText);
-                const { level, prefixLen, content, hasBullet } = parsed;
+        });
 
-                if (e.key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
-                    // Blank, bulletless line - turn it into a bullet instead of typing
-                    // a literal space character.
-                    e.preventDefault();
-                    const newLine = buildLine(0, '');
+        // Space and Backspace right at the start of a bullet's text (i.e. the cursor
+        // sits immediately after the indent+bullet+space prefix, before any actual
+        // content) double up as quick indent/outdent shortcuts, mirroring Tab/
+        // Shift+Tab without requiring the modifier line to be selected first. Space on
+        // a completely blank (bulletless) line instead creates a new bullet there.
+        //
+        // This lives on 'beforeinput' rather than 'keydown' - keydown's preventDefault
+        // is unreliable for actually blocking the character on mobile virtual
+        // keyboards (many mobile browsers don't cancel the resulting input even when
+        // keydown is prevented), which is why Space-to-indent didn't work on mobile.
+        // beforeinput fires right before the DOM actually mutates and its
+        // preventDefault is honored consistently on both desktop and mobile.
+        const handleBulletSpaceOrBackspace = (key) => {
+            const value = textarea.value;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            if (start !== end) return false;
+
+            if (key === 'Backspace' && start === 1 && value[0] === '\n') {
+                // Never allow deleting the mandatory blank first line.
+                return true;
+            }
+
+            const lineStart = getLineStart(value, start);
+            let lineEnd = value.indexOf('\n', start);
+            if (lineEnd === -1) lineEnd = value.length;
+            const lineText = value.slice(lineStart, lineEnd);
+            const parsed = parseLine(lineText);
+            const { level, prefixLen, content, hasBullet } = parsed;
+
+            if (key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
+                const newLine = buildLine(0, '');
+                textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                textarea.selectionStart = textarea.selectionEnd = lineStart + newLine.length;
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+                return true;
+            }
+
+            if (hasBullet && start === lineStart + prefixLen) {
+                if (key === ' ') {
+                    const newLine = buildLine(level + 1, content);
                     textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                    textarea.selectionStart = textarea.selectionEnd = lineStart + newLine.length;
+                    const newPrefixLen = parseLine(newLine).prefixLen;
+                    textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
                     this.resizeReflectionAnswer(textarea);
                     onChange(textarea.value);
-                    return;
+                    return true;
                 }
 
-                if (hasBullet && start === lineStart + prefixLen) {
-                    if (e.key === ' ') {
-                        // Indent this line one level deeper.
-                        e.preventDefault();
-                        const newLine = buildLine(level + 1, content);
-                        textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                        const newPrefixLen = parseLine(newLine).prefixLen;
-                        textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                        this.resizeReflectionAnswer(textarea);
-                        onChange(textarea.value);
-                        return;
-                    }
-
-                    // Backspace: outdent one level, or - if already at the leftmost
-                    // level - remove the bullet entirely, turning the line into plain
-                    // text (keeping whatever content it already had) rather than
-                    // merging it into the line above.
-                    e.preventDefault();
-                    if (level > 0) {
-                        const newLine = buildLine(level - 1, content);
-                        textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                        const newPrefixLen = parseLine(newLine).prefixLen;
-                        textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                    } else {
-                        textarea.value = value.slice(0, lineStart) + content + value.slice(lineEnd);
-                        textarea.selectionStart = textarea.selectionEnd = lineStart;
-                    }
-                    this.resizeReflectionAnswer(textarea);
-                    onChange(textarea.value);
+                // Backspace: outdent one level, or - if already at the leftmost level -
+                // remove the bullet entirely, turning the line into plain text (keeping
+                // whatever content it already had) rather than merging into the line above.
+                if (level > 0) {
+                    const newLine = buildLine(level - 1, content);
+                    textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                    const newPrefixLen = parseLine(newLine).prefixLen;
+                    textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
+                } else {
+                    textarea.value = value.slice(0, lineStart) + content + value.slice(lineEnd);
+                    textarea.selectionStart = textarea.selectionEnd = lineStart;
                 }
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+                return true;
+            }
+
+            return false;
+        };
+
+        textarea.addEventListener('beforeinput', (e) => {
+            if (e.inputType === 'insertText' && e.data === ' ') {
+                if (handleBulletSpaceOrBackspace(' ')) e.preventDefault();
+            } else if (e.inputType === 'deleteContentBackward') {
+                if (handleBulletSpaceOrBackspace('Backspace')) e.preventDefault();
             }
         });
 
@@ -3246,6 +3338,7 @@ class FlowchartViewer {
         this.pughMatrix = this.getDefaultPughMatrix();
         this.globalNotes = '';
         this.notesDrawings = {};
+        this.notesImages = {};
         this.updateLeftPanelTabs();
         this.renderNotesPanel();
         this.applyMobileViewState();
@@ -3537,50 +3630,131 @@ class FlowchartViewer {
         });
         notesArea.addEventListener('keyup', () => { this._notesCursorPos = notesArea.selectionStart; });
         notesArea.addEventListener('click', () => { this._notesCursorPos = notesArea.selectionStart; });
+        notesArea.addEventListener('paste', (e) => this.handleNotesPaste(e));
         this.notesTextarea = notesArea;
         this.notesPanelBody.appendChild(notesArea);
 
-        this.renderNotesDrawingsStrip();
+        this.renderNotesMediaStrip();
     }
 
-    // Drawing markers embedded in the notes text look like [[drawing:ID]], each on
-    // its own line - one per inserted drawing, in the order they appear in the text.
-    // A plain <textarea> can't render an inline image in place of that marker, so as
-    // a practical stand-in, every drawing referenced anywhere in the notes gets a
-    // small preview thumbnail in a strip under the textarea; tapping one reopens it
-    // for editing. The marker line itself is what anchors *where* in the outline the
-    // drawing conceptually sits.
-    getNotesDrawingIds() {
+    // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
+    // [[image:ID]], each on its own line, in the order they appear. A plain
+    // <textarea> can't render an inline image in place of a marker, so as a
+    // practical stand-in, everything referenced anywhere in the notes gets a small
+    // preview thumbnail in a strip under the textarea, in the same order they appear
+    // in the text; tapping a drawing reopens it for editing, tapping a photo opens it
+    // full-size. The marker line itself is what anchors *where* in the outline each
+    // item conceptually sits.
+    getNotesMediaMarkers() {
         const text = this.globalNotes || '';
-        const ids = [];
-        const re = /\[\[drawing:([a-zA-Z0-9_-]+)\]\]/g;
+        const items = [];
+        const re = /\[\[(drawing|image):([a-zA-Z0-9_-]+)\]\]/g;
         let m;
-        while ((m = re.exec(text))) ids.push(m[1]);
-        return ids;
+        while ((m = re.exec(text))) items.push({ type: m[1], id: m[2] });
+        return items;
     }
 
-    renderNotesDrawingsStrip() {
+    renderNotesMediaStrip() {
         if (!this.notesPanelBody) return;
         let strip = document.getElementById('notes-drawings-strip');
         if (strip) strip.remove();
 
-        const ids = this.getNotesDrawingIds();
-        if (ids.length === 0) return;
+        const items = this.getNotesMediaMarkers();
+        if (items.length === 0) return;
 
         strip = document.createElement('div');
         strip.id = 'notes-drawings-strip';
-        (this.notesDrawings || {});
-        ids.forEach(id => {
-            const drawing = this.notesDrawings && this.notesDrawings[id];
-            if (!drawing) return;
-            const thumb = document.createElement('img');
-            thumb.className = 'notes-drawing-thumb';
-            thumb.src = drawing.dataUrl;
-            thumb.title = 'Tap to edit this drawing';
-            thumb.addEventListener('click', () => this.editNotesDrawing(id));
-            strip.appendChild(thumb);
+        items.forEach(({ type, id }) => {
+            if (type === 'drawing') {
+                const drawing = this.notesDrawings && this.notesDrawings[id];
+                if (!drawing) return;
+                const thumb = document.createElement('img');
+                thumb.className = 'notes-drawing-thumb';
+                thumb.src = drawing.dataUrl;
+                thumb.title = 'Tap to edit this drawing';
+                thumb.addEventListener('click', () => this.editNotesDrawing(id));
+                strip.appendChild(thumb);
+            } else if (type === 'image') {
+                const image = this.notesImages && this.notesImages[id];
+                if (!image) return;
+                const thumb = document.createElement('img');
+                thumb.className = 'notes-drawing-thumb';
+                thumb.src = image.dataUrl || image.url;
+                thumb.title = 'Tap to view full size';
+                thumb.addEventListener('click', () => this.openNotesImageLightbox(image.dataUrl || image.url));
+                strip.appendChild(thumb);
+            }
         });
         this.notesPanelBody.appendChild(strip);
+    }
+
+    // Handles pasting either actual image data (e.g. copied from an image editor or
+    // a screenshot) or a plain text URL that looks like it points at an image -
+    // either way, inserts a [[image:ID]] marker at the cursor and shows a preview
+    // thumbnail, same as a drawing. Pasted URLs are stored as just the link (no
+    // image bytes at all) so they don't add anything to the notes' storage/sync size
+    // the way an actually-embedded image does.
+    handleNotesPaste(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (items) {
+            for (const item of items) {
+                if (item.type && item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const blob = item.getAsFile();
+                    if (!blob) continue;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+                        this.notesImages[id] = { dataUrl: reader.result };
+                        this.insertNotesMediaMarker('image', id);
+                    };
+                    reader.readAsDataURL(blob);
+                    return;
+                }
+            }
+        }
+
+        const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
+        const trimmed = pastedText.trim();
+        const looksLikeImageUrl = /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|avif)(\?\S*)?$/i.test(trimmed);
+        if (looksLikeImageUrl) {
+            e.preventDefault();
+            const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            this.notesImages[id] = { url: trimmed };
+            this.insertNotesMediaMarker('image', id);
+        }
+        // Otherwise, let the paste proceed normally as plain text.
+    }
+
+    // Shared by both the drawing tool and image paste - drops a [[type:id]] marker
+    // on its own line at wherever the cursor last was, then re-renders so the
+    // preview strip picks it up.
+    insertNotesMediaMarker(type, id) {
+        const marker = `[[${type}:${id}]]`;
+        const value = this.globalNotes || '';
+        const pos = Math.min(this._notesCursorPos || value.length, value.length);
+        const lineStart = pos <= 0 ? 0 : (value.lastIndexOf('\n', pos - 1) + 1);
+        let lineEnd = value.indexOf('\n', pos);
+        if (lineEnd === -1) lineEnd = value.length;
+        const lineText = value.slice(lineStart, lineEnd);
+        const insertion = (lineText.trim() ? '\n' : '') + marker + '\n';
+        this.globalNotes = value.slice(0, lineEnd) + insertion + value.slice(lineEnd);
+        this.renderNotesPanel();
+        this.autosave();
+    }
+
+    // A simple full-screen lightbox for viewing a pasted photo at full size - same
+    // idea as opening an embedded image in a Word doc.
+    openNotesImageLightbox(src) {
+        let overlay = document.getElementById('notes-image-lightbox');
+        if (overlay) overlay.remove();
+        overlay = document.createElement('div');
+        overlay.id = 'notes-image-lightbox';
+        overlay.addEventListener('click', () => overlay.remove());
+        const img = document.createElement('img');
+        img.src = src;
+        overlay.appendChild(img);
+        document.body.appendChild(overlay);
     }
 
     // Opens the full-screen drawing overlay for a brand new drawing, to be inserted
@@ -3676,6 +3850,7 @@ class FlowchartViewer {
             tool: 'brush',
             color: '#ffffff',
             width: 4,
+            eraserWidth: 24,
             editingId: null,
             armed: false,
             drawing: false,
@@ -3694,8 +3869,41 @@ class FlowchartViewer {
 
         const clampScale = s => Math.max(0.3, Math.min(6, s));
 
+        // How far up-and-left of the handle's center the pen/eraser size-indicator
+        // (and the actual point drawing happens at) sits. Shared by
+        // updateSizeIndicator and toCrosshairCanvasPoint below so they always agree
+        // on exactly the same point.
+        const PEN_CIRCLE_OFFSET = 55;
+
+        // Which width applies right now - brush/shape tools use one slider, the
+        // eraser has its own separate one (erasing usually wants a bigger area than
+        // a fine brush stroke, so sharing one slider was awkward).
+        const activeWidth = () => (state.tool === 'eraser' ? state.eraserWidth : state.width);
+
+        // Resizes/repositions the size-indicator circle to match the active tool's
+        // width (scaled to match the current canvas zoom, so it always reflects how
+        // big the stroke will actually look) and keeps it centered on the exact point
+        // toCrosshairCanvasPoint draws at, regardless of diameter.
+        const updateSizeIndicator = () => {
+            const diameter = Math.max(4, activeWidth() * state.scale);
+            const indicator = document.getElementById('drawing-size-indicator');
+            if (!indicator) return;
+            indicator.style.width = diameter + 'px';
+            indicator.style.height = diameter + 'px';
+            // Center the circle on the same point PEN_CIRCLE_OFFSET up-and-left of
+            // the handle's own center that toCrosshairCanvasPoint uses (see there for
+            // the math) - the handle's own top-left corner is local (0,0), its center
+            // is (23,23), so the target point is local (23-PEN_CIRCLE_OFFSET,
+            // 23-PEN_CIRCLE_OFFSET); offsetting by half the circle's own diameter
+            // keeps it centered there rather than anchored by its corner.
+            const offset = (23 - PEN_CIRCLE_OFFSET) - diameter / 2;
+            indicator.style.left = offset + 'px';
+            indicator.style.top = offset + 'px';
+        };
+
         const applyPanZoom = () => {
             this.drawingCanvasWrap.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+            updateSizeIndicator();
         };
 
         const positionHandleGroup = (x, y) => {
@@ -3703,8 +3911,21 @@ class FlowchartViewer {
             state.handleY = y;
             this.drawingHandle.style.left = x + 'px';
             this.drawingHandle.style.top = y + 'px';
+            // Toggle button sits directly to the right of the handle, touching
+            // (handle radius 23 + its own radius 23 = 46px apart), same height.
             this.drawingToggleBtn.style.left = (x + 46) + 'px';
             this.drawingToggleBtn.style.top = y + 'px';
+        };
+
+        // Where the handle's own circle center currently is, in *client* (viewport)
+        // coordinates - used to start a draw action from the handle's actual tracked
+        // position rather than the raw pointerdown coordinates, which can land
+        // anywhere within the handle's hit area, not necessarily its exact center.
+        // Without this, the stroke could start at a slightly different point than
+        // where the indicator circle is actually shown, reading as a small "jump".
+        const getHandleClientPoint = () => {
+            const overlayRect = this.drawingOverlay.getBoundingClientRect();
+            return { x: overlayRect.left + state.handleX, y: overlayRect.top + state.handleY };
         };
 
         // Converts a client (viewport) point into the canvas's own pixel space,
@@ -3719,17 +3940,15 @@ class FlowchartViewer {
         };
 
         // The handle's pointer-tracked position (e.clientX/Y while dragging it) is
-        // its own *center* - but the crosshair sits up-and-left of that (see
-        // #drawing-handle/-crosshair CSS: handle radius 23px + the crosshair box's
-        // own -22px offset + half its 20px size = 35px up and 35px left), and that's
-        // where drawing should actually happen, so the person can see the exact
-        // point being drawn at instead of it being hidden under their finger/the
-        // handle itself. Used for every actual draw action; positionHandleGroup
-        // (which just moves the handle/toggle group around) intentionally still uses
-        // the raw pointer position, not this.
-        const CROSSHAIR_OFFSET = 35;
+        // its own *center* - but the pen/eraser size-indicator circle sits
+        // PEN_CIRCLE_OFFSET up-and-left of that (see updateSizeIndicator), and
+        // that's where drawing should actually happen, so the person can see the
+        // exact point and size being drawn with instead of it being hidden under
+        // their finger/the handle itself. Used for every actual draw action;
+        // positionHandleGroup (which just moves the handle/toggle group around)
+        // intentionally still uses the raw pointer position, not this.
         const toCrosshairCanvasPoint = (clientX, clientY) =>
-            toCanvasPoint(clientX - CROSSHAIR_OFFSET, clientY - CROSSHAIR_OFFSET);
+            toCanvasPoint(clientX - PEN_CIRCLE_OFFSET, clientY - PEN_CIRCLE_OFFSET);
 
         const pushUndoSnapshot = () => {
             state.undoStack.push(ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height));
@@ -3742,6 +3961,7 @@ class FlowchartViewer {
             document.querySelectorAll('.drawing-tool-btn[data-tool]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tool === tool);
             });
+            updateSizeIndicator();
         };
 
         // Assigned as early as possible (before any of the listener wiring below,
@@ -3749,7 +3969,7 @@ class FlowchartViewer {
         // unexpected) - openDrawingOverlay only needs positionHandleGroup to work,
         // and if some later, non-essential wiring throws, this still lets the handle
         // itself show up rather than silently leaving it undefined and invisible.
-        this._drawingHelpers = { toCanvasPoint, toCrosshairCanvasPoint, positionHandleGroup, applyPanZoom, pushUndoSnapshot, setTool };
+        this._drawingHelpers = { toCanvasPoint, toCrosshairCanvasPoint, positionHandleGroup, applyPanZoom, pushUndoSnapshot, setTool, updateSizeIndicator };
 
         try {
 
@@ -3760,8 +3980,16 @@ class FlowchartViewer {
 
         const colorInput = document.getElementById('drawing-color');
         const widthInput = document.getElementById('drawing-width');
+        const eraserWidthInput = document.getElementById('drawing-eraser-width');
         if (colorInput) colorInput.addEventListener('input', () => { state.color = colorInput.value; });
-        if (widthInput) widthInput.addEventListener('input', () => { state.width = parseInt(widthInput.value, 10) || 1; });
+        if (widthInput) widthInput.addEventListener('input', () => {
+            state.width = parseInt(widthInput.value, 10) || 1;
+            updateSizeIndicator();
+        });
+        if (eraserWidthInput) eraserWidthInput.addEventListener('input', () => {
+            state.eraserWidth = parseInt(eraserWidthInput.value, 10) || 1;
+            updateSizeIndicator();
+        });
 
         const restoreSnapshot = (imgData) => {
             ctx.putImageData(imgData, 0, 0);
@@ -3792,6 +4020,15 @@ class FlowchartViewer {
 
         // ---- Handle: plain drag repositions it; an armed drag draws instead ----
         let handlePointerId = null;
+        // The offset between where the pointer actually grabbed the handle and the
+        // handle's own center at that moment - without tracking this, moving the
+        // pointer even slightly after an off-center grab snaps the handle's center
+        // straight to the pointer position, causing a visible jump equal to however
+        // far off-center the initial press was. Preserving this offset throughout the
+        // drag keeps the handle (and the crosshair/draw point derived from it)
+        // moving smoothly by the same delta the pointer moves, instead of snapping.
+        let grabOffsetX = 0;
+        let grabOffsetY = 0;
 
         const beginDrawAction = (canvasPt) => {
             state.drawing = true;
@@ -3802,7 +4039,7 @@ class FlowchartViewer {
                 ctx.save();
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
-                ctx.lineWidth = state.width;
+                ctx.lineWidth = activeWidth();
                 if (state.tool === 'eraser') {
                     ctx.globalCompositeOperation = 'destination-out';
                     ctx.strokeStyle = 'rgba(0,0,0,1)';
@@ -3883,42 +4120,69 @@ class FlowchartViewer {
             e.stopPropagation();
             handlePointerId = e.pointerId;
             this.drawingHandle.setPointerCapture(handlePointerId);
+            const handlePt = getHandleClientPoint();
+            grabOffsetX = e.clientX - handlePt.x;
+            grabOffsetY = e.clientY - handlePt.y;
             if (state.armed) {
-                beginDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
+                // Start from the handle's tracked center (see getHandleClientPoint),
+                // not the raw click point - keeps the stroke's start exactly where
+                // the indicator circle is actually displayed, no matter where within
+                // the handle's hit area the person happened to press down.
+                beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
             }
         });
         this.drawingHandle.addEventListener('pointermove', (e) => {
             if (e.pointerId !== handlePointerId) return;
+            // Subtract the grab offset captured on pointerdown so the handle's
+            // center moves by the same delta as the pointer, rather than snapping
+            // to sit directly under it.
+            const centerClientX = e.clientX - grabOffsetX;
+            const centerClientY = e.clientY - grabOffsetY;
             if (state.drawing) {
-                continueDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
-                // The handle still visually follows the finger/cursor while drawing,
-                // it just also draws (at the crosshair position) at the same time.
-                positionHandleGroup(
-                    e.clientX - this.drawingOverlay.getBoundingClientRect().left,
-                    e.clientY - this.drawingOverlay.getBoundingClientRect().top
-                );
-            } else {
-                positionHandleGroup(
-                    e.clientX - this.drawingOverlay.getBoundingClientRect().left,
-                    e.clientY - this.drawingOverlay.getBoundingClientRect().top
-                );
+                continueDrawAction(toCrosshairCanvasPoint(centerClientX, centerClientY));
             }
+            // The handle still visually follows the finger/cursor while drawing,
+            // it just also draws (at the crosshair position) at the same time.
+            positionHandleGroup(
+                centerClientX - this.drawingOverlay.getBoundingClientRect().left,
+                centerClientY - this.drawingOverlay.getBoundingClientRect().top
+            );
         });
         const finishHandlePointer = (e) => {
             if (e.pointerId !== handlePointerId) return;
             handlePointerId = null;
             if (state.drawing) {
-                endDrawAction(toCrosshairCanvasPoint(e.clientX, e.clientY));
+                const centerClientX = e.clientX - grabOffsetX;
+                const centerClientY = e.clientY - grabOffsetY;
+                endDrawAction(toCrosshairCanvasPoint(centerClientX, centerClientY));
             }
         };
         this.drawingHandle.addEventListener('pointerup', finishHandlePointer);
         this.drawingHandle.addEventListener('pointercancel', finishHandlePointer);
 
-        // ---- Tapping elsewhere on the canvas teleports the handle group there ----
+        // ---- Tapping elsewhere on the canvas teleports the handle group there,
+        // and keeps following the same finger/pointer if it keeps moving instead of
+        // just teleporting once and going static ----
         this.drawingCanvasWrap.addEventListener('pointerdown', (e) => {
             if (e.target !== this.drawingCanvas && e.target !== this.drawingCanvasWrap) return;
+            e.preventDefault();
             const overlayRect = this.drawingOverlay.getBoundingClientRect();
             positionHandleGroup(e.clientX - overlayRect.left, e.clientY - overlayRect.top);
+            // Hand this pointer off to the same tracking the handle's own drag uses -
+            // pointer capture redirects this pointer's future move/up events to fire
+            // on the handle element itself, so its existing pointermove/pointerup
+            // listeners keep the handle (and any armed drawing) following this same
+            // finger for the rest of the gesture, exactly as if it had been grabbed
+            // there directly. No initial grab offset, since the handle was just
+            // teleported to sit exactly under this pointer.
+            handlePointerId = e.pointerId;
+            grabOffsetX = 0;
+            grabOffsetY = 0;
+            this.drawingHandle.setPointerCapture(handlePointerId);
+            if (state.armed) {
+                const handlePt = getHandleClientPoint();
+                beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
+            }
         });
 
         // ---- Two-finger pan + pinch zoom on the canvas area ----
@@ -4003,6 +4267,7 @@ class FlowchartViewer {
             // surface it rather than leaving the rest of this function to guess.
             console.error('Could not position drawing handle:', err);
         }
+        if (this._drawingHelpers.updateSizeIndicator) this._drawingHelpers.updateSizeIndicator();
 
         if (existingId && this.notesDrawings[existingId]) {
             const img = new Image();
@@ -4029,16 +4294,8 @@ class FlowchartViewer {
 
             if (!state.editingId && this.notesTextarea) {
                 // Brand new drawing - insert its marker at wherever the cursor last was.
-                const marker = '[[drawing:' + id + ']]';
-                const value = this.globalNotes || '';
-                const pos = Math.min(this._notesCursorPos || value.length, value.length);
-                const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
-                let lineEnd = value.indexOf('\n', pos);
-                if (lineEnd === -1) lineEnd = value.length;
-                const lineText = value.slice(lineStart, lineEnd);
-                // Drop it on its own new line rather than mixed into existing text.
-                const insertion = (lineText.trim() ? '\n' : '') + marker + '\n';
-                this.globalNotes = value.slice(0, lineEnd) + insertion + value.slice(lineEnd);
+                this.insertNotesMediaMarker('drawing', id);
+                return;
             }
 
             this.renderNotesPanel();
@@ -4046,6 +4303,39 @@ class FlowchartViewer {
         }
 
         this.drawingOverlay.style.display = 'none';
+    }
+
+    // Adds a node's name into the Pugh Matrix as a solution (column) or a criteria
+    // (row), from the "Add Solution"/"Add Criteria" buttons in the node edit popup -
+    // does nothing if that exact name is already present, rather than creating a
+    // duplicate every time the button's pressed again.
+    addNodeToPugh(kind) {
+        if (!this.nodeBeingEdited) return;
+        const name = (this.nodeBeingEdited.data.name || '').trim();
+        if (!name) {
+            this.showNotification('Name the node first.');
+            return;
+        }
+
+        if (kind === 'solution') {
+            const exists = this.pughMatrix.columns.some(c => c.title.trim().toLowerCase() === name.toLowerCase());
+            if (exists) {
+                this.showNotification(`"${name}" is already a solution in the Pugh Matrix.`);
+                return;
+            }
+            this.pughMatrix.columns.push({ id: this.nextPughId('col'), title: name });
+        } else {
+            const exists = this.pughMatrix.criteria.some(c => c.name.trim().toLowerCase() === name.toLowerCase());
+            if (exists) {
+                this.showNotification(`"${name}" is already a criteria in the Pugh Matrix.`);
+                return;
+            }
+            this.pughMatrix.criteria.push({ id: this.nextPughId('crit'), name });
+        }
+
+        this.renderPughPanel();
+        this.autosave();
+        this.showNotification(`Added "${name}" as a ${kind === 'solution' ? 'solution' : 'criteria'}.`);
     }
 
     addPughCriteria() {
@@ -4090,11 +4380,215 @@ class FlowchartViewer {
         this.pughMatrix.scores[criteriaId][columnId] = value;
     }
 
+    // Weight has been removed as a user-facing concept - every criterion counts
+    // equally now, so a column's total is just the sum of its scores.
     computePughColumnTotal(columnId) {
-        return this.pughMatrix.criteria.reduce((sum, c) => {
-            const weight = (typeof c.weight === 'number' && !isNaN(c.weight)) ? c.weight : 1;
-            return sum + weight * this.getPughScore(c.id, columnId);
-        }, 0);
+        return this.pughMatrix.criteria.reduce((sum, c) => sum + this.getPughScore(c.id, columnId), 0);
+    }
+
+    // ===================== Pugh Matrix ranking mode =====================
+    // A pairwise "beat the baseline" tournament for ordering the solutions (columns)
+    // against a single criteria at a time, rather than typing in numeric scores
+    // directly. Session state (pool/settled/baseline/selections) is deliberately
+    // ephemeral - held only on the in-memory criteria object, not persisted through
+    // save/export - since it's mid-process working state; only the *final* scores it
+    // produces get written into pughMatrix.scores.
+    //
+    // Algorithm (a selection-sort built out of repeated pairwise rounds):
+    // - `pool` holds every solution not yet confirmed into final position; `settled`
+    //   holds those already confirmed, in winner-to-loser order.
+    // - Each round compares the current `baselineId` (a pool member) against every
+    //   *other* pool member, each marked S (tied/not better) or + (beat baseline).
+    // - Re-rank: if anything beat the baseline, one of those winners (chosen at
+    //   random if several tied for it) becomes the new baseline for another round -
+    //   the old baseline stays in the pool to be compared again later. If nothing
+    //   beat the baseline, it has beaten/tied everything left in the pool, so it's
+    //   confirmed - moved into `settled` - and a fresh baseline is picked from
+    //   whatever remains.
+    // - Selections always reset to S at the start of a new round.
+    getOrInitRankSession(crit) {
+        if (!crit.rankSession) {
+            const pool = this.pughMatrix.columns.map(c => c.id);
+            const baselineId = pool[0] || null;
+            const selections = {};
+            pool.forEach(id => { if (id !== baselineId) selections[id] = 'S'; });
+            crit.rankSession = {
+                pool,
+                settled: [],
+                baselineId,
+                selections,
+                lastRoundWinners: [],
+                finished: pool.length === 0
+            };
+        }
+        return crit.rankSession;
+    }
+
+    // Starts a brand new ranking session for a criteria, discarding any in-progress
+    // one - used when the person explicitly wants to redo a criteria's ranking from
+    // scratch (its previously *finalized* score isn't touched until this new session
+    // itself finishes and overwrites it).
+    restartRankSession(critId) {
+        const crit = this.pughMatrix.criteria.find(c => c.id === critId);
+        if (!crit) return;
+        delete crit.rankSession;
+        this.getOrInitRankSession(crit);
+        this.renderPughPanel();
+    }
+
+    handlePughReRank(critId) {
+        const crit = this.pughMatrix.criteria.find(c => c.id === critId);
+        if (!crit) return;
+        const session = this.getOrInitRankSession(crit);
+        if (session.finished || !session.baselineId) return;
+
+        const winners = session.pool.filter(id => id !== session.baselineId && session.selections[id] === '+');
+
+        if (winners.length > 0) {
+            const newBaselineId = winners.length === 1 ? winners[0] : winners[Math.floor(Math.random() * winners.length)];
+            session.lastRoundWinners = winners.slice();
+            // Reorder the pool for display purposes - the round's winner(s) float to
+            // the front (chosen new baseline first), the old baseline (which just
+            // lost its spot) comes right after, then everyone still on 'S'.
+            const others = session.pool.filter(id => id !== newBaselineId);
+            const remainingWinners = winners.filter(id => id !== newBaselineId);
+            const oldBaselineId = session.baselineId;
+            const sTied = others.filter(id => id !== oldBaselineId && !remainingWinners.includes(id));
+            session.pool = [newBaselineId, ...remainingWinners, oldBaselineId, ...sTied];
+            session.baselineId = newBaselineId;
+        } else {
+            // Nothing beat the baseline - it's confirmed as the next-best remaining
+            // solution for this criteria.
+            session.lastRoundWinners = [session.baselineId];
+            session.settled.push(session.baselineId);
+            session.pool = session.pool.filter(id => id !== session.baselineId);
+            session.baselineId = session.pool[0] || null;
+        }
+
+        if (session.pool.length <= 1) {
+            // Either nothing (or exactly one item, trivially settled) is left to
+            // compare - fold it in and finish up.
+            if (session.pool.length === 1) session.settled.push(session.pool[0]);
+            session.pool = [];
+            session.baselineId = null;
+            session.finished = true;
+            this.finalizePughRanking(critId);
+        } else {
+            session.selections = {};
+            session.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
+        }
+
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    // Converts a finished session's final winner-to-loser order into bounded scores
+    // (N points for 1st place down to 1 point for last) and writes them in, replacing
+    // whatever this criteria's scores were before - so re-running the ranking for the
+    // same criteria as many times as you like always just *overwrites* its scores
+    // with a fresh, equally-bounded result, rather than the number climbing higher
+    // every time you redo it.
+    finalizePughRanking(critId) {
+        const crit = this.pughMatrix.criteria.find(c => c.id === critId);
+        if (!crit || !crit.rankSession) return;
+        const order = crit.rankSession.settled;
+        const n = order.length;
+        order.forEach((colId, idx) => {
+            this.setPughScore(critId, colId, n - idx);
+        });
+    }
+
+    // Reorders the solution columns left-to-right by total score across every
+    // criteria (winner first) - "overall rank" taking every ranked criteria into
+    // account, not just the one currently active.
+    reorderPughColumnsByOverallRank() {
+        const m = this.pughMatrix;
+        const totals = {};
+        m.columns.forEach(col => { totals[col.id] = this.computePughColumnTotal(col.id); });
+        m.columns.sort((a, b) => totals[b.id] - totals[a.id]);
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    // Reorders the solution columns left-to-right by just one criteria's score.
+    reorderPughColumnsByCriteria(critId) {
+        const m = this.pughMatrix;
+        m.columns.sort((a, b) => this.getPughScore(critId, b.id) - this.getPughScore(critId, a.id));
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    // Builds the baseline/S+/re-rank UI for whichever criteria is currently active
+    // in rank mode - see the ranking-mode block comment above getOrInitRankSession.
+    buildPughRankPanel(crit) {
+        const session = this.getOrInitRankSession(crit);
+        const panel = document.createElement('div');
+        panel.className = 'pugh-rank-panel';
+
+        const getColTitle = (id) => {
+            const col = this.pughMatrix.columns.find(c => c.id === id);
+            return (col && col.title) ? col.title : '(unnamed solution)';
+        };
+
+        const title = document.createElement('div');
+        title.className = 'pugh-rank-title';
+        title.textContent = 'Ranking: ' + (crit.name || '(unnamed criteria)');
+        panel.appendChild(title);
+
+        if (session.finished) {
+            const done = document.createElement('div');
+            done.className = 'pugh-rank-done';
+            done.textContent = 'Done - final order: ' + session.settled.map(getColTitle).join('  >  ');
+            panel.appendChild(done);
+            const restartBtn = document.createElement('button');
+            restartBtn.className = 'pugh-rerank-btn';
+            restartBtn.textContent = 'Re-rank from scratch';
+            restartBtn.addEventListener('click', () => this.restartRankSession(crit.id));
+            panel.appendChild(restartBtn);
+            return panel;
+        }
+
+        const baselineRow = document.createElement('div');
+        baselineRow.className = 'pugh-rank-baseline-row';
+        if (session.lastRoundWinners.includes(session.baselineId)) {
+            baselineRow.classList.add('pugh-rank-round-winner');
+        }
+        baselineRow.textContent = 'Baseline: ' + getColTitle(session.baselineId);
+        panel.appendChild(baselineRow);
+
+        const table = document.createElement('table');
+        table.className = 'pugh-rank-table';
+        session.pool.filter(id => id !== session.baselineId).forEach(id => {
+            const tr = document.createElement('tr');
+            if (session.lastRoundWinners.includes(id)) tr.classList.add('pugh-rank-round-winner');
+
+            const nameTd = document.createElement('td');
+            nameTd.textContent = getColTitle(id);
+            tr.appendChild(nameTd);
+
+            ['S', '+'].forEach(choice => {
+                const td = document.createElement('td');
+                const btn = document.createElement('button');
+                btn.textContent = choice;
+                btn.className = 'pugh-rank-choice-btn' + (session.selections[id] === choice ? ' active' : '');
+                btn.addEventListener('click', () => {
+                    session.selections[id] = choice;
+                    this.renderPughPanel();
+                });
+                td.appendChild(btn);
+                tr.appendChild(td);
+            });
+            table.appendChild(tr);
+        });
+        panel.appendChild(table);
+
+        const reRankBtn = document.createElement('button');
+        reRankBtn.className = 'pugh-rerank-btn';
+        reRankBtn.textContent = 'Re-rank';
+        reRankBtn.addEventListener('click', () => this.handlePughReRank(crit.id));
+        panel.appendChild(reRankBtn);
+
+        return panel;
     }
 
     // Builds the Pugh Matrix table fresh into #pugh-panel-body. Called on open and
@@ -4118,7 +4612,49 @@ class FlowchartViewer {
         addColBtn.addEventListener('click', () => this.addPughColumn());
         toolbar.appendChild(addCritBtn);
         toolbar.appendChild(addColBtn);
+
+        const rankBtn = document.createElement('button');
+        rankBtn.textContent = this._pughRankMode ? '🏆 Rank: ON' : '🏆 Rank';
+        rankBtn.className = this._pughRankMode ? 'pugh-rank-toggle-btn active' : 'pugh-rank-toggle-btn';
+        rankBtn.title = 'Click a criteria name to rank the solutions against it';
+        rankBtn.addEventListener('click', () => {
+            this._pughRankMode = !this._pughRankMode;
+            if (!this._pughRankMode) this._pughActiveCriteriaId = null;
+            this.renderPughPanel();
+        });
+        toolbar.appendChild(rankBtn);
+
+        if (m.columns.length > 1) {
+            const overallBtn = document.createElement('button');
+            overallBtn.textContent = 'Overall Rank';
+            overallBtn.title = 'Reorder solutions by total score across all criteria';
+            overallBtn.addEventListener('click', () => this.reorderPughColumnsByOverallRank());
+            toolbar.appendChild(overallBtn);
+
+            if (this._pughActiveCriteriaId && m.criteria.some(c => c.id === this._pughActiveCriteriaId)) {
+                const activeBtn = document.createElement('button');
+                activeBtn.textContent = 'This Criteria Rank';
+                activeBtn.title = 'Reorder solutions by score for the active criteria only';
+                activeBtn.addEventListener('click', () => this.reorderPughColumnsByCriteria(this._pughActiveCriteriaId));
+                toolbar.appendChild(activeBtn);
+            }
+        }
+
         this.pughPanelBody.appendChild(toolbar);
+
+        if (this._pughRankMode) {
+            const activeCrit = m.criteria.find(c => c.id === this._pughActiveCriteriaId);
+            if (activeCrit && m.columns.length >= 2) {
+                this.pughPanelBody.appendChild(this.buildPughRankPanel(activeCrit));
+            } else {
+                const note = document.createElement('div');
+                note.className = 'pugh-empty-state';
+                note.textContent = activeCrit
+                    ? 'Add at least 2 solutions to rank against each other.'
+                    : 'Click into a criteria\'s name below to rank the solutions against it.';
+                this.pughPanelBody.appendChild(note);
+            }
+        }
 
         if (m.columns.length === 0) {
             const empty = document.createElement('div');
@@ -4140,9 +4676,6 @@ class FlowchartViewer {
         critTh.className = 'pugh-criteria-cell';
         critTh.textContent = 'Criteria';
         headRow.appendChild(critTh);
-        const weightTh = document.createElement('th');
-        weightTh.textContent = 'Weight';
-        headRow.appendChild(weightTh);
 
         m.columns.forEach(col => {
             const th = document.createElement('th');
@@ -4218,6 +4751,14 @@ class FlowchartViewer {
                 crit.name = nameInput.value;
                 this._pendingPughSave = true;
             });
+            nameInput.addEventListener('focus', () => {
+                // The criteria currently being typed into is what "Rank" mode ranks
+                // the solutions against.
+                if (this._pughRankMode && this._pughActiveCriteriaId !== crit.id) {
+                    this._pughActiveCriteriaId = crit.id;
+                    this.renderPughPanel();
+                }
+            });
             nameInput.addEventListener('blur', () => {
                 if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
             });
@@ -4230,23 +4771,6 @@ class FlowchartViewer {
             nameRow.appendChild(delRowBtn);
             nameTd.appendChild(nameRow);
             tr.appendChild(nameTd);
-
-            const weightTd = document.createElement('td');
-            const weightInput = document.createElement('input');
-            weightInput.type = 'number';
-            weightInput.className = 'pugh-weight-input';
-            weightInput.value = (typeof crit.weight === 'number' && !isNaN(crit.weight)) ? crit.weight : 1;
-            weightInput.addEventListener('input', () => {
-                const v = parseFloat(weightInput.value);
-                crit.weight = isNaN(v) ? 0 : v;
-                this._pendingPughSave = true;
-                this.refreshPughComputedDisplays();
-            });
-            weightInput.addEventListener('blur', () => {
-                if (this._pendingPughSave) { this._pendingPughSave = false; this.autosave(); }
-            });
-            weightTd.appendChild(weightInput);
-            tr.appendChild(weightTd);
 
             m.columns.forEach(col => {
                 const td = document.createElement('td');
@@ -4287,8 +4811,8 @@ class FlowchartViewer {
         totalsRow.className = 'pugh-total-row';
         totalsRow.id = 'pugh-totals-row';
         const totalLabelTd = document.createElement('td');
-        totalLabelTd.colSpan = 2;
-        totalLabelTd.textContent = 'Total Weighted Score';
+        totalLabelTd.colSpan = 1;
+        totalLabelTd.textContent = 'Total Score';
         totalLabelTd.style.textAlign = 'right';
         totalsRow.appendChild(totalLabelTd);
 
@@ -4376,7 +4900,8 @@ class FlowchartViewer {
             transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k },
             pughMatrix: this.pughMatrix,
             globalNotes: this.globalNotes,
-            notesDrawings: this.notesDrawings
+            notesDrawings: this.notesDrawings,
+            notesImages: this.notesImages
         }, null, 2);
     }
 

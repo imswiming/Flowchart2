@@ -502,6 +502,93 @@ body {
     padding: 6px 2px;
 }
 
+/* ===== Pugh Matrix ranking mode ===== */
+.pugh-rank-toggle-btn.active {
+    background: #00a67e !important;
+    color: white !important;
+    border-color: #00a67e !important;
+}
+
+.pugh-rank-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    margin: 4px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--control-bg);
+    flex-shrink: 0;
+}
+
+.pugh-rank-title {
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.pugh-rank-baseline-row {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: var(--popup-bg);
+    border: 1px solid var(--border);
+}
+
+.pugh-rank-done {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.pugh-rank-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.pugh-rank-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pugh-rank-table tr.pugh-rank-round-winner {
+    outline: 2px solid #00e676;
+    outline-offset: -2px;
+}
+
+.pugh-rank-baseline-row.pugh-rank-round-winner {
+    outline: 2px solid #00e676;
+    outline-offset: -2px;
+}
+
+.pugh-rank-choice-btn {
+    min-width: 32px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--popup-bg);
+    color: var(--text);
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.pugh-rank-choice-btn.active {
+    background: #ff9900;
+    border-color: #ff9900;
+    color: white;
+}
+
+.pugh-rerank-btn {
+    align-self: flex-start;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: #00a67e;
+    color: white;
+    cursor: pointer;
+}
+
 #reflection-panel-resize-handle {
     position: absolute;
     top: 0;
@@ -1200,48 +1287,43 @@ body {
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
 }
 
-#drawing-handle-crosshair {
+#drawing-handle-crosshair,
+#drawing-size-indicator {
     position: absolute;
-    top: -22px;
-    left: -22px;
-    width: 20px;
-    height: 20px;
+    /* left/top/width/height/margin are all set inline by updateSizeIndicator() in
+       script.js, based on the active tool's brush/eraser width and the current zoom
+       level - the diameter varies, so the offset needed to keep it centered on the
+       actual draw point (see toCrosshairCanvasPoint) varies with it too; it can't be
+       a fixed CSS value the way the old fixed-size crosshair's could. */
+    border-radius: 50%;
     pointer-events: none;
-}
-
-.crosshair-line {
-    position: absolute;
-    background: #ff9900;
+    background: rgba(255, 153, 0, 0.35);
+    border: 1.5px solid #ff9900;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
 }
 
-.crosshair-h {
-    top: 9px;
-    left: 0;
-    width: 20px;
-    height: 2px;
-}
-
-.crosshair-v {
-    top: 0;
-    left: 9px;
-    width: 2px;
-    height: 20px;
+#drawing-handle.armed #drawing-size-indicator {
+    background: rgba(0, 230, 118, 0.3);
+    border-color: #00e676;
 }
 
 #drawing-toggle-btn {
     position: absolute;
+    /* Fallback offset (to the right of the handle, touching) so it doesn't overlap
+       the handle before JS repositions it - actual placement is always driven by
+       JS afterward. */
     left: calc(50% + 46px);
     top: 50%;
-    width: 34px;
-    height: 34px;
-    margin-top: -17px;
+    width: 46px;
+    height: 46px;
+    margin-left: -23px;
+    margin-top: -23px;
     border-radius: 50%;
     background: rgba(255, 153, 0, 0.35);
     border: 2px solid #ff9900;
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
     color: #fff;
-    font-size: 15px;
+    font-size: 18px;
     z-index: 5020;
     cursor: pointer;
     touch-action: none;
@@ -1251,4 +1333,24 @@ body {
     background: #00e676;
     border-color: #00e676;
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
+}
+
+/* Full-size lightbox for a tapped photo pasted into Notes */
+#notes-image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 6000;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+}
+
+#notes-image-lightbox img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
 }
