@@ -19,6 +19,7 @@ class FlowchartViewer {
         this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
         this.leftPanelTabQuestions = document.getElementById('left-panel-tab-questions');
         this.leftPanelTabPugh = document.getElementById('left-panel-tab-pugh');
+        this.leftPanelTabMorph = document.getElementById('left-panel-tab-morph');
         this.leftPanelTabsContainer = document.getElementById('left-panel-tabs');
         this.notesUnfoldBtn = document.getElementById('notes-unfold-btn');
         this.leftPanelZoomOutBtn = document.getElementById('left-panel-zoom-out');
@@ -27,6 +28,7 @@ class FlowchartViewer {
         this.leftPanelZoomControls = document.getElementById('left-panel-zoom-controls');
         this.leftPanelMain = document.getElementById('left-panel-main');
         this.pughPanelBody = document.getElementById('pugh-panel-body');
+        this.morphPanelBody = document.getElementById('morph-panel-body');
         this.notesPanelBody = document.getElementById('notes-panel-body');
         this.notesResizeHandle = document.getElementById('notes-resize-handle');
         this.pughMatrixBtn = document.getElementById('pugh-matrix-btn');
@@ -158,12 +160,19 @@ class FlowchartViewer {
         this.setupReflectionPanel();
 
         // Pugh Matrix: lives in the same left-hand panel as the reflection questions,
-        // switchable via the Questions/Pugh Matrix tabs. Data is per-flowchart (saved
-        // and loaded alongside the tree) so each chart can carry its own matrix.
-        this._leftPanelMode = 'questions'; // 'questions' | 'pugh'
+        // switchable via the Questions/Pugh Matrix/Morph Matrix tabs. Data is
+        // per-flowchart (saved and loaded alongside the tree) so each chart can carry
+        // its own matrices.
+        this._leftPanelMode = 'questions'; // 'questions' | 'pugh' | 'morph'
         this._pughPanelActive = false;
+        this._morphPanelActive = false;
         this._pughIdCounter = 0;
         this.pughMatrix = this.getDefaultPughMatrix();
+        // Morphological Analysis matrix: each row is a "parameter" (a parent node's
+        // name), its columns are that parent's immediate green children (candidate
+        // options) - see addNodeToMorph/renderMorphPanel.
+        this._morphIdCounter = 0;
+        this.morphMatrix = this.getDefaultMorphMatrix();
         // Ranking mode: a pairwise "beat the baseline" tournament for ordering the
         // solutions (columns) under whichever single criteria is currently active -
         // see startOrResumeRankSession/handlePughReRank for the algorithm.
@@ -1019,6 +1028,7 @@ class FlowchartViewer {
                 }
 
                 this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
+                this.morphMatrix = this.sanitizeMorphMatrix(parsed.morphMatrix);
                 this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
@@ -2573,8 +2583,22 @@ class FlowchartViewer {
             addCriteriaBtn.onmousedown = (e) => e.preventDefault();
             addCriteriaBtn.onclick = () => this.addNodeToPugh('criteria');
 
+            const addMorphBtn = document.createElement('button');
+            addMorphBtn.textContent = '🧩 Add to Morph';
+            addMorphBtn.type = 'button';
+            addMorphBtn.style.flex = '1';
+            addMorphBtn.style.background = 'var(--control-bg)';
+            addMorphBtn.style.color = 'var(--text)';
+            addMorphBtn.style.border = '1px solid var(--border)';
+            addMorphBtn.style.borderRadius = '5px';
+            addMorphBtn.style.padding = '6px 10px';
+            addMorphBtn.style.cursor = 'pointer';
+            addMorphBtn.onmousedown = (e) => e.preventDefault();
+            addMorphBtn.onclick = () => this.addNodeToMorph();
+
             pughAddRow.appendChild(addSolutionBtn);
             pughAddRow.appendChild(addCriteriaBtn);
+            pughAddRow.appendChild(addMorphBtn);
             this.nodeEditPopup.insertBefore(pughAddRow, colorBtns.nextSibling);
         }
         
@@ -3350,8 +3374,10 @@ class FlowchartViewer {
         this.reflectionPanelBody.innerHTML = '';
         this._leftPanelMode = 'questions';
         this._pughPanelActive = false;
+        this._morphPanelActive = false;
         this._notesFolded = false;
         this.pughMatrix = this.getDefaultPughMatrix();
+        this.morphMatrix = this.getDefaultMorphMatrix();
         this.globalNotes = '';
         this.notesDrawings = {};
         this.notesImages = {};
@@ -3378,7 +3404,9 @@ class FlowchartViewer {
         // Questions tab with no such node selected computed panelActive as false and
         // closed the whole panel instead of just showing its (empty) Questions view.
         const questionsActive = this._reflectionPanelActive;
-        const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive : questionsActive;
+        const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive
+            : this._leftPanelMode === 'morph' ? this._morphPanelActive
+            : questionsActive;
 
         if (!isMobile) {
             if (this._notesFolded) this.unfoldNotesSection();
@@ -3501,6 +3529,134 @@ class FlowchartViewer {
         return { criteria, columns, scores };
     }
 
+    // ===================== Morph Matrix (Morphological Analysis) =====================
+    // Each row is a "parameter" (snapshotted from a parent node's name), and its
+    // columns are that parent's immediate green-only children (candidate options) at
+    // the moment "Add to Morph" was clicked - a static snapshot, same as how Pugh's
+    // "Add Solution"/"Add Criteria" work, not a live link back into the tree. The
+    // person picks one option per row by clicking its cell, building up a combined
+    // idea (row1's pick + row2's pick + ...) shown live at the bottom, and "Accept"
+    // saves that combination as a finished idea.
+    nextMorphId(prefix) {
+        this._morphIdCounter = (this._morphIdCounter || 0) + 1;
+        return `${prefix}-${Date.now().toString(36)}-${this._morphIdCounter}`;
+    }
+
+    getDefaultMorphMatrix() {
+        return {
+            rows: [],   // [{ id, name, options: [string, ...] }]
+            ideas: []   // [{ id, text, selections: { [rowId]: optionText } }]
+        };
+    }
+
+    sanitizeMorphMatrix(raw) {
+        if (!raw || typeof raw !== 'object') return this.getDefaultMorphMatrix();
+
+        const rows = Array.isArray(raw.rows) ? raw.rows
+            .filter(r => r && typeof r === 'object')
+            .map(r => ({
+                id: (typeof r.id === 'string' && r.id) ? r.id : this.nextMorphId('row'),
+                name: (typeof r.name === 'string') ? r.name : '',
+                options: Array.isArray(r.options) ? r.options.filter(o => typeof o === 'string') : []
+            })) : [];
+
+        const rowIds = new Set(rows.map(r => r.id));
+        const ideas = Array.isArray(raw.ideas) ? raw.ideas
+            .filter(i => i && typeof i === 'object' && typeof i.text === 'string')
+            .map(i => ({
+                id: (typeof i.id === 'string' && i.id) ? i.id : this.nextMorphId('idea'),
+                text: i.text,
+                selections: (i.selections && typeof i.selections === 'object')
+                    ? Object.fromEntries(Object.entries(i.selections).filter(([rid]) => rowIds.has(rid)))
+                    : {}
+            })) : [];
+
+        return { rows, ideas };
+    }
+
+    // Adds a node as a new Morph Matrix row - the row name is the node's own name,
+    // and its columns are the node's immediate green-colored children only (any
+    // other color, or grandchildren, are ignored). Skips if a row with that exact
+    // name already exists, same duplicate-guard pattern as addNodeToPugh.
+    addNodeToMorph() {
+        if (!this.nodeBeingEdited) return;
+        const name = (this.nodeBeingEdited.data.name || '').trim();
+        if (!name) {
+            this.showNotification('Name the node first.');
+            return;
+        }
+
+        const exists = this.morphMatrix.rows.some(r => r.name.trim().toLowerCase() === name.toLowerCase());
+        if (exists) {
+            this.showNotification(`"${name}" is already a row in the Morph Matrix.`);
+            return;
+        }
+
+        const children = this.nodeBeingEdited.data.children || [];
+        const options = children
+            .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e')
+            .map(c => c.name.trim());
+
+        if (options.length === 0) {
+            this.showNotification(`"${name}" has no green children to use as options.`);
+            return;
+        }
+
+        this.morphMatrix.rows.push({ id: this.nextMorphId('row'), name, options });
+        this.renderMorphPanel();
+        this.autosave();
+        this.showNotification(`Added "${name}" as a Morph Matrix row.`);
+    }
+
+    deleteMorphRow(rowId) {
+        this.morphMatrix.rows = this.morphMatrix.rows.filter(r => r.id !== rowId);
+        if (this._morphCurrentSelection) delete this._morphCurrentSelection[rowId];
+        this.renderMorphPanel();
+        this.autosave();
+    }
+
+    deleteMorphIdea(ideaId) {
+        this.morphMatrix.ideas = this.morphMatrix.ideas.filter(i => i.id !== ideaId);
+        this.renderMorphPanel();
+        this.autosave();
+    }
+
+    // Toggles whether a given row's cell is the current selection for that row - one
+    // selection per row, clicking the already-selected cell again clears it.
+    toggleMorphSelection(rowId, option) {
+        if (!this._morphCurrentSelection) this._morphCurrentSelection = {};
+        if (this._morphCurrentSelection[rowId] === option) {
+            delete this._morphCurrentSelection[rowId];
+        } else {
+            this._morphCurrentSelection[rowId] = option;
+        }
+        this.renderMorphPanel();
+    }
+
+    // Builds "idea from row1 + idea from row2 + ..." out of whatever's currently
+    // selected, in row order, skipping rows with no selection yet.
+    getMorphCurrentIdeaText() {
+        const sel = this._morphCurrentSelection || {};
+        const parts = this.morphMatrix.rows
+            .map(r => sel[r.id])
+            .filter(Boolean);
+        return parts.join(' + ');
+    }
+
+    acceptMorphIdea() {
+        const sel = this._morphCurrentSelection || {};
+        const text = this.getMorphCurrentIdeaText();
+        if (!text) return;
+        this.morphMatrix.ideas.push({
+            id: this.nextMorphId('idea'),
+            text,
+            selections: { ...sel }
+        });
+        this._morphCurrentSelection = {};
+        this.renderMorphPanel();
+        this.autosave();
+    }
+
     // Wires up the +/- zoom buttons in the left panel header. These scale the
     // Questions/Pugh Matrix/Notes sections (including their tables and font size)
     // up or down via CSS `zoom`, independent of the flowchart's own zoom. The level
@@ -3543,6 +3699,9 @@ class FlowchartViewer {
         if (this.leftPanelTabPugh) {
             this.leftPanelTabPugh.addEventListener('click', () => this.switchLeftPanelMode('pugh'));
         }
+        if (this.leftPanelTabMorph) {
+            this.leftPanelTabMorph.addEventListener('click', () => this.switchLeftPanelMode('morph'));
+        }
     }
 
     // Opens the left panel directly to the Pugh Matrix tab - used by the toolbar/
@@ -3573,6 +3732,9 @@ class FlowchartViewer {
         if (mode === 'pugh') {
             this._pughPanelActive = true;
             this.renderPughPanel();
+        } else if (mode === 'morph') {
+            this._morphPanelActive = true;
+            this.renderMorphPanel();
         } else if (mode === 'questions') {
             // Save any in-progress ranking before leaving the Pugh tab, same as
             // leaving Rank mode itself - otherwise switching tabs mid-ranking
@@ -3599,11 +3761,17 @@ class FlowchartViewer {
         if (this.leftPanelTabPugh) {
             this.leftPanelTabPugh.classList.toggle('active', this._leftPanelMode === 'pugh');
         }
+        if (this.leftPanelTabMorph) {
+            this.leftPanelTabMorph.classList.toggle('active', this._leftPanelMode === 'morph');
+        }
         if (this.reflectionPanelBody) {
             this.reflectionPanelBody.style.display = this._leftPanelMode === 'questions' ? 'flex' : 'none';
         }
         if (this.pughPanelBody) {
             this.pughPanelBody.style.display = this._leftPanelMode === 'pugh' ? 'flex' : 'none';
+        }
+        if (this.morphPanelBody) {
+            this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
         }
     }
 
@@ -4907,6 +5075,125 @@ class FlowchartViewer {
         });
     }
 
+    // Builds the Morph Matrix table fresh into #morph-panel-body - one row per
+    // parameter, one clickable cell per green-child option, a live-updating "current
+    // idea" preview built from whatever's selected so far, an Accept button, and a
+    // list of previously accepted ideas.
+    renderMorphPanel() {
+        if (!this.morphPanelBody) return;
+        const m = this.morphMatrix;
+        this.morphPanelBody.innerHTML = '';
+        this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'pugh-toolbar';
+        const hint = document.createElement('div');
+        hint.className = 'pugh-empty-state';
+        hint.style.padding = '4px 2px';
+        hint.textContent = 'Use "Add to Morph" in a node\'s edit menu to add it as a row here.';
+        toolbar.appendChild(hint);
+        this.morphPanelBody.appendChild(toolbar);
+
+        if (m.rows.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'pugh-empty-state';
+            empty.textContent = 'No rows yet - edit a green parent node with green children and click "Add to Morph".';
+            this.morphPanelBody.appendChild(empty);
+            return;
+        }
+
+        const wrap = document.createElement('div');
+        wrap.className = 'pugh-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'pugh-table morph-table';
+
+        const tbody = document.createElement('tbody');
+        const sel = this._morphCurrentSelection || {};
+        m.rows.forEach(row => {
+            const tr = document.createElement('tr');
+
+            const nameTd = document.createElement('td');
+            nameTd.className = 'pugh-criteria-cell';
+            const nameRowDiv = document.createElement('div');
+            nameRowDiv.style.display = 'flex';
+            nameRowDiv.style.alignItems = 'center';
+            nameRowDiv.style.gap = '4px';
+            const nameLabel = document.createElement('div');
+            nameLabel.className = 'morph-row-name';
+            nameLabel.textContent = row.name;
+            const delRowBtn = document.createElement('button');
+            delRowBtn.className = 'pugh-delete-row-btn';
+            delRowBtn.title = 'Delete this row';
+            delRowBtn.textContent = '\u00d7';
+            delRowBtn.addEventListener('click', () => this.deleteMorphRow(row.id));
+            nameRowDiv.appendChild(nameLabel);
+            nameRowDiv.appendChild(delRowBtn);
+            nameTd.appendChild(nameRowDiv);
+            tr.appendChild(nameTd);
+
+            row.options.forEach(option => {
+                const td = document.createElement('td');
+                td.className = 'morph-option-cell';
+                if (sel[row.id] === option) td.classList.add('morph-option-selected');
+                td.textContent = option;
+                td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
+                tr.appendChild(td);
+            });
+
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        this.morphPanelBody.appendChild(wrap);
+
+        // Current idea preview + Accept
+        const previewRow = document.createElement('div');
+        previewRow.className = 'morph-preview-row';
+        const ideaText = this.getMorphCurrentIdeaText();
+        const previewLabel = document.createElement('div');
+        previewLabel.className = 'morph-preview-label';
+        previewLabel.textContent = ideaText ? ('Idea: ' + ideaText) : 'Click a cell in each row to build an idea.';
+        const acceptBtn = document.createElement('button');
+        acceptBtn.className = 'pugh-rerank-btn';
+        acceptBtn.textContent = 'Accept';
+        acceptBtn.disabled = !ideaText;
+        acceptBtn.style.opacity = ideaText ? '1' : '0.5';
+        acceptBtn.addEventListener('click', () => this.acceptMorphIdea());
+        previewRow.appendChild(previewLabel);
+        previewRow.appendChild(acceptBtn);
+        this.morphPanelBody.appendChild(previewRow);
+
+        // Accepted ideas list
+        if (m.ideas.length > 0) {
+            const ideasTitle = document.createElement('div');
+            ideasTitle.className = 'pugh-rank-title';
+            ideasTitle.style.marginTop = '8px';
+            ideasTitle.textContent = 'Accepted ideas';
+            this.morphPanelBody.appendChild(ideasTitle);
+
+            const ideasList = document.createElement('div');
+            ideasList.className = 'morph-ideas-list';
+            m.ideas.forEach(idea => {
+                const row = document.createElement('div');
+                row.className = 'morph-idea-row';
+                const text = document.createElement('div');
+                text.className = 'morph-idea-text';
+                text.textContent = idea.text;
+                const delBtn = document.createElement('button');
+                delBtn.className = 'pugh-delete-row-btn';
+                delBtn.title = 'Delete this idea';
+                delBtn.textContent = '\u00d7';
+                delBtn.addEventListener('click', () => this.deleteMorphIdea(idea.id));
+                row.appendChild(text);
+                row.appendChild(delBtn);
+                ideasList.appendChild(row);
+            });
+            this.morphPanelBody.appendChild(ideasList);
+        }
+
+        this.applyMobileViewState();
+    }
+
     // Cheap update used while typing weights/scores: recomputes the totals row and
     // the per-row top-score highlight in place, instead of rebuilding (and losing
     // focus/cursor position in) the whole table.
@@ -4963,6 +5250,7 @@ class FlowchartViewer {
             showPlaceholders: this.showPlaceholders,
             transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k },
             pughMatrix: this.pughMatrix,
+            morphMatrix: this.morphMatrix,
             globalNotes: this.globalNotes,
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages

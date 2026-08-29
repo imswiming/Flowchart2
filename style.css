@@ -1354,3 +1354,72 @@ body {
     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
     border-radius: 4px;
 }
+
+/* ===== Morph Matrix ===== */
+.morph-row-name {
+    font-weight: 600;
+    font-size: 13px;
+    flex: 1;
+}
+
+.morph-option-cell {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    background: var(--popup-bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.morph-option-cell:hover {
+    background: var(--control-hover);
+}
+
+.morph-option-selected {
+    background: #00a67e !important;
+    color: white !important;
+    font-weight: bold;
+}
+
+.morph-preview-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+}
+
+.morph-preview-label {
+    font-size: 13px;
+    flex: 1;
+    line-height: 1.4;
+}
+
+.morph-ideas-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.morph-idea-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--popup-bg);
+    border: 1px solid var(--border);
+}
+
+.morph-idea-text {
+    font-size: 13px;
+    line-height: 1.4;
+}
