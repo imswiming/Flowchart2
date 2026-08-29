@@ -3082,6 +3082,8 @@ class FlowchartViewer {
         if (colorBtns) colorBtns.remove();
         const pughAddRow = document.getElementById('node-pugh-add-row');
         if (pughAddRow) pughAddRow.remove();
+        const imageActionsRow = document.getElementById('node-image-actions-row');
+        if (imageActionsRow) imageActionsRow.remove();
         this.applyMobileViewState();
     }
 
@@ -4859,9 +4861,21 @@ class FlowchartViewer {
 
         // ---- Two-finger pan + pinch zoom on the canvas area ----
         let pinch = null;
+        // Hold-to-draw is itself a two-touch gesture on touchscreens (one finger
+        // holding the enable-drawing button, a second dragging the pen handle) -
+        // without this check, that gets misread as an attempt to pinch-zoom the
+        // canvas instead of actually drawing.
+        const isDrawingControlTouch = (touch) => {
+            const t = touch && touch.target;
+            return Boolean(t && (this.drawingToggleBtn.contains(t) || this.drawingHandle.contains(t)));
+        };
         this.drawingOverlay.addEventListener('touchstart', (e) => {
             if (e.touches.length === 2) {
                 const [a, b] = e.touches;
+                if (isDrawingControlTouch(a) || isDrawingControlTouch(b)) {
+                    pinch = null;
+                    return;
+                }
                 pinch = {
                     dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
                     midX: (a.clientX + b.clientX) / 2,
