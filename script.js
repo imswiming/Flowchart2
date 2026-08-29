@@ -1497,10 +1497,8 @@ class FlowchartViewer {
         // it, so a docked node's normal resting spot is one full node-width/height
         // clearance past it instead. (There's no fixed NODE_HEIGHT the way there's a
         // fixed NODE_WIDTH, since box height depends on line count - this is a
-        // reasonable single-line approximation.) The horizontal (left-edge) case uses
-        // extra clearance beyond a bare node-width, since a plain node-width offset
-        // sat a little too close to the edge/panel in practice.
-        const nodeClearance = isLR ? 40 : this.NODE_WIDTH * 1.4;
+        // reasonable single-line approximation.)
+        const nodeClearance = isLR ? 40 : this.NODE_WIDTH;
         const dockedScreenPos = bound + nodeClearance * k;
         const getPos = d => isLR ? d.y : d.x;
 
@@ -4521,6 +4519,12 @@ class FlowchartViewer {
         order.forEach((colId, idx) => {
             this.setPughScore(critId, colId, n - idx);
         });
+        // Column order must always show the highest total score on the left - a
+        // completed ranking re-sorts the whole table immediately, rather than only
+        // reordering when the "Overall Rank" button happens to be clicked separately.
+        const totals = {};
+        this.pughMatrix.columns.forEach(col => { totals[col.id] = this.computePughColumnTotal(col.id); });
+        this.pughMatrix.columns.sort((a, b) => totals[b.id] - totals[a.id]);
     }
 
     // Called whenever the person leaves a criteria's ranking session before it's run
@@ -4634,6 +4638,20 @@ class FlowchartViewer {
         panel.appendChild(reRankBtn);
 
         return panel;
+    }
+
+    // The top 3 *distinct* score values within a single criteria's row - e.g. row
+    // scores [1, 1, 3, 4, 2, 8] have distinct values [8, 4, 3, 2, 1], so the top 3 are
+    // 8, 4, and 3, and every cell holding one of those values gets highlighted (so a
+    // tie for 3rd place highlights all of the tied cells, not an arbitrary subset).
+    // Returns null if there are fewer than 2 columns to compare, or every score in
+    // the row is equal (nothing meaningful to single out).
+    getPughRowTopScores(critId) {
+        const scores = this.pughMatrix.columns.map(col => this.getPughScore(critId, col.id));
+        if (scores.length < 2) return null;
+        const distinct = Array.from(new Set(scores)).sort((a, b) => b - a);
+        if (distinct.length < 2) return null;
+        return new Set(distinct.slice(0, 3));
     }
 
     // Builds the Pugh Matrix table fresh into #pugh-panel-body. Called on open and
@@ -4770,21 +4788,13 @@ class FlowchartViewer {
         thead.appendChild(headRow);
         table.appendChild(thead);
 
-        // Highest base score per column, used to highlight that single cell (or
-        // cells, in a tie) below - skipped for columns where every score is equal
-        // (nothing to single out) or there's only one criterion to compare.
-        const maxScorePerColumn = {};
-        m.columns.forEach(col => {
-            if (m.criteria.length < 2) { maxScorePerColumn[col.id] = null; return; }
-            const scores = m.criteria.map(crit => this.getPughScore(crit.id, col.id));
-            const allEqual = scores.every(s => s === scores[0]);
-            maxScorePerColumn[col.id] = allEqual ? null : Math.max(...scores);
-        });
-
         // Body rows (one per criterion)
         const tbody = document.createElement('tbody');
         m.criteria.forEach(crit => {
             const tr = document.createElement('tr');
+            // Top 3 scores *within this row* (across solutions) - highlighting is now
+            // per criteria row, not per solution column.
+            const rowTopScores = this.getPughRowTopScores(crit.id);
 
             const nameTd = document.createElement('td');
             nameTd.className = 'pugh-criteria-cell';
@@ -4834,7 +4844,7 @@ class FlowchartViewer {
                 td.dataset.critId = crit.id;
                 td.dataset.colId = col.id;
                 const score = this.getPughScore(crit.id, col.id);
-                if (maxScorePerColumn[col.id] !== null && score === maxScorePerColumn[col.id]) {
+                if (rowTopScores && rowTopScores.has(score)) {
                     td.classList.add('pugh-top-score-cell');
                 }
                 const scoreInput = document.createElement('input');
@@ -4898,23 +4908,21 @@ class FlowchartViewer {
     }
 
     // Cheap update used while typing weights/scores: recomputes the totals row and
-    // the per-column top-score highlight in place, instead of rebuilding (and losing
+    // the per-row top-score highlight in place, instead of rebuilding (and losing
     // focus/cursor position in) the whole table.
     refreshPughComputedDisplays() {
         const m = this.pughMatrix;
 
-        const maxScorePerColumn = {};
-        m.columns.forEach(col => {
-            if (m.criteria.length < 2) { maxScorePerColumn[col.id] = null; return; }
-            const scores = m.criteria.map(crit => this.getPughScore(crit.id, col.id));
-            const allEqual = scores.every(s => s === scores[0]);
-            maxScorePerColumn[col.id] = allEqual ? null : Math.max(...scores);
-        });
+        const rowTopScoresCache = {};
         this.pughPanelBody.querySelectorAll('.pugh-score-cell[data-crit-id]').forEach(td => {
             const critId = td.dataset.critId;
             const colId = td.dataset.colId;
             const score = this.getPughScore(critId, colId);
-            const isTop = maxScorePerColumn[colId] !== null && score === maxScorePerColumn[colId];
+            if (!(critId in rowTopScoresCache)) {
+                rowTopScoresCache[critId] = this.getPughRowTopScores(critId);
+            }
+            const rowTopScores = rowTopScoresCache[critId];
+            const isTop = Boolean(rowTopScores && rowTopScores.has(score));
             td.classList.toggle('pugh-top-score-cell', isTop);
         });
 
