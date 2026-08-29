@@ -6069,6 +6069,16 @@ class FlowchartViewer {
         }
         this.rootData = this.wrapRootWithPlaceholder(data);
         this.ensureRightmostPlaceholderNodes(this.rootData);
+
+        // Every tree-editing action ultimately calls renderFlowchart to reflect the
+        // change, so hooking the Morph Matrix resync in here - rather than trying to
+        // individually catch every add/delete/reparent/duplicate function that could
+        // affect it - guarantees it never misses a change, regardless of which
+        // specific action caused it (this runs on genuine tree edits only; simple
+        // pan/zoom doesn't call renderFlowchart at all).
+        if (this.resyncMorphRows && this.resyncMorphRows()) {
+            this.renderMorphPanel();
+        }
         
         const contentRoot = this.rootData.children && this.rootData.children.length > 0
             ? this.rootData.children[0]

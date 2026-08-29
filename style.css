@@ -649,6 +649,13 @@ body {
     #reflection-panel-back-btn {
         display: inline-block;
     }
+
+    /* On mobile, the close (X) button moves to the top-left instead of sitting on
+       the right - flexbox `order` repositions it without touching DOM order (which
+       still matters for tab/keyboard navigation and other logic elsewhere). */
+    #reflection-panel-close {
+        order: -1;
+    }
 }
 
 .flowchart-panel {
