@@ -1497,8 +1497,10 @@ class FlowchartViewer {
         // it, so a docked node's normal resting spot is one full node-width/height
         // clearance past it instead. (There's no fixed NODE_HEIGHT the way there's a
         // fixed NODE_WIDTH, since box height depends on line count - this is a
-        // reasonable single-line approximation.)
-        const nodeClearance = isLR ? 40 : this.NODE_WIDTH;
+        // reasonable single-line approximation.) The horizontal (left-edge) case uses
+        // extra clearance beyond a bare node-width, since a plain node-width offset
+        // sat a little too close to the edge/panel in practice.
+        const nodeClearance = isLR ? 40 : this.NODE_WIDTH * 1.4;
         const dockedScreenPos = bound + nodeClearance * k;
         const getPos = d => isLR ? d.y : d.x;
 
@@ -1544,7 +1546,21 @@ class FlowchartViewer {
             let dockCeiling;
             if (relevantChildren.length === 1) {
                 const onlyChild = relevantChildren[0];
-                const childContribution = onlyChild._docked ? dockedScreenPos : onlyChild._effectiveScreenPos;
+                const isLeafChild = !onlyChild.children || onlyChild.children.length === 0;
+                // Only an actual *leaf* child's raw position should be tracked - it's
+                // the one genuinely about to scroll out of view. A non-leaf child that
+                // hasn't started docking itself yet is just sitting wherever the tree
+                // layout naturally put it, which (especially in compact/indented
+                // layouts) can be much closer to this node than the normal offset -
+                // tracking it anyway was pulling this node right into that child's
+                // (or an unrelated sibling's) territory instead of waiting at the
+                // clean offset. Once that child *does* start docking, it already
+                // contributes a flat dockedScreenPos below (via the "not docked?" —
+                // no, via the leaf check on *its own* eachAfter pass propagating up
+                // through this same "non-leaf children stay flat" rule), so tracking
+                // only ever happens one level at a time, right above the terminating
+                // leaf - never bumping into content further up the chain.
+                const childContribution = isLeafChild ? onlyChild._effectiveScreenPos : dockedScreenPos;
                 dockCeiling = Math.min(dockedScreenPos, childContribution);
             } else {
                 dockCeiling = dockedScreenPos;
@@ -2825,6 +2841,8 @@ class FlowchartViewer {
         this._suppressPopupHide = false;
         const colorBtns = document.getElementById('node-color-btns');
         if (colorBtns) colorBtns.remove();
+        const pughAddRow = document.getElementById('node-pugh-add-row');
+        if (pughAddRow) pughAddRow.remove();
         this.applyMobileViewState();
     }
 
@@ -3558,6 +3576,13 @@ class FlowchartViewer {
             this._pughPanelActive = true;
             this.renderPughPanel();
         } else if (mode === 'questions') {
+            // Save any in-progress ranking before leaving the Pugh tab, same as
+            // leaving Rank mode itself - otherwise switching tabs mid-ranking
+            // silently discarded whatever progress had been made.
+            if (this._pughRankMode && this._pughActiveCriteriaId) {
+                this.finalizeInProgressRankSessionIfAny(this._pughActiveCriteriaId);
+                this._pughActiveCriteriaId = null;
+            }
             // Mirrors the 'pugh' branch above (which flips _pughPanelActive on) so
             // switching tabs always shows that tab's content - otherwise, if
             // _reflectionPanelActive happened to be false (e.g. never turned on, or
@@ -4498,6 +4523,26 @@ class FlowchartViewer {
         });
     }
 
+    // Called whenever the person leaves a criteria's ranking session before it's run
+    // all the way to completion (toggling Rank mode off, or switching to rank a
+    // different criteria) - without this, stopping partway through a tournament
+    // saved nothing at all, since finalizePughRanking previously only ever ran once
+    // a session reached its natural end. Whatever's left in the pool gets folded
+    // into the settled order as-is (their current relative order reflects whatever
+    // winners-to-losers progress has been made so far), so exiting always leaves a
+    // meaningful, saved score rather than silently discarding all of it.
+    finalizeInProgressRankSessionIfAny(critId) {
+        const crit = this.pughMatrix.criteria.find(c => c.id === critId);
+        if (!crit || !crit.rankSession || crit.rankSession.finished) return;
+        const session = crit.rankSession;
+        session.settled = session.settled.concat(session.pool);
+        session.pool = [];
+        session.baselineId = null;
+        session.finished = true;
+        this.finalizePughRanking(critId);
+        this.autosave();
+    }
+
     // Reorders the solution columns left-to-right by total score across every
     // criteria (winner first) - "overall rank" taking every ranked criteria into
     // account, not just the one currently active.
@@ -4566,7 +4611,7 @@ class FlowchartViewer {
             nameTd.textContent = getColTitle(id);
             tr.appendChild(nameTd);
 
-            ['S', '+'].forEach(choice => {
+            ['-', 'S', '+'].forEach(choice => {
                 const td = document.createElement('td');
                 const btn = document.createElement('button');
                 btn.textContent = choice;
@@ -4619,7 +4664,12 @@ class FlowchartViewer {
         rankBtn.title = 'Click a criteria name to rank the solutions against it';
         rankBtn.addEventListener('click', () => {
             this._pughRankMode = !this._pughRankMode;
-            if (!this._pughRankMode) this._pughActiveCriteriaId = null;
+            if (!this._pughRankMode) {
+                if (this._pughActiveCriteriaId) {
+                    this.finalizeInProgressRankSessionIfAny(this._pughActiveCriteriaId);
+                }
+                this._pughActiveCriteriaId = null;
+            }
             this.renderPughPanel();
         });
         toolbar.appendChild(rankBtn);
@@ -4755,6 +4805,12 @@ class FlowchartViewer {
                 // The criteria currently being typed into is what "Rank" mode ranks
                 // the solutions against.
                 if (this._pughRankMode && this._pughActiveCriteriaId !== crit.id) {
+                    // Leaving whichever criteria was previously active - save
+                    // whatever progress was made on it rather than abandoning it
+                    // unsaved.
+                    if (this._pughActiveCriteriaId) {
+                        this.finalizeInProgressRankSessionIfAny(this._pughActiveCriteriaId);
+                    }
                     this._pughActiveCriteriaId = crit.id;
                     this.renderPughPanel();
                 }
