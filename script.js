@@ -2739,8 +2739,12 @@ class FlowchartViewer {
         const finalLines = lines.length ? lines : [rawName || ''];
         d._lines = finalLines;
 
+        const PHOTO_H = 30;
+        const PHOTO_GAP = 6;
+        const photoExtra = selectedData._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0;
+
         const g = d3.select(targetEl);
-        const rectHeight = finalLines.length * LINE_HEIGHT + PADDING_Y;
+        const rectHeight = finalLines.length * LINE_HEIGHT + PADDING_Y + photoExtra;
         g.select('rect')
             .attr('height', rectHeight)
             .attr('y', -(rectHeight / 2));
@@ -2750,9 +2754,10 @@ class FlowchartViewer {
         finalLines.forEach((line, i, arr) => {
             text.append('tspan')
                 .attr('x', 0)
-                .attr('y', (i - (arr.length - 1) / 2) * LINE_HEIGHT + 4)
+                .attr('y', (i - (arr.length - 1) / 2) * LINE_HEIGHT + 4 - photoExtra / 2)
                 .text(line);
         });
+        g.select('image').attr('y', (rectHeight / 2) - PHOTO_H - 3);
         if (selectedData._collapsed) {
             if (this.orientation === 'LR') {
                 text.append('tspan')
@@ -2764,7 +2769,7 @@ class FlowchartViewer {
             } else {
                 text.append('tspan')
                     .attr('x', 0)
-                    .attr('y', finalLines.length * LINE_HEIGHT / 2 + 25)
+                    .attr('y', finalLines.length * LINE_HEIGHT / 2 + 25 + photoExtra)
                     .attr('fill', '#ffffff')
                     .attr('font-size', FONT_SIZE + 3)
                     .text('▼');
@@ -3681,8 +3686,15 @@ class FlowchartViewer {
             const currentChildren = (refs.nodeRef.children || [])
                 .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
             const oldOptionRefs = refs.optionRefs || [];
+            // Reference identity alone only tells us whether options were added or
+            // removed - it stays "same" if an existing option node was just renamed,
+            // since it's still the same object. Compare the actual option text too,
+            // so a plain rename of an option (no add/remove) is caught here as well.
+            const currentOptionNames = currentChildren.map(c => this.stripSimplifySuffix(c.name));
             const sameSet = currentChildren.length === oldOptionRefs.length
-                && currentChildren.every((c, i) => oldOptionRefs[i] === c);
+                && currentChildren.every((c, i) => oldOptionRefs[i] === c)
+                && currentOptionNames.length === row.options.length
+                && currentOptionNames.every((n, i) => n === row.options[i]);
 
             if (!sameSet) {
                 const sel = this._morphCurrentSelection;
@@ -3691,7 +3703,7 @@ class FlowchartViewer {
                 const oldSelectedRef = oldSelectedIdx !== -1 ? oldOptionRefs[oldSelectedIdx] : undefined;
 
                 refs.optionRefs = currentChildren;
-                row.options = currentChildren.map(c => this.stripSimplifySuffix(c.name));
+                row.options = currentOptionNames;
                 changed = true;
 
                 if (sel && oldSelectedOption !== undefined) {
@@ -3912,6 +3924,12 @@ class FlowchartViewer {
         this.setupIndentableTextarea(notesArea, (value) => {
             this.globalNotes = value;
             this._pendingNotesSave = true;
+            // Lightweight - only rebuilds the small strip below, not the textarea
+            // itself, so this is safe to run on every keystroke without disturbing
+            // focus/cursor position. This is what makes a pasted image URL's preview
+            // appear right away, since the URL is left as plain pasted text rather
+            // than replaced by a marker (see handleNotesPaste).
+            this.renderNotesMediaStrip();
         });
         notesArea.addEventListener('focus', () => {
             this.foldNotesSection();
@@ -3933,19 +3951,26 @@ class FlowchartViewer {
     }
 
     // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
-    // [[image:ID]], each on its own line, in the order they appear. A plain
-    // <textarea> can't render an inline image in place of a marker, so as a
-    // practical stand-in, everything referenced anywhere in the notes gets a small
-    // preview thumbnail in a strip under the textarea, in the same order they appear
-    // in the text; tapping a drawing reopens it for editing, tapping a photo opens it
-    // full-size. The marker line itself is what anchors *where* in the outline each
-    // item conceptually sits.
+    // [[image:ID]] (used only for raw pasted image *data*, which has no natural text
+    // form), plus plain pasted image URLs found directly in the text (used for a
+    // pasted *link* to an image - left as ordinary, readable/copyable URL text
+    // instead of being hidden behind a marker, since that's the closest thing to "a
+    // hyperlink to the image" achievable inside a plain textarea, which can't
+    // support real clickable links no matter what text sits inside it). Everything
+    // found gets a small preview thumbnail in a strip under the textarea, in the
+    // order it appears in the text; tapping a drawing reopens it for editing,
+    // tapping a photo opens it full-size.
     getNotesMediaMarkers() {
         const text = this.globalNotes || '';
         const items = [];
         const re = /\[\[(drawing|image):([a-zA-Z0-9_-]+)\]\]/g;
         let m;
         while ((m = re.exec(text))) items.push({ type: m[1], id: m[2] });
+
+        const urlRe = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|avif)(?:\?\S*)?/gi;
+        let um;
+        while ((um = urlRe.exec(text))) items.push({ type: 'image-url', id: um[0] });
+
         return items;
     }
 
@@ -3970,6 +3995,8 @@ class FlowchartViewer {
                 thumb.addEventListener('click', () => this.editNotesDrawing(id));
                 strip.appendChild(thumb);
             } else if (type === 'image') {
+                // Legacy marker format - kept for backward compatibility with
+                // already-saved notes from before URL pastes stopped using markers.
                 const image = this.notesImages && this.notesImages[id];
                 if (!image) return;
                 const thumb = document.createElement('img');
@@ -3978,17 +4005,26 @@ class FlowchartViewer {
                 thumb.title = 'Tap to view full size';
                 thumb.addEventListener('click', () => this.openNotesImageLightbox(image.dataUrl || image.url));
                 strip.appendChild(thumb);
+            } else if (type === 'image-url') {
+                // id IS the URL here - found directly in the text, no lookup needed.
+                const thumb = document.createElement('img');
+                thumb.className = 'notes-drawing-thumb';
+                thumb.src = id;
+                thumb.title = 'Tap to view full size';
+                thumb.addEventListener('click', () => this.openNotesImageLightbox(id));
+                strip.appendChild(thumb);
             }
         });
         this.notesPanelBody.appendChild(strip);
     }
 
-    // Handles pasting either actual image data (e.g. copied from an image editor or
-    // a screenshot) or a plain text URL that looks like it points at an image -
-    // either way, inserts a [[image:ID]] marker at the cursor and shows a preview
-    // thumbnail, same as a drawing. Pasted URLs are stored as just the link (no
-    // image bytes at all) so they don't add anything to the notes' storage/sync size
-    // the way an actually-embedded image does.
+    // Handles pasting either actual image *data* (e.g. a screenshot, or copied from
+    // an image editor) or a plain text URL that looks like it points at an image.
+    // Raw image data has no natural text form, so it still gets a [[image:ID]]
+    // marker; a pasted URL is left as plain, ordinary URL text - readable and
+    // copyable, and picked up automatically for a preview by getNotesMediaMarkers -
+    // rather than replaced with an opaque marker, since a real clickable hyperlink
+    // isn't possible inside a plain textarea no matter what text is used.
     handleNotesPaste(e) {
         const items = e.clipboardData && e.clipboardData.items;
         if (items) {
@@ -4008,22 +4044,13 @@ class FlowchartViewer {
                 }
             }
         }
-
-        const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
-        const trimmed = pastedText.trim();
-        const looksLikeImageUrl = /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|avif)(\?\S*)?$/i.test(trimmed);
-        if (looksLikeImageUrl) {
-            e.preventDefault();
-            const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-            this.notesImages[id] = { url: trimmed };
-            this.insertNotesMediaMarker('image', id);
-        }
-        // Otherwise, let the paste proceed normally as plain text.
+        // Otherwise, a pasted image URL (or any other text) just pastes normally -
+        // getNotesMediaMarkers picks up the URL and shows its preview automatically
+        // once the resulting 'input' event fires and re-renders the strip.
     }
 
-    // Shared by both the drawing tool and image paste - drops a [[type:id]] marker
-    // on its own line at wherever the cursor last was, then re-renders so the
-    // preview strip picks it up.
+    // Shared by the drawing tool - drops a [[type:id]] marker on its own line at
+    // wherever the cursor last was, then re-renders so the preview strip picks it up.
     insertNotesMediaMarker(type, id) {
         const marker = `[[${type}:${id}]]`;
         const value = this.globalNotes || '';
@@ -4050,6 +4077,44 @@ class FlowchartViewer {
         img.src = src;
         overlay.appendChild(img);
         document.body.appendChild(overlay);
+    }
+
+    // Grabs an image straight off the system clipboard (via the radial "📷" button
+    // next to a node's delete/promote buttons) and attaches it to that node as a
+    // small preview shown under its text - clicking the preview opens it full-screen
+    // via the same lightbox Notes photos use. Requires a real user gesture to call
+    // navigator.clipboard.read() (which this button click satisfies) and a secure
+    // context (https, or localhost) - browsers block clipboard image reads
+    // otherwise.
+    async captureNodePhotoFromClipboard(d) {
+        if (!navigator.clipboard || !navigator.clipboard.read) {
+            this.showNotification('Clipboard image access isn\'t available in this browser/context.');
+            return;
+        }
+        try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                const imageType = item.types.find(t => t.startsWith('image/'));
+                if (!imageType) continue;
+                const blob = await item.getType(imageType);
+                const dataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+                this.pushUndo();
+                d.data._nodePhotoUrl = dataUrl;
+                this.renderFlowchart(this.rootData);
+                this.autosave();
+                this.showNotification('Photo added to node.');
+                return;
+            }
+            this.showNotification('No image found on the clipboard - copy an image first.');
+        } catch (err) {
+            console.error('Clipboard photo capture failed:', err);
+            this.showNotification('Couldn\'t read an image from the clipboard (browser may need permission).');
+        }
     }
 
     // Opens the full-screen drawing overlay for a brand new drawing, to be inserted
@@ -5418,11 +5483,12 @@ class FlowchartViewer {
 
     exportAsJSON() {
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl } = node;
             const out = { name };
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
             if (_isPlaceholder) out._isPlaceholder = true;
+            if (_nodePhotoUrl) out._nodePhotoUrl = _nodePhotoUrl;
             if (Array.isArray(_reflectionAnswers) && _reflectionAnswers.some(a => a && a.trim())) {
                 out._reflectionAnswers = _reflectionAnswers;
             }
@@ -6367,11 +6433,23 @@ class FlowchartViewer {
             d._lines = lines.length ? lines : [d.data.name || ''];
         });
 
+        // A node with a photo attached (see captureNodePhotoFromClipboard) gets a
+        // small thumbnail preview rendered below its text, inside the same box - the
+        // box grows taller to fit it, and the text shifts up by half that extra space
+        // so it stays visually centered over the top portion, with the photo filling
+        // the newly added bottom portion.
+        const PHOTO_W = 46;
+        const PHOTO_H = 30;
+        const PHOTO_GAP = 6;
+        const textBoxHeight = d => d._lines.length * LINE_HEIGHT + PADDING_Y;
+        const photoExtra = d => (d.data._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0);
+        const totalBoxHeight = d => textBoxHeight(d) + photoExtra(d);
+
         node.append('rect')
         .attr('width', NODE_WIDTH)
-        .attr('height', d => d._lines.length * LINE_HEIGHT + PADDING_Y)
+        .attr('height', d => totalBoxHeight(d))
         .attr('x', -NODE_WIDTH/2)
-        .attr('y', d => -((d._lines.length * LINE_HEIGHT + PADDING_Y)/2))
+        .attr('y', d => -(totalBoxHeight(d) / 2))
         .attr('fill', d => {
             if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
@@ -6421,7 +6499,7 @@ class FlowchartViewer {
         .selectAll('tspan')
         .data(d => d._lines.map((line, i, arr) => ({
             line,
-            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4,
+            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4 - photoExtra(d) / 2,
             isLast: i === arr.length - 1,
             collapsed: d.data._collapsed
         })))
@@ -6430,6 +6508,23 @@ class FlowchartViewer {
         .attr('x', 0)
         .attr('y', d => d.y)
         .text(d => d.line);
+
+        // Small photo preview under the text, for nodes with one attached (see
+        // captureNodePhotoFromClipboard) - clicking it opens the full-size lightbox.
+        node.filter(d => Boolean(d.data._nodePhotoUrl))
+            .append('image')
+            .attr('href', d => d.data._nodePhotoUrl)
+            .attr('width', PHOTO_W)
+            .attr('height', PHOTO_H)
+            .attr('x', -PHOTO_W / 2)
+            .attr('y', d => (totalBoxHeight(d) / 2) - PHOTO_H - 3)
+            .attr('preserveAspectRatio', 'xMidYMid slice')
+            .style('cursor', 'zoom-in')
+            .on('click', (event, d) => {
+                event.stopPropagation();
+                this.openNotesImageLightbox(d.data._nodePhotoUrl);
+            })
+            .on('mousedown', (event) => event.stopPropagation());
 
         const collapseArrowOrientation = this.orientation;
         node.each(function(d) {
@@ -6447,7 +6542,7 @@ class FlowchartViewer {
                 } else {
                     text.append('tspan')
                         .attr('x', 0)
-                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25)
+                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d))
                         .attr('fill', '#ffffff')
                         .attr('font-size', FONT_SIZE + 3)
                         .text('▼');
@@ -6514,7 +6609,11 @@ class FlowchartViewer {
         const baseX = snap10(targetDatum.x);
         const baseY = targetDatum.y;
         const lineCount = (targetDatum._lines && targetDatum._lines.length) || 1;
-        const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y) / 2;
+        // Matches the extra height added for a photo preview under the text in the
+        // main node rendering above, so the radial buttons stay clear of a node with
+        // a photo attached instead of floating too close to (or overlapping) it.
+        const photoExtraHeight = targetDatum.data._nodePhotoUrl ? (30 + 6) : 0;
+        const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight) / 2;
 
         // Appended last, to the same container that holds every node - not nested inside
         // the selected node's own <g> - so this layer always paints on top of neighboring
@@ -6622,6 +6721,8 @@ class FlowchartViewer {
         const topPlusDy = -(halfHeight + vertGap);
         const deleteRowDy = topPlusDy - (btnHeight + btnSpacing);
 
+        const activateAddPhoto = () => self.captureNodePhotoFromClipboard(targetDatum);
+
         // Built as a list and evenly spaced around dx=0 so the row is always centered
         // as a whole, whatever combination of buttons ends up in it - rather than each
         // button having a hardcoded offset (which is what made the row look lopsided
@@ -6634,6 +6735,7 @@ class FlowchartViewer {
             deleteRowBtns.push({ label: '✕', activate: activateDelete, danger: true, fontSize: 22 });
             deleteRowBtns.push({ label: 'P', activate: activateDeleteAndPromote, danger: true, fontSize: 20 });
         }
+        deleteRowBtns.push({ label: '📷', activate: activateAddPhoto, fontSize: 18 });
         const rowUnit = btnWidth + btnSpacing;
         const rowCount = deleteRowBtns.length;
         deleteRowBtns.forEach((btn, i) => {
