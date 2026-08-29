@@ -386,7 +386,6 @@
          a persistent global Notes strip pinned below whichever one is showing -->
     <div id="reflection-panel">
       <div id="reflection-panel-header">
-        <button id="reflection-panel-back-btn" title="Back to node edit view">⇄</button>
         <div id="left-panel-tabs">
           <button class="left-panel-tab active" id="left-panel-tab-questions" data-mode="questions">Questions</button>
           <button class="left-panel-tab" id="left-panel-tab-pugh" data-mode="pugh">Pugh Matrix</button>
@@ -567,7 +566,7 @@ create policy "allow all" on flowchart_sync
         <button class="drawing-tool-btn" id="drawing-tool-rect" title="Rectangle" data-tool="rect">▭</button>
         <button class="drawing-tool-btn" id="drawing-tool-ellipse" title="Circle/Ellipse" data-tool="ellipse">◯</button>
         <button class="drawing-tool-btn" id="drawing-tool-text" title="Text" data-tool="text">T</button>
-        <input type="color" id="drawing-color" value="#ffffff" title="Colour" style="width:30px; height:30px; padding:0; border:none; border-radius:6px; background:none; cursor:pointer;">
+        <input type="color" id="drawing-color" value="#000000" title="Colour" style="width:30px; height:30px; padding:0; border:none; border-radius:6px; background:none; cursor:pointer;">
         <span style="color:#fff; font-size:12px;">✏️</span>
         <input type="range" id="drawing-width" min="1" max="40" value="4" title="Brush width" style="width:70px;">
         <span style="color:#fff; font-size:12px;">🧹</span>
@@ -581,10 +580,10 @@ create policy "allow all" on flowchart_sync
       <div id="drawing-canvas-wrap" style="position:absolute; inset:0; transform-origin:0 0;">
         <canvas id="drawing-canvas"></canvas>
       </div>
-      <div id="drawing-handle" title="Drag to move · drag after tapping the toggle to draw">
+      <div id="drawing-handle" title="Drag to move the pen · hold the button bottom-left to draw">
         <div id="drawing-size-indicator"></div>
       </div>
-      <button id="drawing-toggle-btn" title="Tap, then drag the handle to draw">✎</button>
+      <button id="drawing-toggle-btn" title="Hold down to draw, release to stop">✎</button>
     </div>
   </div>
 

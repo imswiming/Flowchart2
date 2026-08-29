@@ -1287,12 +1287,13 @@ body {
     margin-left: -23px;
     margin-top: -23px;
     border-radius: 50%;
-    /* Bright orange with a dark outline (via box-shadow, not border, so the outline
-       doesn't eat into the border-radius) - visible against a white canvas, a dark
-       drawing, or the dark overlay background alike. Plain white on white paper was
-       basically invisible. */
-    background: rgba(255, 153, 0, 0.35);
-    border: 2px solid #ff9900;
+    /* Grey with a dark outline (via box-shadow, not border, so the outline doesn't
+       eat into the border-radius) - visible against a white canvas, a dark drawing,
+       or the dark overlay background alike. Plain white on white paper was
+       basically invisible. Turns green (.armed) while the enable-drawing button is
+       actually held down. */
+    background: rgba(136, 136, 136, 0.35);
+    border: 2px solid #888888;
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
     z-index: 5020;
     touch-action: none;
@@ -1315,8 +1316,8 @@ body {
        a fixed CSS value the way the old fixed-size crosshair's could. */
     border-radius: 50%;
     pointer-events: none;
-    background: rgba(255, 153, 0, 0.35);
-    border: 1.5px solid #ff9900;
+    background: rgba(136, 136, 136, 0.35);
+    border: 1.5px solid #888888;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
 }
 
@@ -1326,19 +1327,18 @@ body {
 }
 
 #drawing-toggle-btn {
+    /* Static in the bottom-left corner - no longer follows the handle around, so it's
+       always reachable at a known spot (e.g. resting a thumb there) regardless of
+       where the drawing point currently is. */
     position: absolute;
-    /* Fallback offset (to the right of the handle, touching) so it doesn't overlap
-       the handle before JS repositions it - actual placement is always driven by
-       JS afterward. */
-    left: calc(50% + 46px);
-    top: 50%;
+    left: 24px;
+    bottom: 24px;
+    top: auto;
     width: 46px;
     height: 46px;
-    margin-left: -23px;
-    margin-top: -23px;
     border-radius: 50%;
-    background: rgba(255, 153, 0, 0.35);
-    border: 2px solid #ff9900;
+    background: rgba(136, 136, 136, 0.35);
+    border: 2px solid #888888;
     box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.65);
     color: #fff;
     font-size: 18px;

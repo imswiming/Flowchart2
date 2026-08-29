@@ -15,7 +15,6 @@ class FlowchartViewer {
         this.reflectionPanel = document.getElementById('reflection-panel');
         this.reflectionPanelBody = document.getElementById('reflection-panel-body');
         this.reflectionPanelClose = document.getElementById('reflection-panel-close');
-        this.reflectionPanelBackBtn = document.getElementById('reflection-panel-back-btn');
         this.reflectionPanelResizeHandle = document.getElementById('reflection-panel-resize-handle');
         this.leftPanelTabQuestions = document.getElementById('left-panel-tab-questions');
         this.leftPanelTabPugh = document.getElementById('left-panel-tab-pugh');
@@ -515,12 +514,108 @@ class FlowchartViewer {
         if (!this._applyingRemote) this.scheduleCloudPush();
     }
 
+    // Fast, non-cryptographic hash (djb2) used only to de-duplicate identical
+    // image/drawing blobs before upload - collisions are irrelevant here since the
+    // worst case is just an unnecessary re-upload, never a security concern.
+    hashImageString(str) {
+        let h = 5381;
+        for (let i = 0; i < str.length; i++) {
+            h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+        }
+        return (h >>> 0).toString(36);
+    }
+
+    // Every embedded image/drawing (_nodePhotoUrl on a node, or a notesDrawings/
+    // notesImages entry's dataUrl) is a JSON string value starting with "data:" -
+    // base64 never contains a quote or backslash, so the whole quoted value can be
+    // found and swapped for a small "@img:<hash>" reference directly in the raw
+    // JSON text, without parsing/rebuilding the tree. Returns the stripped string
+    // plus a { hash: rawDataUrl } map of everything it found.
+    stripImagesFromDataString(dataStr) {
+        const imageMap = {};
+        if (!dataStr) return { stripped: dataStr, imageMap };
+        const stripped = dataStr.replace(/"data:[^"]*"/g, (match) => {
+            const raw = match.slice(1, -1);
+            const hash = this.hashImageString(raw);
+            imageMap[hash] = raw;
+            return `"@img:${hash}"`;
+        });
+        return { stripped, imageMap };
+    }
+
+    // Reverses stripImagesFromDataString: swaps each "@img:<hash>" reference back
+    // for its real data URL, using whatever's in resolvedMap. A hash with no entry
+    // (couldn't be fetched) is left as-is rather than corrupting the JSON - better a
+    // missing image than a broken flowchart load.
+    rehydrateImagesInDataString(dataStr, resolvedMap) {
+        if (!dataStr) return dataStr;
+        return dataStr.replace(/"@img:([a-z0-9]+)"/g, (match, hash) => {
+            const raw = resolvedMap[hash];
+            return raw === undefined ? match : JSON.stringify(raw);
+        });
+    }
+
+    // All the distinct image hashes referenced (as "@img:<hash>") in one flowchart's
+    // serialized data string - used to know what to fetch when actually loading it.
+    findImageRefsInDataString(dataStr) {
+        const hashes = new Set();
+        if (!dataStr) return hashes;
+        const re = /"@img:([a-z0-9]+)"/g;
+        let m;
+        while ((m = re.exec(dataStr))) hashes.add(m[1]);
+        return hashes;
+    }
+
+    // Fetches and substitutes back in whichever images/drawings a single
+    // flowchart's data string references, so they're only ever pulled down when
+    // that flowchart is actually about to be viewed - not for every other saved
+    // flowchart just because the sync row happened to include them too. Hashes
+    // already confirmed present on the server (self._uploadedImageHashes) are
+    // marked so a later push never needlessly re-uploads what was just downloaded.
+    async rehydrateFlowchartImages(index) {
+        const item = this.flowchartList[index];
+        if (!item || !item.data) return;
+        const hashes = Array.from(this.findImageRefsInDataString(item.data));
+        if (hashes.length === 0) return;
+        if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
+        const prefix = `${this.cloudSyncId}::img::`;
+        try {
+            const idsFilter = hashes.map(h => encodeURIComponent(prefix + h)).join(',');
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=in.(${idsFilter})&select=id,data`, {
+                headers: {
+                    'apikey': this.cloudApiKey,
+                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Accept': 'application/json'
+                }
+            });
+            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+            const rows = await res.json();
+            const resolvedMap = {};
+            rows.forEach(row => {
+                if (!row.id.startsWith(prefix)) return;
+                const hash = row.id.slice(prefix.length);
+                if (row.data && typeof row.data.dataUrl === 'string') {
+                    resolvedMap[hash] = row.data.dataUrl;
+                    this._uploadedImageHashes.add(hash);
+                }
+            });
+            item.data = this.rehydrateImagesInDataString(item.data, resolvedMap);
+        } catch (err) {
+            console.error('Failed to fetch synced images/drawings:', err);
+        }
+    }
+
     // ===== CLOUD SYNC (Supabase) =====
     // Free Postgres-backed key/value storage via Supabase's auto-generated REST
     // API (PostgREST). No login flow for the app itself (just a project URL and
-    // anon/public API key pasted once). The whole flowchart list is stored as a
-    // single row in a `flowchart_sync` table, keyed by a Sync ID. Last-write-wins
-    // by timestamp.
+    // anon/public API key pasted once). The main flowchart list (text/structure
+    // only - see below) is one row in a `flowchart_sync` table keyed by a Sync ID.
+    // Each distinct image/drawing is its own separate row, keyed by a content hash
+    // (see stripImagesFromDataString) - so pasting one photo uploads it exactly
+    // once no matter how many times the flowchart is edited afterward, instead of
+    // re-uploading every embedded image's bytes on every single autosave. Pulling
+    // a flowchart likewise only fetches the specific images it actually references,
+    // and only once it's actually being opened. Last-write-wins by timestamp.
     setupCloudSync() {
         this.CLOUD_TABLE = 'flowchart_sync';
         document.addEventListener('visibilitychange', () => {
@@ -670,21 +765,58 @@ class FlowchartViewer {
         this._cloudSyncInFlight = true;
         this.updateCloudSyncStatus('syncing');
         try {
+            if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
+
+            // Strip every embedded image/drawing out of each flowchart's data string
+            // before touching the network at all - the main row's payload is then
+            // just text/structure, typically tiny regardless of how many photos or
+            // drawings are attached anywhere in the flowchart list.
+            const newImageMap = {};
+            const strippedList = this.flowchartList.map(item => {
+                const { stripped, imageMap } = this.stripImagesFromDataString(item.data || '');
+                Object.assign(newImageMap, imageMap);
+                return { title: item.title, data: stripped };
+            });
+
             const updatedAt = Date.now();
-            const dataJson = JSON.stringify({ flowchartList: this.flowchartList });
-            // Skip the upload entirely if nothing has actually changed since the last
-            // successful push - the ~2s debounce can fire on things like a blur event
-            // that didn't change any data, and without this check that still costs a
-            // full re-upload of everything, drawings included, for no reason.
+            const dataJson = JSON.stringify({ flowchartList: strippedList });
+
+            // Upload whichever images aren't yet confirmed present on the server -
+            // each is its own tiny row, upserted by content hash, so re-encountering
+            // one already uploaded (e.g. reusing the same photo in two nodes, or the
+            // very common case of *nothing* image-related having changed at all)
+            // costs nothing but a Set lookup, never a network request.
+            const hashesToUpload = Object.keys(newImageMap).filter(h => !this._uploadedImageHashes.has(h));
+            for (const hash of hashesToUpload) {
+                const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': this.cloudApiKey,
+                        'Authorization': `Bearer ${this.cloudApiKey}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                    },
+                    body: JSON.stringify([{
+                        id: `${this.cloudSyncId}::img::${hash}`,
+                        updated_at: Date.now(),
+                        data: { dataUrl: newImageMap[hash] }
+                    }])
+                });
+                if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+                this._uploadedImageHashes.add(hash);
+            }
+
+            // Skip the main-row upload entirely if the (now image-free) payload is
+            // identical to what was last pushed - the ~2s debounce can fire on
+            // things like a blur event that didn't change any data.
             if (dataJson === this._lastPushedDataJson) {
                 this._cloudSyncInFlight = false;
                 this.updateCloudSyncStatus('synced');
                 return true;
             }
-            const serialized = JSON.stringify({ updated_at: updatedAt, data: { flowchartList: this.flowchartList } });
-            // Supabase free tier rows via PostgREST handle multi-MB JSON comfortably,
-            // but bail out with a clear warning well before anything unreasonable
-            // instead of silently losing data.
+            const serialized = JSON.stringify({ updated_at: updatedAt, data: { flowchartList: strippedList } });
+            // With images no longer inlined here, this limit is now essentially just
+            // a sanity check against runaway text content, not a real ceiling.
             if (serialized.length > 8000000) {
                 this.updateCloudSyncStatus('error', 'data too large (>8MB) - remove some old flowcharts');
                 this._cloudSyncInFlight = false;
@@ -760,6 +892,11 @@ class FlowchartViewer {
                     if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
                         this.currentSlotIndex = 0;
                     }
+                    // Only fetch the images/drawings actually referenced by the
+                    // flowchart about to be opened - the rest of the list may
+                    // reference plenty more, but there's no reason to pull those
+                    // bytes down until (if ever) that other flowchart is opened too.
+                    await this.rehydrateFlowchartImages(this.currentSlotIndex);
                     this.loadFlowchartFromList(this.currentSlotIndex);
                     this._applyingRemote = false;
                     this.showNotification('Synced latest changes from another device.');
@@ -785,7 +922,20 @@ class FlowchartViewer {
     }
 
     isGreenNode(node) {
-        return node.data.color === '#00a67e';
+        return this.isGreenNodeData(node.data);
+    }
+
+    // Same fallback rendering already relies on (d.data.color || '#00a67e') - a node
+    // with no explicit color field at all (e.g. every node in the default new-flowchart
+    // template) still renders green, so it needs to count as green here too. A strict
+    // `=== '#00a67e'` check with no fallback was silently treating those nodes as
+    // "not green" everywhere that mattered (Simplify? suffix, the Green button's
+    // outline, and - most visibly - the Morph Matrix's green-children filter, which
+    // excluded exactly the branch nodes in the starter template since they're the ones
+    // that never got an explicit color written to them).
+    isGreenNodeData(nodeData) {
+        if (!nodeData) return false;
+        return (nodeData.color || '#00a67e') === '#00a67e';
     }
 
     hasVisibleChildren(node) {
@@ -980,7 +1130,12 @@ class FlowchartViewer {
         this.updateOrientationButtonLabels();
         this.updateTogglePlaceholdersLabels();
         
-        this.renderFlowchart(this.rootData);
+        // fitView is required here, not just the transform reset above: renderFlowchart
+        // otherwise calls syncTransform(), which reads whatever pan/zoom the *previous*
+        // flowchart's still-on-screen SVG was left at and overwrites this reset with it -
+        // so without this, a new flowchart silently opened wherever the last one had been
+        // scrolled to, instead of centered on its own (tiny, single "Start" node) content.
+        this.renderFlowchart(this.rootData, { fitView: true });
         this.currentSlotIndex = this.flowchartList.length - 1;
         this.saveCurrentFlowchart();
         
@@ -990,8 +1145,27 @@ class FlowchartViewer {
     
     loadFlowchartFromList(index) {
         if (index >= this.flowchartList.length) return;
+
+        // A flowchart pulled from cloud sync only has the *opened* slot's images
+        // actually fetched (see cloudPull) - if this is some other slot that still
+        // has unresolved "@img:<hash>" placeholders sitting in its data string,
+        // fetch those first and then re-run this same load once they're back,
+        // rather than rendering broken image references.
+        const item0 = this.flowchartList[index];
+        if (item0 && item0.data && this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId &&
+            /"@img:/.test(item0.data)) {
+            this.rehydrateFlowchartImages(index).then(() => this.loadFlowchartFromList(index));
+            return;
+        }
         
-        if (this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
+        // Applying an incoming remote pull (see cloudPull) always targets the *same*
+        // slot index it just wrote into flowchartList - if that also happens to be
+        // whatever this.currentSlotIndex already was (the common case: syncing
+        // updates to the flowchart currently open), saving "current" here would
+        // export the stale, not-yet-refreshed in-memory rootData right back over
+        // the remote data that was just fetched, silently discarding the pull
+        // (images included) before it's even read below.
+        if (!this._applyingRemote && this.rootData && this.currentSlotIndex !== null && this.flowchartList[this.currentSlotIndex]) {
             this.saveCurrentFlowchart();
         }
         
@@ -2608,6 +2782,32 @@ class FlowchartViewer {
             pughAddRow.appendChild(addCriteriaBtn);
             pughAddRow.appendChild(addMorphBtn);
             this.nodeEditPopup.insertBefore(pughAddRow, colorBtns.nextSibling);
+
+            // Third row: removes whichever image is attached to this node - a pasted
+            // photo (see captureNodePhotoFromClipboard) or a hand-drawn one (see the
+            // 🎨 radial button/openDrawingOverlay) both just end up as the same
+            // _nodePhotoUrl data URL, so one button clears either.
+            const imageActionsRow = document.createElement('div');
+            imageActionsRow.id = 'node-image-actions-row';
+            imageActionsRow.style.display = 'flex';
+            imageActionsRow.style.gap = '8px';
+            imageActionsRow.style.marginTop = '8px';
+
+            const removeImageBtn = document.createElement('button');
+            removeImageBtn.textContent = '🗑️ Remove Image';
+            removeImageBtn.type = 'button';
+            removeImageBtn.style.flex = '1';
+            removeImageBtn.style.background = 'var(--control-bg)';
+            removeImageBtn.style.color = 'var(--text)';
+            removeImageBtn.style.border = '1px solid var(--border)';
+            removeImageBtn.style.borderRadius = '5px';
+            removeImageBtn.style.padding = '6px 10px';
+            removeImageBtn.style.cursor = 'pointer';
+            removeImageBtn.onmousedown = (e) => e.preventDefault();
+            removeImageBtn.onclick = () => this.removeNodeImage();
+
+            imageActionsRow.appendChild(removeImageBtn);
+            this.nodeEditPopup.insertBefore(imageActionsRow, pughAddRow.nextSibling);
         }
         
         Array.from(colorBtns.children).forEach(btn => {
@@ -2917,10 +3117,6 @@ class FlowchartViewer {
 
         if (this.notesUnfoldBtn) {
             this.notesUnfoldBtn.addEventListener('click', () => this.unfoldNotesSection());
-        }
-
-        if (this.reflectionPanelBackBtn) {
-            this.reflectionPanelBackBtn.addEventListener('click', () => this.toggleMobileFieldsVisibility());
         }
 
         if (this.reflectionPanelResizeHandle) {
@@ -3367,6 +3563,8 @@ class FlowchartViewer {
     hideReflectionPanel() {
         if (this._leftPanelMode === 'pugh') {
             this._pughPanelActive = false;
+        } else if (this._leftPanelMode === 'morph') {
+            this._morphPanelActive = false;
         } else {
             this._reflectionPanelActive = false;
         }
@@ -3562,7 +3760,7 @@ class FlowchartViewer {
     getDefaultMorphMatrix() {
         return {
             rows: [],   // [{ id, name, options: [string, ...] }]
-            ideas: []   // [{ id, text, selections: { [rowId]: optionText } }]
+            ideas: []   // [{ id, text, selections: { [rowId]: optionText[] } }]
         };
     }
 
@@ -3629,7 +3827,7 @@ class FlowchartViewer {
 
         const nodeRef = this.nodeBeingEdited.data;
         const childRefs = (nodeRef.children || [])
-            .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+            .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && this.isGreenNodeData(c));
         const options = childRefs.map(c => this.stripSimplifySuffix(c.name));
 
         if (options.length === 0) {
@@ -3688,7 +3886,7 @@ class FlowchartViewer {
             // the app building a new array) - either way it's the same parent object,
             // so this always sees the current state.
             const currentChildren = (refs.nodeRef.children || [])
-                .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+                .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && this.isGreenNodeData(c));
             const oldOptionRefs = refs.optionRefs || [];
             // Reference identity alone only tells us whether options were added or
             // removed - it stays "same" if an existing option node was just renamed,
@@ -3702,23 +3900,31 @@ class FlowchartViewer {
 
             if (!sameSet) {
                 const sel = this._morphCurrentSelection;
-                const oldSelectedOption = sel ? sel[row.id] : undefined;
-                const oldSelectedIdx = oldSelectedOption !== undefined ? row.options.indexOf(oldSelectedOption) : -1;
-                const oldSelectedRef = oldSelectedIdx !== -1 ? oldOptionRefs[oldSelectedIdx] : undefined;
+                const oldSelectedOptions = sel ? (sel[row.id] || []) : [];
+                // Each selected option needs to be re-found by its old *ref* (not its
+                // old text) - remapping by ref is what lets a renamed still-selected
+                // option keep its selection under the new label, same as before, just
+                // done once per selected option instead of just one.
+                const oldSelectedRefs = oldSelectedOptions.map(opt => {
+                    const idx = row.options.indexOf(opt);
+                    return idx !== -1 ? oldOptionRefs[idx] : undefined;
+                });
 
                 refs.optionRefs = currentChildren;
                 row.options = currentOptionNames;
                 changed = true;
 
-                if (sel && oldSelectedOption !== undefined) {
-                    const newIdx = oldSelectedRef ? currentChildren.indexOf(oldSelectedRef) : -1;
-                    if (newIdx === -1) {
-                        // Whatever was selected got deleted - clear it rather than
-                        // leaving a stale choice pointing at nothing.
+                if (sel && oldSelectedOptions.length > 0) {
+                    const newSelected = oldSelectedRefs
+                        .map(ref => ref ? currentChildren.indexOf(ref) : -1)
+                        .filter(idx => idx !== -1)
+                        .map(idx => row.options[idx]);
+                    if (newSelected.length === 0) {
+                        // Everything that was selected got deleted - clear it rather
+                        // than leaving stale choices pointing at nothing.
                         delete sel[row.id];
                     } else {
-                        // Still there, possibly under a new (renamed) label.
-                        sel[row.id] = row.options[newIdx];
+                        sel[row.id] = newSelected;
                     }
                 }
             }
@@ -3754,7 +3960,7 @@ class FlowchartViewer {
             const match = allNodes.find(n => this.stripSimplifySuffix(n.name || '') === row.name);
             if (match) {
                 const optionRefs = (match.children || [])
-                    .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+                    .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && this.isGreenNodeData(c));
                 this._morphNodeRefs[row.id] = { nodeRef: match, optionRefs };
             } else {
                 delete this._morphNodeRefs[row.id];
@@ -3776,25 +3982,40 @@ class FlowchartViewer {
         this.autosave();
     }
 
-    // Toggles whether a given row's cell is the current selection for that row - one
-    // selection per row, clicking the already-selected cell again clears it.
+    // Toggles whether a given cell is part of the current selection for that row.
+    // Multiple cells in the same column (row) can be selected at once - each row's
+    // entry in _morphCurrentSelection is an array of selected option strings, not a
+    // single value, so clicking a second cell in the same column adds to it instead
+    // of replacing it. Clicking an already-selected cell again removes just that one.
     toggleMorphSelection(rowId, option) {
         if (!this._morphCurrentSelection) this._morphCurrentSelection = {};
-        if (this._morphCurrentSelection[rowId] === option) {
+        const current = this._morphCurrentSelection[rowId] || [];
+        const idx = current.indexOf(option);
+        let next;
+        if (idx !== -1) {
+            next = current.slice(0, idx).concat(current.slice(idx + 1));
+        } else {
+            next = current.concat([option]);
+        }
+        if (next.length === 0) {
             delete this._morphCurrentSelection[rowId];
         } else {
-            this._morphCurrentSelection[rowId] = option;
+            this._morphCurrentSelection[rowId] = next;
         }
         this.renderMorphPanel();
     }
 
-    // Builds "idea from row1 + idea from row2 + ..." out of whatever's currently
-    // selected, in row order, skipping rows with no selection yet.
+    // Builds "(optionA/optionB) + optionC + ..." out of whatever's currently selected,
+    // in row order, skipping rows with no selection yet. Multiple selections within
+    // the same row are joined with "/" and wrapped in parentheses whenever there's
+    // more than one, so the row-level grouping stays visually distinct from the
+    // "+" that separates different rows/parameters.
     getMorphCurrentIdeaText() {
         const sel = this._morphCurrentSelection || {};
         const parts = this.morphMatrix.rows
             .map(r => sel[r.id])
-            .filter(Boolean);
+            .filter(options => Array.isArray(options) && options.length > 0)
+            .map(options => options.length > 1 ? `(${options.join('/')})` : options[0]);
         return parts.join(' + ');
     }
 
@@ -3802,10 +4023,14 @@ class FlowchartViewer {
         const sel = this._morphCurrentSelection || {};
         const text = this.getMorphCurrentIdeaText();
         if (!text) return;
+        const selectionsCopy = {};
+        Object.keys(sel).forEach(rowId => {
+            selectionsCopy[rowId] = (sel[rowId] || []).slice();
+        });
         this.morphMatrix.ideas.push({
             id: this.nextMorphId('idea'),
             text,
-            selections: { ...sel }
+            selections: selectionsCopy
         });
         this._morphCurrentSelection = {};
         this.renderMorphPanel();
@@ -4247,11 +4472,18 @@ class FlowchartViewer {
 
         const state = {
             tool: 'brush',
-            color: '#ffffff',
+            color: '#000000',
             width: 4,
             eraserWidth: 24,
             editingId: null,
-            armed: false,
+            // Set when the drawing overlay was opened for a specific node (the 🎨
+            // radial button) rather than a Notes drawing - see openDrawingOverlay/
+            // closeDrawingOverlay.
+            nodeTarget: null,
+            // True only while the enable-drawing button is physically held down -
+            // drawing is gated on this the whole time, not a one-shot "armed" flag
+            // consumed by a single stroke.
+            holding: false,
             drawing: false,
             path: null,           // brush/eraser: array of {x,y} points
             startPoint: null,     // line/rect/ellipse/text: canvas-space start point
@@ -4310,10 +4542,9 @@ class FlowchartViewer {
             state.handleY = y;
             this.drawingHandle.style.left = x + 'px';
             this.drawingHandle.style.top = y + 'px';
-            // Toggle button sits directly to the right of the handle, touching
-            // (handle radius 23 + its own radius 23 = 46px apart), same height.
-            this.drawingToggleBtn.style.left = (x + 46) + 'px';
-            this.drawingToggleBtn.style.top = y + 'px';
+            // The enable-drawing button is static (bottom-left, fixed via CSS) and no
+            // longer follows the handle around - it stays put so it's always at a
+            // known, reachable spot regardless of where the drawing point currently is.
         };
 
         // Where the handle's own circle center currently is, in *client* (viewport)
@@ -4373,7 +4604,28 @@ class FlowchartViewer {
         try {
 
         document.querySelectorAll('.drawing-tool-btn[data-tool]').forEach(btn => {
-            btn.addEventListener('click', () => setTool(btn.dataset.tool));
+            btn.addEventListener('click', () => {
+                if (btn.dataset.tool === 'text') {
+                    setTool('text');
+                    // Ask for the text first, then stamp it immediately at wherever
+                    // the pen (the handle's crosshair point) currently sits - no
+                    // press/drag/release needed, since there's nothing to preview
+                    // while dragging for a text stamp anyway.
+                    const text = window.prompt('Text:', '');
+                    if (!text) return;
+                    const handlePt = getHandleClientPoint();
+                    const pt = toCrosshairCanvasPoint(handlePt.x, handlePt.y);
+                    pushUndoSnapshot();
+                    ctx.save();
+                    ctx.fillStyle = state.color;
+                    ctx.font = `${Math.max(14, state.width * 6)}px sans-serif`;
+                    ctx.textBaseline = 'top';
+                    ctx.fillText(text, pt.x, pt.y);
+                    ctx.restore();
+                    return;
+                }
+                setTool(btn.dataset.tool);
+            });
         });
         setTool('brush');
 
@@ -4408,16 +4660,40 @@ class FlowchartViewer {
         document.getElementById('drawing-cancel-btn').addEventListener('click', () => this.closeDrawingOverlay(false));
         document.getElementById('drawing-done-btn').addEventListener('click', () => this.closeDrawingOverlay(true));
 
-        // ---- Toggle button: arms the *next* handle drag to draw ----
+        // ---- Toggle button: drawing only happens while this is physically held
+        // down. Pressing it also starts a stroke right away at wherever the handle's
+        // crosshair currently sits (so a press-and-release with no handle movement
+        // still draws a dot/mark there), and releasing it always finalizes whatever
+        // stroke was in progress, even if the handle itself isn't the one that
+        // triggered the release. ----
+        let toggleBtnPointerId = null;
         this.drawingToggleBtn.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            state.armed = !state.drawing && !state.armed;
-            this.drawingHandle.classList.toggle('armed', state.armed);
-            this.drawingToggleBtn.classList.toggle('armed', state.armed);
+            toggleBtnPointerId = e.pointerId;
+            this.drawingToggleBtn.setPointerCapture(toggleBtnPointerId);
+            state.holding = true;
+            this.drawingHandle.classList.add('armed');
+            this.drawingToggleBtn.classList.add('armed');
+            const handlePt = getHandleClientPoint();
+            beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
         });
+        const finishToggleBtnPointer = (e) => {
+            if (e.pointerId !== toggleBtnPointerId) return;
+            toggleBtnPointerId = null;
+            state.holding = false;
+            this.drawingHandle.classList.remove('armed');
+            this.drawingToggleBtn.classList.remove('armed');
+            if (state.drawing) {
+                const handlePt = getHandleClientPoint();
+                endDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
+            }
+        };
+        this.drawingToggleBtn.addEventListener('pointerup', finishToggleBtnPointer);
+        this.drawingToggleBtn.addEventListener('pointercancel', finishToggleBtnPointer);
 
-        // ---- Handle: plain drag repositions it; an armed drag draws instead ----
+        // ---- Handle: always draggable to reposition the pen; while the toggle
+        // button above is held down, moving it also draws. ----
         let handlePointerId = null;
         // The offset between where the pointer actually grabbed the handle and the
         // handle's own center at that moment - without tracking this, moving the
@@ -4430,9 +4706,9 @@ class FlowchartViewer {
         let grabOffsetY = 0;
 
         const beginDrawAction = (canvasPt) => {
+            if (state.tool === 'text') return; // handled instantly via the T button now
             state.drawing = true;
             state.beforeSnapshot = ctx.getImageData(0, 0, this.drawingCanvas.width, this.drawingCanvas.height);
-            this.drawingHandle.classList.add('armed');
             if (state.tool === 'brush' || state.tool === 'eraser') {
                 state.path = [canvasPt];
                 ctx.save();
@@ -4486,32 +4762,17 @@ class FlowchartViewer {
         const endDrawAction = (canvasPt) => {
             if (state.tool === 'brush' || state.tool === 'eraser') {
                 ctx.restore();
-            } else if (state.tool === 'text') {
-                const text = window.prompt('Text:', '');
-                if (text) {
-                    ctx.save();
-                    ctx.fillStyle = state.color;
-                    ctx.font = `${Math.max(14, state.width * 6)}px sans-serif`;
-                    ctx.textBaseline = 'top';
-                    ctx.fillText(text, state.startPoint.x, state.startPoint.y);
-                    ctx.restore();
-                } else {
-                    // Nothing typed - discard, restore to how it was before this action.
-                    restoreSnapshot(state.beforeSnapshot);
-                }
             }
+            // Text is stamped instantly via the T button now (see the tool-button
+            // click handler above), not through a handle press/drag/release, so
+            // there's nothing left to finalize here for it.
             // beforeSnapshot already captures the pre-action state - commit it to the
-            // undo stack now that the action is finished, rather than at action start,
-            // so an action the person backs out of (e.g. an empty text prompt) never
-            // leaves a redundant no-op entry on the stack.
+            // undo stack now that the action is finished.
             state.undoStack.push(state.beforeSnapshot);
             if (state.undoStack.length > 40) state.undoStack.shift();
             state.redoStack = [];
             state.beforeSnapshot = null;
             state.drawing = false;
-            state.armed = false;
-            this.drawingHandle.classList.remove('armed');
-            this.drawingToggleBtn.classList.remove('armed');
         };
 
         this.drawingHandle.addEventListener('pointerdown', (e) => {
@@ -4522,7 +4783,7 @@ class FlowchartViewer {
             const handlePt = getHandleClientPoint();
             grabOffsetX = e.clientX - handlePt.x;
             grabOffsetY = e.clientY - handlePt.y;
-            if (state.armed) {
+            if (state.holding && !state.drawing) {
                 // Start from the handle's tracked center (see getHandleClientPoint),
                 // not the raw click point - keeps the stroke's start exactly where
                 // the indicator circle is actually displayed, no matter where within
@@ -4537,11 +4798,23 @@ class FlowchartViewer {
             // to sit directly under it.
             const centerClientX = e.clientX - grabOffsetX;
             const centerClientY = e.clientY - grabOffsetY;
-            if (state.drawing) {
-                continueDrawAction(toCrosshairCanvasPoint(centerClientX, centerClientY));
+            const canvasPt = toCrosshairCanvasPoint(centerClientX, centerClientY);
+            if (state.holding) {
+                // Covers both the common case (already drawing, just continue) and
+                // the toggle button having been pressed *after* this drag already
+                // started (nothing was drawing yet, so start now instead).
+                if (state.drawing) {
+                    continueDrawAction(canvasPt);
+                } else {
+                    beginDrawAction(canvasPt);
+                }
+            } else if (state.drawing) {
+                // The button was released mid-drag - stop right where we are rather
+                // than continuing to draw with nothing held down.
+                endDrawAction(canvasPt);
             }
-            // The handle still visually follows the finger/cursor while drawing,
-            // it just also draws (at the crosshair position) at the same time.
+            // The handle still visually follows the finger/cursor regardless of
+            // whether it's currently drawing.
             positionHandleGroup(
                 centerClientX - this.drawingOverlay.getBoundingClientRect().left,
                 centerClientY - this.drawingOverlay.getBoundingClientRect().top
@@ -4578,7 +4851,7 @@ class FlowchartViewer {
             grabOffsetX = 0;
             grabOffsetY = 0;
             this.drawingHandle.setPointerCapture(handlePointerId);
-            if (state.armed) {
+            if (state.holding && !state.drawing) {
                 const handlePt = getHandleClientPoint();
                 beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
             }
@@ -4631,7 +4904,12 @@ class FlowchartViewer {
 
     // Opens the full-screen drawing overlay. Pass an existing drawing id to edit it,
     // or null/undefined to start a brand new blank drawing.
-    openDrawingOverlay(existingId) {
+    // existingId: an id into this.notesDrawings, for editing/creating a Notes drawing
+    // (unused/null when drawing for a node instead).
+    // nodeTarget: a node's raw data object (see the 🎨 radial button) - when set, the
+    // finished drawing is saved straight into that node's _nodePhotoUrl on Done
+    // instead of into this.notesDrawings.
+    openDrawingOverlay(existingId, nodeTarget = null) {
         if (!this.drawingOverlay) return;
         const state = this._drawingState;
         const ctx = this._drawingCtx;
@@ -4657,6 +4935,7 @@ class FlowchartViewer {
         state.undoStack = [];
         state.redoStack = [];
         state.editingId = existingId || null;
+        state.nodeTarget = nodeTarget || null;
         this.drawingCanvasWrap.style.transform = 'translate(0px, 0px) scale(1)';
         try {
             this._drawingHelpers.positionHandleGroup(window.innerWidth / 2, window.innerHeight / 2);
@@ -4685,6 +4964,17 @@ class FlowchartViewer {
 
         if (save) {
             const dataUrl = this.drawingCanvas.toDataURL('image/png');
+
+            if (state.nodeTarget) {
+                this.pushUndo();
+                state.nodeTarget._nodePhotoUrl = dataUrl;
+                state.nodeTarget = null;
+                this.renderFlowchart(this.rootData);
+                this.autosave();
+                this.drawingOverlay.style.display = 'none';
+                return;
+            }
+
             let id = state.editingId;
             if (!id) {
                 id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -4701,7 +4991,24 @@ class FlowchartViewer {
             this.autosave();
         }
 
+        state.nodeTarget = null;
         this.drawingOverlay.style.display = 'none';
+    }
+
+    // Clears whichever image is attached to the currently-edited node - a pasted
+    // photo or a hand-drawn one (see the "Remove Image" button in the node edit
+    // popup) - both are just _nodePhotoUrl under the hood, so one action clears either.
+    removeNodeImage() {
+        if (!this.nodeBeingEdited) return;
+        if (!this.nodeBeingEdited.data._nodePhotoUrl) {
+            this.showNotification('This node has no image or drawing to remove.');
+            return;
+        }
+        this.pushUndo();
+        delete this.nodeBeingEdited.data._nodePhotoUrl;
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+        this.showNotification('Image removed.');
     }
 
     // Adds a node's name into the Pugh Matrix as a solution (column) or a criteria
@@ -5420,7 +5727,7 @@ class FlowchartViewer {
                         td.className = 'morph-option-cell-blank';
                     } else {
                         td.className = 'morph-option-cell';
-                        if (sel[row.id] === option) td.classList.add('morph-option-selected');
+                        if (Array.isArray(sel[row.id]) && sel[row.id].includes(option)) td.classList.add('morph-option-selected');
                         td.textContent = option;
                         td.addEventListener('click', () => this.toggleMorphSelection(row.id, option));
                     }
@@ -6761,6 +7068,7 @@ class FlowchartViewer {
         const deleteRowDy = topPlusDy - (btnHeight + btnSpacing);
 
         const activateAddPhoto = () => self.captureNodePhotoFromClipboard(targetDatum);
+        const activateAddDrawing = () => self.openDrawingOverlay(null, targetDatum.data);
 
         // Built as a list and evenly spaced around dx=0 so the row is always centered
         // as a whole, whatever combination of buttons ends up in it - rather than each
@@ -6775,6 +7083,7 @@ class FlowchartViewer {
             deleteRowBtns.push({ label: 'P', activate: activateDeleteAndPromote, danger: true, fontSize: 20 });
         }
         deleteRowBtns.push({ label: '📷', activate: activateAddPhoto, fontSize: 18 });
+        deleteRowBtns.push({ label: '🎨', activate: activateAddDrawing, fontSize: 18 });
         const rowUnit = btnWidth + btnSpacing;
         const rowCount = deleteRowBtns.length;
         deleteRowBtns.forEach((btn, i) => {
