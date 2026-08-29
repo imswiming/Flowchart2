@@ -296,6 +296,17 @@ body {
     zoom: var(--panel-zoom, 1);
 }
 
+#morph-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    zoom: var(--panel-zoom, 1);
+}
+
 .pugh-toolbar {
     display: flex;
     gap: 8px;
