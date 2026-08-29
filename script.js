@@ -2170,6 +2170,7 @@ class FlowchartViewer {
 
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.autosave();
 
         const renderedNode = this.findRenderedNode(newChild);
@@ -2256,6 +2257,7 @@ class FlowchartViewer {
 
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.autosave();
     }
 
@@ -2316,6 +2318,7 @@ class FlowchartViewer {
         this.customConnections = this.customConnections.filter(conn => conn.source !== d.data && conn.target !== d.data);
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.autosave();
     }
 
@@ -2333,6 +2336,7 @@ class FlowchartViewer {
         );
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.autosave();
     }
 
@@ -2804,7 +2808,10 @@ class FlowchartViewer {
                 this.markNodeAsReal(originalData);
             }
             originalData.name = newName;
-            this.syncMorphMatrixNames(originalData);
+            if (this.resyncMorphRows()) {
+                this.renderMorphPanel();
+                this.autosave();
+            }
             if (needsWrap) {
                 this.rootData = this.wrapRootWithPlaceholder(this.rootData);
             }
@@ -3638,78 +3645,71 @@ class FlowchartViewer {
         this.showNotification(`Added "${name}" as a Morph Matrix row.`);
     }
 
-    // Called whenever a node's name is saved (see saveNodeEdit) - checks every Morph
-    // Matrix row/option that still has a live reference to that same node and, if its
-    // name has changed since, updates the stored row/option name to match (also
-    // stripping the "(Simplify?)" suffix, same as when the row/option was first
-    // added).
-    syncMorphMatrixNames(changedNodeData) {
-        if (!changedNodeData || !this.morphMatrix || !this._morphNodeRefs) return;
-        let changed = false;
-        this.morphMatrix.rows.forEach(row => {
-            const refs = this._morphNodeRefs[row.id];
-            if (!refs) return;
-            if (refs.nodeRef === changedNodeData) {
-                const newName = this.stripSimplifySuffix(changedNodeData.name);
-                if (newName && row.name !== newName) {
-                    row.name = newName;
-                    changed = true;
-                }
-            }
-            if (Array.isArray(refs.optionRefs)) {
-                refs.optionRefs.forEach((ref, i) => {
-                    if (ref === changedNodeData) {
-                        const newName = this.stripSimplifySuffix(changedNodeData.name);
-                        if (newName && row.options[i] !== newName) {
-                            row.options[i] = newName;
-                            changed = true;
-                        }
-                    }
-                });
-            }
-        });
-        if (changed) {
-            this.renderMorphPanel();
-            this.autosave();
-        }
-    }
-
-    // A more thorough, catch-all version of syncMorphMatrixNames - re-reads every
-    // row/option's *current* live-ref name (rather than checking against one
-    // specific changed node), run automatically at the start of every
-    // renderMorphPanel. This is what actually keeps names fresh even if a rename
-    // happened through some path other than saveNodeEdit's direct hook (e.g. undo/
-    // redo replacing the underlying data objects, or any other edit path), and also
-    // retroactively strips a "(Simplify?)" suffix that got saved before that
-    // stripping was added, for any row that still has a live ref. Silent no-op if
-    // there are no live refs for a row (e.g. after a reload).
-    resyncAllMorphNames() {
+    // Keeps every Morph Matrix row in sync with the live tree: refreshes the row's
+    // name and each option's name (same as before), and now also rebuilds the whole
+    // option list from the parent's *current* green children - which is what catches
+    // a child being added or deleted after the row was first created, not just
+    // renamed. Run automatically at the start of every renderMorphPanel (so it's
+    // always fresh whenever the tab is viewed), and also called directly after the
+    // tree-editing actions most likely to affect it (adding/deleting a child, saving
+    // a rename) for immediate feedback without needing to switch tabs. Silent no-op
+    // for any row with no live ref (e.g. after a reload - see addNodeToMorph).
+    // Returns whether anything actually changed, so callers can skip a redundant
+    // render/autosave when nothing did.
+    resyncMorphRows() {
         if (!this._morphNodeRefs || !this.morphMatrix) return false;
         let changed = false;
         this.morphMatrix.rows.forEach(row => {
             const refs = this._morphNodeRefs[row.id];
-            if (!refs) return;
-            if (refs.nodeRef && typeof refs.nodeRef.name === 'string') {
+            if (!refs || !refs.nodeRef) return;
+
+            if (typeof refs.nodeRef.name === 'string') {
                 const newName = this.stripSimplifySuffix(refs.nodeRef.name);
                 if (newName && row.name !== newName) {
                     row.name = newName;
                     changed = true;
                 }
             }
-            if (Array.isArray(refs.optionRefs)) {
-                refs.optionRefs.forEach((ref, i) => {
-                    if (ref && typeof ref.name === 'string') {
-                        const newName = this.stripSimplifySuffix(ref.name);
-                        if (newName && row.options[i] !== newName) {
-                            row.options[i] = newName;
-                            changed = true;
-                        }
+
+            // Recompute the parent's current green children fresh, rather than only
+            // checking the same fixed set of refs for renames - this is what catches
+            // additions/removals. Reading .children straight off the live parent
+            // object always reflects whatever's currently there, whether it was
+            // mutated in place (push/splice) or reassigned (a .filter() elsewhere in
+            // the app building a new array) - either way it's the same parent object,
+            // so this always sees the current state.
+            const currentChildren = (refs.nodeRef.children || [])
+                .filter(c => !this.isPlaceholderNodeData(c) && (c.name || '').trim() && c.color === '#00a67e');
+            const oldOptionRefs = refs.optionRefs || [];
+            const sameSet = currentChildren.length === oldOptionRefs.length
+                && currentChildren.every((c, i) => oldOptionRefs[i] === c);
+
+            if (!sameSet) {
+                const sel = this._morphCurrentSelection;
+                const oldSelectedOption = sel ? sel[row.id] : undefined;
+                const oldSelectedIdx = oldSelectedOption !== undefined ? row.options.indexOf(oldSelectedOption) : -1;
+                const oldSelectedRef = oldSelectedIdx !== -1 ? oldOptionRefs[oldSelectedIdx] : undefined;
+
+                refs.optionRefs = currentChildren;
+                row.options = currentChildren.map(c => this.stripSimplifySuffix(c.name));
+                changed = true;
+
+                if (sel && oldSelectedOption !== undefined) {
+                    const newIdx = oldSelectedRef ? currentChildren.indexOf(oldSelectedRef) : -1;
+                    if (newIdx === -1) {
+                        // Whatever was selected got deleted - clear it rather than
+                        // leaving a stale choice pointing at nothing.
+                        delete sel[row.id];
+                    } else {
+                        // Still there, possibly under a new (renamed) label.
+                        sel[row.id] = row.options[newIdx];
                     }
-                });
+                }
             }
         });
         return changed;
     }
+
 
     deleteMorphRow(rowId) {
         this.morphMatrix.rows = this.morphMatrix.rows.filter(r => r.id !== rowId);
@@ -4704,17 +4704,29 @@ class FlowchartViewer {
     // save/export - since it's mid-process working state; only the *final* scores it
     // produces get written into pughMatrix.scores.
     //
+    // A pairwise "beat the baseline" tournament for ordering the solutions (columns)
+    // against a single criteria at a time, rather than typing in numeric scores
+    // directly. Session state (pool/settledGroups/baseline/selections) is
+    // deliberately ephemeral - held only on the in-memory criteria object, not
+    // persisted through save/export - since it's mid-process working state; only the
+    // *final* scores it produces get written into pughMatrix.scores.
+    //
     // Algorithm (a selection-sort built out of repeated pairwise rounds):
-    // - `pool` holds every solution not yet confirmed into final position; `settled`
-    //   holds those already confirmed, in winner-to-loser order.
+    // - `pool` holds every solution not yet confirmed into a final rank tier;
+    //   `settledGroups` holds groups of solutions confirmed so far, in best-to-worst
+    //   order - each group is an array because *ties* settle together as a group,
+    //   not as individually-ordered items.
     // - Each round compares the current `baselineId` (a pool member) against every
-    //   *other* pool member, each marked S (tied/not better) or + (beat baseline).
-    // - Re-rank: if anything beat the baseline, one of those winners (chosen at
+    //   *other* pool member, each marked - (worse), S (tied), or + (better).
+    // - Re-rank: if anything beat the baseline (+), one of those winners (chosen at
     //   random if several tied for it) becomes the new baseline for another round -
-    //   the old baseline stays in the pool to be compared again later. If nothing
-    //   beat the baseline, it has beaten/tied everything left in the pool, so it's
-    //   confirmed - moved into `settled` - and a fresh baseline is picked from
-    //   whatever remains.
+    //   the old baseline, along with anyone marked S or - against it, all stay in the
+    //   pool to be compared again later (a - doesn't necessarily mean "worse than the
+    //   old baseline specifically", so it isn't safe to lock in its relative order
+    //   against anything yet). If nothing beat the baseline, then the baseline and
+    //   everyone marked S against it (mutually tied, by transitivity) settle together
+    //   as a single tied group; anyone marked - stays in the pool for a fresh round to
+    //   sort out their own relative order.
     // - Selections always reset to S at the start of a new round.
     getOrInitRankSession(crit) {
         if (!crit.rankSession) {
@@ -4724,7 +4736,7 @@ class FlowchartViewer {
             pool.forEach(id => { if (id !== baselineId) selections[id] = 'S'; });
             crit.rankSession = {
                 pool,
-                settled: [],
+                settledGroups: [],
                 baselineId,
                 selections,
                 lastRoundWinners: [],
@@ -4752,81 +4764,93 @@ class FlowchartViewer {
         const session = this.getOrInitRankSession(crit);
         if (session.finished || !session.baselineId) return;
 
-        const winners = session.pool.filter(id => id !== session.baselineId && session.selections[id] === '+');
+        const others = session.pool.filter(id => id !== session.baselineId);
+        const winners = others.filter(id => session.selections[id] === '+');
+        const tied = others.filter(id => session.selections[id] === 'S');
+        const worse = others.filter(id => session.selections[id] === '-');
 
-        if (winners.length > 0) {
-            const newBaselineId = winners.length === 1 ? winners[0] : winners[Math.floor(Math.random() * winners.length)];
-            session.lastRoundWinners = winners.slice();
-            // Reorder the pool for display purposes - the round's winner(s) float to
-            // the front (chosen new baseline first), the old baseline (which just
-            // lost its spot) comes right after, then everyone still on 'S'.
-            const others = session.pool.filter(id => id !== newBaselineId);
-            const remainingWinners = winners.filter(id => id !== newBaselineId);
-            const oldBaselineId = session.baselineId;
-            const sTied = others.filter(id => id !== oldBaselineId && !remainingWinners.includes(id));
-            session.pool = [newBaselineId, ...remainingWinners, oldBaselineId, ...sTied];
-            session.baselineId = newBaselineId;
-        } else {
-            // Nothing beat the baseline - it's confirmed as the next-best remaining
-            // solution for this criteria.
-            session.lastRoundWinners = [session.baselineId];
-            session.settled.push(session.baselineId);
-            session.pool = session.pool.filter(id => id !== session.baselineId);
-            session.baselineId = session.pool[0] || null;
-        }
-
-        if (session.pool.length <= 1) {
-            // Either nothing (or exactly one item, trivially settled) is left to
-            // compare - fold it in and finish up.
-            if (session.pool.length === 1) session.settled.push(session.pool[0]);
+        const finishUp = () => {
             session.pool = [];
             session.baselineId = null;
             session.finished = true;
             this.finalizePughRanking(critId);
-        } else {
+        };
+
+        if (winners.length > 0) {
+            const newBaselineId = winners.length === 1 ? winners[0] : winners[Math.floor(Math.random() * winners.length)];
+            session.lastRoundWinners = winners.slice();
+            const remainingWinners = winners.filter(id => id !== newBaselineId);
+            // Nobody here has been shown to beat anyone yet except the chosen new
+            // baseline, so the old baseline plus anyone tied/worse against it all go
+            // back into the pool for further rounds.
+            session.pool = [newBaselineId, ...remainingWinners, session.baselineId, ...tied, ...worse];
+            session.baselineId = newBaselineId;
             session.selections = {};
             session.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
+        } else {
+            // Nobody beat the baseline - it and everyone tied with it settle together
+            // as one group (they're mutually tied, transitively). Anyone marked worse
+            // stays in the pool to be sorted out among themselves.
+            const group = [session.baselineId, ...tied];
+            session.settledGroups.push(group);
+            session.lastRoundWinners = group.slice();
+            session.pool = worse;
+
+            if (session.pool.length === 0) {
+                finishUp();
+            } else if (session.pool.length === 1) {
+                session.settledGroups.push(session.pool.slice());
+                finishUp();
+            } else {
+                session.baselineId = session.pool[0];
+                session.selections = {};
+                session.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
+            }
         }
 
         this.renderPughPanel();
         this.autosave();
     }
 
-    // Converts a finished session's final winner-to-loser order into bounded scores
-    // (N points for 1st place down to 1 point for last) and writes them in, replacing
-    // whatever this criteria's scores were before - so re-running the ranking for the
-    // same criteria as many times as you like always just *overwrites* its scores
-    // with a fresh, equally-bounded result, rather than the number climbing higher
-    // every time you redo it.
+    // Converts a finished session's tiered (best-to-worst, ties grouped together)
+    // groups into scores, replacing whatever this criteria's scores were before - so
+    // re-running the ranking as many times as you like always just *overwrites* its
+    // scores with a fresh result rather than the numbers climbing every time you redo
+    // it. Lowest score is best (1st place = 1), same as a race or golf score, and
+    // every solution within a tied group gets the exact same number - it's the group
+    // (rank tier) index that determines the score, not each item's position within a
+    // flat list, so a 4-way tie for 2nd all score "2", not four different numbers.
     finalizePughRanking(critId) {
         const crit = this.pughMatrix.criteria.find(c => c.id === critId);
         if (!crit || !crit.rankSession) return;
-        const order = crit.rankSession.settled;
-        const n = order.length;
-        order.forEach((colId, idx) => {
-            this.setPughScore(critId, colId, n - idx);
+        const groups = crit.rankSession.settledGroups;
+        groups.forEach((group, groupIdx) => {
+            const rank = groupIdx + 1; // 1st place (best) = 1, matching a race/golf score
+            group.forEach(colId => this.setPughScore(critId, colId, rank));
         });
-        // Column order must always show the highest total score on the left - a
+        // Column order must always show the best (lowest) total score on the left - a
         // completed ranking re-sorts the whole table immediately, rather than only
         // reordering when the "Overall Rank" button happens to be clicked separately.
         const totals = {};
         this.pughMatrix.columns.forEach(col => { totals[col.id] = this.computePughColumnTotal(col.id); });
-        this.pughMatrix.columns.sort((a, b) => totals[b.id] - totals[a.id]);
+        this.pughMatrix.columns.sort((a, b) => totals[a.id] - totals[b.id]);
     }
 
     // Called whenever the person leaves a criteria's ranking session before it's run
     // all the way to completion (toggling Rank mode off, or switching to rank a
     // different criteria) - without this, stopping partway through a tournament
     // saved nothing at all, since finalizePughRanking previously only ever ran once
-    // a session reached its natural end. Whatever's left in the pool gets folded
-    // into the settled order as-is (their current relative order reflects whatever
-    // winners-to-losers progress has been made so far), so exiting always leaves a
-    // meaningful, saved score rather than silently discarding all of it.
+    // a session reached its natural end. Whatever's left in the pool folds in as one
+    // final tied group - there's no confirmed win/tie data to further distinguish
+    // them, so treating them as tied is the honest reflection of how far the ranking
+    // actually got, rather than implying an order that was never actually decided.
     finalizeInProgressRankSessionIfAny(critId) {
         const crit = this.pughMatrix.criteria.find(c => c.id === critId);
         if (!crit || !crit.rankSession || crit.rankSession.finished) return;
         const session = crit.rankSession;
-        session.settled = session.settled.concat(session.pool);
+        if (session.pool.length > 0) {
+            session.settledGroups.push(session.pool.slice());
+        }
         session.pool = [];
         session.baselineId = null;
         session.finished = true;
@@ -4835,13 +4859,13 @@ class FlowchartViewer {
     }
 
     // Reorders the solution columns left-to-right by total score across every
-    // criteria (winner first) - "overall rank" taking every ranked criteria into
+    // criteria (best/lowest first) - "overall rank" taking every ranked criteria into
     // account, not just the one currently active.
     reorderPughColumnsByOverallRank() {
         const m = this.pughMatrix;
         const totals = {};
         m.columns.forEach(col => { totals[col.id] = this.computePughColumnTotal(col.id); });
-        m.columns.sort((a, b) => totals[b.id] - totals[a.id]);
+        m.columns.sort((a, b) => totals[a.id] - totals[b.id]);
         this.renderPughPanel();
         this.autosave();
     }
@@ -4849,7 +4873,7 @@ class FlowchartViewer {
     // Reorders the solution columns left-to-right by just one criteria's score.
     reorderPughColumnsByCriteria(critId) {
         const m = this.pughMatrix;
-        m.columns.sort((a, b) => this.getPughScore(critId, b.id) - this.getPughScore(critId, a.id));
+        m.columns.sort((a, b) => this.getPughScore(critId, a.id) - this.getPughScore(critId, b.id));
         this.renderPughPanel();
         this.autosave();
     }
@@ -4874,7 +4898,12 @@ class FlowchartViewer {
         if (session.finished) {
             const done = document.createElement('div');
             done.className = 'pugh-rank-done';
-            done.textContent = 'Done - final order: ' + session.settled.map(getColTitle).join('  >  ');
+            // Ties within a group are joined with "=" and groups (rank tiers) with
+            // ">", e.g. "A > B = C > D" for a 4-way field where B and C tied for 2nd.
+            const summary = session.settledGroups
+                .map(group => group.map(getColTitle).join('  =  '))
+                .join('  >  ');
+            done.textContent = 'Done - final order: ' + summary;
             panel.appendChild(done);
             const restartBtn = document.createElement('button');
             restartBtn.className = 'pugh-rerank-btn';
@@ -4927,16 +4956,18 @@ class FlowchartViewer {
         return panel;
     }
 
-    // The top 3 *distinct* score values within a single criteria's row - e.g. row
-    // scores [1, 1, 3, 4, 2, 8] have distinct values [8, 4, 3, 2, 1], so the top 3 are
-    // 8, 4, and 3, and every cell holding one of those values gets highlighted (so a
-    // tie for 3rd place highlights all of the tied cells, not an arbitrary subset).
-    // Returns null if there are fewer than 2 columns to compare, or every score in
-    // the row is equal (nothing meaningful to single out).
+    // The best 3 *distinct* score values within a single criteria's row - lowest
+    // score is best now (1st place = 1, like a race/golf score), so e.g. row scores
+    // [1, 1, 3, 4, 2, 8] have distinct values [1, 2, 3, 4, 8] sorted best-first, and
+    // the best 3 are 1, 2, and 3 - every cell holding one of those values gets
+    // highlighted (so a tie for 3rd place highlights all of the tied cells, not an
+    // arbitrary subset, however many cells that ends up being). Returns null if
+    // there are fewer than 2 columns to compare, or every score in the row is equal
+    // (nothing meaningful to single out).
     getPughRowTopScores(critId) {
         const scores = this.pughMatrix.columns.map(col => this.getPughScore(critId, col.id));
         if (scores.length < 2) return null;
-        const distinct = Array.from(new Set(scores)).sort((a, b) => b - a);
+        const distinct = Array.from(new Set(scores)).sort((a, b) => a - b);
         if (distinct.length < 2) return null;
         return new Set(distinct.slice(0, 3));
     }
@@ -5170,14 +5201,15 @@ class FlowchartViewer {
         totalsRow.appendChild(totalLabelTd);
 
         const totals = m.columns.map(col => this.computePughColumnTotal(col.id));
-        const maxTotal = totals.length ? Math.max(...totals) : null;
+        // Lowest total is best now, so that's the one highlighted here, not the highest.
+        const bestTotal = totals.length ? Math.min(...totals) : null;
         const hasSpread = totals.some(t => t !== totals[0]);
         m.columns.forEach((col, i) => {
             const td = document.createElement('td');
             td.className = 'pugh-score-cell';
             td.dataset.colId = col.id;
             td.textContent = totals[i];
-            if (m.criteria.length > 0 && maxTotal !== null && totals[i] === maxTotal && hasSpread) {
+            if (m.criteria.length > 0 && bestTotal !== null && totals[i] === bestTotal && hasSpread) {
                 td.classList.add('pugh-max-weighted-cell');
             }
             totalsRow.appendChild(td);
@@ -5204,7 +5236,7 @@ class FlowchartViewer {
         // (if any) right before rendering, so renaming a node elsewhere always shows
         // up here the next time this panel draws, regardless of exactly which code
         // path triggered the rename.
-        this.resyncAllMorphNames();
+        this.resyncMorphRows();
         const m = this.morphMatrix;
         this.morphPanelBody.innerHTML = '';
         this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
@@ -5373,13 +5405,14 @@ class FlowchartViewer {
         const row = document.getElementById('pugh-totals-row');
         if (!row) return;
         const totals = m.columns.map(col => this.computePughColumnTotal(col.id));
-        const maxTotal = totals.length ? Math.max(...totals) : null;
+        // Lowest total is best now, so that's the one highlighted here, not the highest.
+        const bestTotal = totals.length ? Math.min(...totals) : null;
         const hasSpread = totals.some(t => t !== totals[0]);
         const cells = row.querySelectorAll('td[data-col-id]');
         cells.forEach((td, i) => {
             td.textContent = totals[i];
-            const isMax = m.criteria.length > 0 && maxTotal !== null && totals[i] === maxTotal && hasSpread;
-            td.classList.toggle('pugh-max-weighted-cell', isMax);
+            const isBest = m.criteria.length > 0 && bestTotal !== null && totals[i] === bestTotal && hasSpread;
+            td.classList.toggle('pugh-max-weighted-cell', isBest);
         });
     }
 
