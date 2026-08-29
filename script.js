@@ -3557,8 +3557,13 @@ class FlowchartViewer {
             .filter(r => r && typeof r === 'object')
             .map(r => ({
                 id: (typeof r.id === 'string' && r.id) ? r.id : this.nextMorphId('row'),
-                name: (typeof r.name === 'string') ? r.name : '',
-                options: Array.isArray(r.options) ? r.options.filter(o => typeof o === 'string') : []
+                // Strips any "(Simplify?)" suffix that got saved before that stripping
+                // was added, so previously-saved rows/options get cleaned up on load
+                // too, not just newly-added ones.
+                name: this.stripSimplifySuffix((typeof r.name === 'string') ? r.name : ''),
+                options: Array.isArray(r.options)
+                    ? r.options.filter(o => typeof o === 'string').map(o => this.stripSimplifySuffix(o))
+                    : []
             })) : [];
 
         const rowIds = new Set(rows.map(r => r.id));
@@ -3667,6 +3672,43 @@ class FlowchartViewer {
             this.renderMorphPanel();
             this.autosave();
         }
+    }
+
+    // A more thorough, catch-all version of syncMorphMatrixNames - re-reads every
+    // row/option's *current* live-ref name (rather than checking against one
+    // specific changed node), run automatically at the start of every
+    // renderMorphPanel. This is what actually keeps names fresh even if a rename
+    // happened through some path other than saveNodeEdit's direct hook (e.g. undo/
+    // redo replacing the underlying data objects, or any other edit path), and also
+    // retroactively strips a "(Simplify?)" suffix that got saved before that
+    // stripping was added, for any row that still has a live ref. Silent no-op if
+    // there are no live refs for a row (e.g. after a reload).
+    resyncAllMorphNames() {
+        if (!this._morphNodeRefs || !this.morphMatrix) return false;
+        let changed = false;
+        this.morphMatrix.rows.forEach(row => {
+            const refs = this._morphNodeRefs[row.id];
+            if (!refs) return;
+            if (refs.nodeRef && typeof refs.nodeRef.name === 'string') {
+                const newName = this.stripSimplifySuffix(refs.nodeRef.name);
+                if (newName && row.name !== newName) {
+                    row.name = newName;
+                    changed = true;
+                }
+            }
+            if (Array.isArray(refs.optionRefs)) {
+                refs.optionRefs.forEach((ref, i) => {
+                    if (ref && typeof ref.name === 'string') {
+                        const newName = this.stripSimplifySuffix(ref.name);
+                        if (newName && row.options[i] !== newName) {
+                            row.options[i] = newName;
+                            changed = true;
+                        }
+                    }
+                });
+            }
+        });
+        return changed;
     }
 
     deleteMorphRow(rowId) {
@@ -5158,6 +5200,11 @@ class FlowchartViewer {
     // list of previously accepted ideas.
     renderMorphPanel() {
         if (!this.morphPanelBody) return;
+        // Self-healing: refresh every row/option's name from its live node reference
+        // (if any) right before rendering, so renaming a node elsewhere always shows
+        // up here the next time this panel draws, regardless of exactly which code
+        // path triggered the rename.
+        this.resyncAllMorphNames();
         const m = this.morphMatrix;
         this.morphPanelBody.innerHTML = '';
         this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';

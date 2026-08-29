@@ -1458,53 +1458,53 @@ body {
 
 /* ===== Dark-themed range sliders, app-wide ===== */
 input[type="range"] {
-    -webkit-appearance: none;
-    appearance: none;
+    -webkit-appearance: none !important;
+    appearance: none !important;
     width: 100%;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--control-bg);
-    border: 1px solid var(--border);
-    outline: none;
+    height: 4px !important;
+    border-radius: 2px !important;
+    background: var(--control-bg) !important;
+    border: 1px solid var(--border) !important;
+    outline: none !important;
     cursor: pointer;
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 2px;
-    background: var(--control-bg);
+    height: 4px !important;
+    border-radius: 2px !important;
+    background: var(--control-bg) !important;
 }
 
 input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #00a67e;
-    border: 2px solid #ffffff;
-    margin-top: -6px;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    width: 14px !important;
+    height: 14px !important;
+    border-radius: 50% !important;
+    background: #00a67e !important;
+    border: 2px solid #ffffff !important;
+    margin-top: -6px !important;
     cursor: pointer;
 }
 
 input[type="range"]::-moz-range-track {
-    height: 4px;
-    border-radius: 2px;
-    background: var(--control-bg);
-    border: 1px solid var(--border);
+    height: 4px !important;
+    border-radius: 2px !important;
+    background: var(--control-bg) !important;
+    border: 1px solid var(--border) !important;
 }
 
 input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #00a67e;
-    border: 2px solid #ffffff;
+    width: 14px !important;
+    height: 14px !important;
+    border-radius: 50% !important;
+    background: #00a67e !important;
+    border: 2px solid #ffffff !important;
     cursor: pointer;
 }
 
 input[type="range"]::-moz-range-progress {
-    height: 4px;
-    border-radius: 2px;
-    background: #00a67e;
+    height: 4px !important;
+    border-radius: 2px !important;
+    background: #00a67e !important;
 }
