@@ -5159,53 +5159,78 @@ class FlowchartViewer {
     }
 
     // ===================== Pugh Matrix ranking mode =====================
-    // A pairwise "beat the baseline" tournament for ordering the solutions (columns)
+    // A partition-sort (quicksort-style) for ordering the solutions (columns)
     // against a single criteria at a time, rather than typing in numeric scores
-    // directly. Session state (pool/settled/baseline/selections) is deliberately
-    // ephemeral - held only on the in-memory criteria object, not persisted through
-    // save/export - since it's mid-process working state; only the *final* scores it
-    // produces get written into pughMatrix.scores.
-    //
-    // A pairwise "beat the baseline" tournament for ordering the solutions (columns)
-    // against a single criteria at a time, rather than typing in numeric scores
-    // directly. Session state (pool/settledGroups/baseline/selections) is
+    // directly. Session state (taskStack/settledGroups/baseline/pool/selections) is
     // deliberately ephemeral - held only on the in-memory criteria object, not
     // persisted through save/export - since it's mid-process working state; only the
     // *final* scores it produces get written into pughMatrix.scores.
     //
-    // Algorithm (a selection-sort built out of repeated pairwise rounds):
-    // - `pool` holds every solution not yet confirmed into a final rank tier;
-    //   `settledGroups` holds groups of solutions confirmed so far, in best-to-worst
-    //   order - each group is an array because *ties* settle together as a group,
-    //   not as individually-ordered items.
-    // - Each round compares the current `baselineId` (a pool member) against every
-    //   *other* pool member, each marked - (worse), S (tied), or + (better).
-    // - Re-rank: if anything beat the baseline (+), one of those winners (chosen at
-    //   random if several tied for it) becomes the new baseline for another round -
-    //   the old baseline, along with anyone marked S or - against it, all stay in the
-    //   pool to be compared again later (a - doesn't necessarily mean "worse than the
-    //   old baseline specifically", so it isn't safe to lock in its relative order
-    //   against anything yet). If nothing beat the baseline, then the baseline and
-    //   everyone marked S against it (mutually tied, by transitivity) settle together
-    //   as a single tied group; anyone marked - stays in the pool for a fresh round to
-    //   sort out their own relative order.
-    // - Selections always reset to S at the start of a new round.
+    // Algorithm: each round compares one baseline (the first item in whatever pool
+    // is currently active) against every *other* member of that same pool, each
+    // marked - (worse), S (tied), or + (better). That splits the pool into three
+    // groups - better, tied-with-baseline, worse - and all three are immediately
+    // final relative to *each other*: better is a strictly higher tier than
+    // tied-with-baseline, which is strictly higher than worse. The tied-with-
+    // baseline group settles immediately as one rank tier. The better and worse
+    // groups, if they have more than one member, still need their own internal
+    // order sorted out - each becomes its own pending task, and (per ordinary
+    // partition-sort) the "better" subtree is always fully resolved down to
+    // individual settled tiers before the tied tier is emitted, which is in turn
+    // emitted before the "worse" subtree is touched - so tiers always come out in
+    // correct best-to-worst order no matter how many rounds a given branch needs.
+    // A pool of 0 or 1 members needs no comparison and settles immediately.
     getOrInitRankSession(crit) {
         if (!crit.rankSession) {
             const pool = this.pughMatrix.columns.map(c => c.id);
-            const baselineId = pool[0] || null;
-            const selections = {};
-            pool.forEach(id => { if (id !== baselineId) selections[id] = 'S'; });
             crit.rankSession = {
-                pool,
+                taskStack: pool.length > 0 ? [{ type: 'sort', pool }] : [],
                 settledGroups: [],
-                baselineId,
-                selections,
+                baselineId: null,
+                pool: [],
+                selections: {},
                 lastRoundWinners: [],
-                finished: pool.length === 0
+                finished: false
             };
+            this.advanceRankTaskStack(crit.rankSession);
         }
         return crit.rankSession;
+    }
+
+    // Pops anything already fully resolved off the task stack - explicit "emit"
+    // tiers, and "sort" tasks with 0 or 1 members that need no actual comparison -
+    // appending each to settledGroups in stack order (which is always correct
+    // best-to-worst order; see the algorithm comment above). Stops as soon as it
+    // hits a "sort" task with 2+ members, which becomes the round the person
+    // actually sees and responds to, or leaves the session finished if the stack
+    // empties out completely.
+    advanceRankTaskStack(session) {
+        while (session.taskStack.length > 0) {
+            const top = session.taskStack[session.taskStack.length - 1];
+            if (top.type === 'emit') {
+                session.taskStack.pop();
+                if (top.group.length > 0) session.settledGroups.push(top.group);
+                continue;
+            }
+            if (top.pool.length === 0) {
+                session.taskStack.pop();
+                continue;
+            }
+            if (top.pool.length === 1) {
+                session.taskStack.pop();
+                session.settledGroups.push(top.pool.slice());
+                continue;
+            }
+            // A genuine comparison is needed - present this as the active round.
+            session.baselineId = top.pool[0];
+            session.pool = top.pool;
+            session.selections = {};
+            top.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
+            return;
+        }
+        session.baselineId = null;
+        session.pool = [];
+        session.finished = true;
     }
 
     // Starts a brand new ranking session for a criteria, discarding any in-progress
@@ -5227,47 +5252,26 @@ class FlowchartViewer {
         if (session.finished || !session.baselineId) return;
 
         const others = session.pool.filter(id => id !== session.baselineId);
-        const winners = others.filter(id => session.selections[id] === '+');
-        const tied = others.filter(id => session.selections[id] === 'S');
+        const better = others.filter(id => session.selections[id] === '+');
+        const equal = others.filter(id => session.selections[id] === 'S');
         const worse = others.filter(id => session.selections[id] === '-');
 
-        const finishUp = () => {
-            session.pool = [];
-            session.baselineId = null;
-            session.finished = true;
+        session.lastRoundWinners = better.length > 0 ? better.slice() : [session.baselineId, ...equal];
+
+        // Replace the task we just resolved with its three outcomes, pushed so that
+        // "better" ends up on top (resolved first), then the tied tier (an
+        // immediate emit), then "worse" underneath (resolved last) - see the
+        // algorithm comment above getOrInitRankSession for why this ordering keeps
+        // tiers coming out best-to-worst.
+        session.taskStack.pop();
+        if (worse.length > 0) session.taskStack.push({ type: 'sort', pool: worse });
+        session.taskStack.push({ type: 'emit', group: [session.baselineId, ...equal] });
+        if (better.length > 0) session.taskStack.push({ type: 'sort', pool: better });
+
+        this.advanceRankTaskStack(session);
+
+        if (session.finished) {
             this.finalizePughRanking(critId);
-        };
-
-        if (winners.length > 0) {
-            const newBaselineId = winners.length === 1 ? winners[0] : winners[Math.floor(Math.random() * winners.length)];
-            session.lastRoundWinners = winners.slice();
-            const remainingWinners = winners.filter(id => id !== newBaselineId);
-            // Nobody here has been shown to beat anyone yet except the chosen new
-            // baseline, so the old baseline plus anyone tied/worse against it all go
-            // back into the pool for further rounds.
-            session.pool = [newBaselineId, ...remainingWinners, session.baselineId, ...tied, ...worse];
-            session.baselineId = newBaselineId;
-            session.selections = {};
-            session.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
-        } else {
-            // Nobody beat the baseline - it and everyone tied with it settle together
-            // as one group (they're mutually tied, transitively). Anyone marked worse
-            // stays in the pool to be sorted out among themselves.
-            const group = [session.baselineId, ...tied];
-            session.settledGroups.push(group);
-            session.lastRoundWinners = group.slice();
-            session.pool = worse;
-
-            if (session.pool.length === 0) {
-                finishUp();
-            } else if (session.pool.length === 1) {
-                session.settledGroups.push(session.pool.slice());
-                finishUp();
-            } else {
-                session.baselineId = session.pool[0];
-                session.selections = {};
-                session.pool.forEach(id => { if (id !== session.baselineId) session.selections[id] = 'S'; });
-            }
         }
 
         this.renderPughPanel();
@@ -5302,16 +5306,27 @@ class FlowchartViewer {
     // all the way to completion (toggling Rank mode off, or switching to rank a
     // different criteria) - without this, stopping partway through a tournament
     // saved nothing at all, since finalizePughRanking previously only ever ran once
-    // a session reached its natural end. Whatever's left in the pool folds in as one
-    // final tied group - there's no confirmed win/tie data to further distinguish
-    // them, so treating them as tied is the honest reflection of how far the ranking
-    // actually got, rather than implying an order that was never actually decided.
+    // a session reached its natural end. The currently-active pool goes back on the
+    // stack as an unresolved task, then the whole stack drains in order: any "sort"
+    // task with more than one member left becomes one tied group (no further
+    // rounds to distinguish them), while the relative order between separate stack
+    // frames - a "better" subtree vs. the tied tier vs. a "worse" subtree - is
+    // preserved rather than being flattened into one big tie regardless of what was
+    // already confirmed.
     finalizeInProgressRankSessionIfAny(critId) {
         const crit = this.pughMatrix.criteria.find(c => c.id === critId);
         if (!crit || !crit.rankSession || crit.rankSession.finished) return;
         const session = crit.rankSession;
         if (session.pool.length > 0) {
-            session.settledGroups.push(session.pool.slice());
+            session.taskStack.push({ type: 'sort', pool: session.pool });
+        }
+        while (session.taskStack.length > 0) {
+            const task = session.taskStack.pop();
+            if (task.type === 'emit') {
+                if (task.group.length > 0) session.settledGroups.push(task.group);
+            } else if (task.pool.length > 0) {
+                session.settledGroups.push(task.pool.slice());
+            }
         }
         session.pool = [];
         session.baselineId = null;
