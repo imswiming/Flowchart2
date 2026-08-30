@@ -884,6 +884,24 @@ class FlowchartViewer {
                 const row = rows && rows[0];
                 const remoteList = row && row.data && row.data.flowchartList;
                 if (Array.isArray(remoteList)) {
+                    // rankSession is intentionally ephemeral (see the Pugh ranking
+                    // mode block comment) - never written to flowchartList.data, so
+                    // it doesn't survive re-parsing that JSON. That's fine for a
+                    // genuine slot switch, but this reload targets the *same*
+                    // flowchart the person may currently be mid-ranking - without
+                    // carrying these over, the periodic background poll (every 8s,
+                    // see startCloudPolling) would silently reset an in-progress
+                    // ranking back to its fresh "everything tied" starting state
+                    // right under the person's feet, so the very next round they
+                    // ran would have nothing to compare against and settle
+                    // everyone into one group - i.e. everyone scoring 1st.
+                    const oldRankSessions = {};
+                    if (this.pughMatrix && Array.isArray(this.pughMatrix.criteria)) {
+                        this.pughMatrix.criteria.forEach(c => {
+                            if (c.rankSession) oldRankSessions[c.id] = c.rankSession;
+                        });
+                    }
+
                     this._applyingRemote = true;
                     this.flowchartList = remoteList;
                     this._lastPushedDataJson = JSON.stringify({ flowchartList: remoteList });
@@ -898,6 +916,14 @@ class FlowchartViewer {
                     // bytes down until (if ever) that other flowchart is opened too.
                     await this.rehydrateFlowchartImages(this.currentSlotIndex);
                     this.loadFlowchartFromList(this.currentSlotIndex);
+
+                    if (Object.keys(oldRankSessions).length > 0 && this.pughMatrix && Array.isArray(this.pughMatrix.criteria)) {
+                        this.pughMatrix.criteria.forEach(c => {
+                            if (oldRankSessions[c.id] && !c.rankSession) c.rankSession = oldRankSessions[c.id];
+                        });
+                        this.renderPughPanel();
+                    }
+
                     this._applyingRemote = false;
                     this.showNotification('Synced latest changes from another device.');
                 }
@@ -4857,6 +4883,17 @@ class FlowchartViewer {
                 const handlePt = getHandleClientPoint();
                 beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
             }
+        });
+
+        // Safari fires its own proprietary gesture events (gesturestart/change/end)
+        // to drive native pinch-to-zoom, and doesn't reliably respect touch-action:
+        // none for that specific gesture on older iOS versions - so even with the
+        // touchstart-based pinch guard above, a genuine two-finger touch (holding
+        // the enable-drawing button + dragging the pen handle) could still get
+        // hijacked into zooming the whole page rather than drawing. Unconditionally
+        // blocking these while the overlay is open closes that gap.
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(evt => {
+            this.drawingOverlay.addEventListener(evt, (e) => e.preventDefault());
         });
 
         // ---- Two-finger pan + pinch zoom on the canvas area ----
