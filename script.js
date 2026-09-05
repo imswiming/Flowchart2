@@ -3325,6 +3325,7 @@ class FlowchartViewer {
     setupIndentableTextarea(textarea, onChange) {
         const INDENT = '        '; // 8 spaces per indent level (doubled from 4)
         const BULLETS = ['\u2022', '\u25E6', '\u25AA']; // •, ◦, ▪ - cycles for deeper levels
+        const CHECK_GLYPHS = ['\u2610', '\u2611']; // ☐, ☑ - a checklist item is its own kind of "bullet"
         const bulletFor = (level) => BULLETS[level % BULLETS.length];
 
         // Finds where the line containing `pos` starts. Plain `value.lastIndexOf('\n',
@@ -3351,6 +3352,24 @@ class FlowchartViewer {
                 level++;
             }
             const indentLen = line.length - rest.length;
+
+            // Checklist glyphs are checked first and reported as their own `kind` so
+            // buildLine can reconstruct the checkbox (and its checked state) instead
+            // of overwriting it with a plain bullet - see CHECK_GLYPHS above.
+            for (const c of CHECK_GLYPHS) {
+                if (rest.startsWith(c)) {
+                    let consumed = c.length;
+                    while (rest[consumed] === ' ') consumed++;
+                    if (consumed > c.length) {
+                        return {
+                            level, hasBullet: true, kind: 'check', checked: c === '\u2611',
+                            prefixLen: indentLen + consumed, content: rest.slice(consumed)
+                        };
+                    }
+                    break;
+                }
+            }
+
             let bulletLen = 0;
             for (const b of BULLETS) {
                 if (rest.startsWith(b)) {
@@ -3370,12 +3389,15 @@ class FlowchartViewer {
             // level 0 with no prefix and the whole line as its content, rather than
             // treating stray leading spaces as a bullet's indent.
             if (!hasBullet) {
-                return { level: 0, hasBullet: false, prefixLen: 0, content: line };
+                return { level: 0, hasBullet: false, kind: 'bullet', checked: false, prefixLen: 0, content: line };
             }
-            return { level, hasBullet: true, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
+            return { level, hasBullet: true, kind: 'bullet', checked: false, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
         };
 
-        const buildLine = (level, content) => INDENT.repeat(level) + bulletFor(level) + ' ' + content;
+        const buildLine = (level, content, kind = 'bullet', checked = false) => {
+            const marker = kind === 'check' ? (checked ? '\u2611' : '\u2610') : bulletFor(level);
+            return INDENT.repeat(level) + marker + ' ' + content;
+        };
 
         // Rebuilds just the line the cursor is currently on through parseLine/buildLine,
         // which both enforces a single space after the bullet and re-derives the bullet
@@ -3392,7 +3414,7 @@ class FlowchartViewer {
             const line = value.slice(lineStart, lineEnd);
             const parsed = parseLine(line);
             if (!parsed.hasBullet) return;
-            const rebuilt = buildLine(parsed.level, parsed.content);
+            const rebuilt = buildLine(parsed.level, parsed.content, parsed.kind, parsed.checked);
             if (rebuilt !== line) {
                 const delta = rebuilt.length - line.length;
                 textarea.value = value.slice(0, lineStart) + rebuilt + value.slice(lineEnd);
@@ -3438,7 +3460,8 @@ class FlowchartViewer {
                 const parsed = parseLine(value.slice(lineStart, lineEnd));
                 // Only continue the bullet onto the new line if the current line
                 // actually has one - a plain line just gets a plain new line under it.
-                const insertion = parsed.hasBullet ? '\n' + buildLine(parsed.level, '') : '\n';
+                // A checklist item continues as a new, unchecked checklist item.
+                const insertion = parsed.hasBullet ? '\n' + buildLine(parsed.level, '', parsed.kind, false) : '\n';
                 textarea.value = value.slice(0, start) + insertion + value.slice(end);
                 const newPos = start + insertion.length;
                 textarea.selectionStart = textarea.selectionEnd = newPos;
@@ -3462,9 +3485,9 @@ class FlowchartViewer {
 
                 let firstLineDelta = 0;
                 const newLines = block.split('\n').map((line, i) => {
-                    const { level, content } = parseLine(line);
+                    const { level, content, kind, checked } = parseLine(line);
                     const newLevel = e.shiftKey ? Math.max(0, level - 1) : level + 1;
-                    const newLine = buildLine(newLevel, content);
+                    const newLine = buildLine(newLevel, content, kind, checked);
                     if (i === 0) firstLineDelta = newLine.length - line.length;
                     return newLine;
                 });
@@ -3510,7 +3533,7 @@ class FlowchartViewer {
             if (lineEnd === -1) lineEnd = value.length;
             const lineText = value.slice(lineStart, lineEnd);
             const parsed = parseLine(lineText);
-            const { level, prefixLen, content, hasBullet } = parsed;
+            const { level, prefixLen, content, hasBullet, kind, checked } = parsed;
 
             if (key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
                 // The very first bullet in an otherwise-empty document starts
@@ -3532,7 +3555,7 @@ class FlowchartViewer {
             // tracked via the bullet/INDENT prefix.
             if (key === ' ' && lineText !== '' && start === lineStart) {
                 const newLevel = (hasBullet ? level : 0) + 1;
-                const newLine = buildLine(newLevel, content);
+                const newLine = buildLine(newLevel, content, kind, checked);
                 textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
                 const newPrefixLen = parseLine(newLine).prefixLen;
                 textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
@@ -3543,7 +3566,7 @@ class FlowchartViewer {
 
             if (hasBullet && start === lineStart + prefixLen) {
                 if (key === ' ') {
-                    const newLine = buildLine(level + 1, content);
+                    const newLine = buildLine(level + 1, content, kind, checked);
                     textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
                     const newPrefixLen = parseLine(newLine).prefixLen;
                     textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
@@ -3556,7 +3579,7 @@ class FlowchartViewer {
                 // remove the bullet entirely, turning the line into plain text (keeping
                 // whatever content it already had) rather than merging into the line above.
                 if (level > 0) {
-                    const newLine = buildLine(level - 1, content);
+                    const newLine = buildLine(level - 1, content, kind, checked);
                     textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
                     const newPrefixLen = parseLine(newLine).prefixLen;
                     textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
@@ -4389,11 +4412,12 @@ class FlowchartViewer {
         if (textarea.selectionEnd !== pos || pos < 1) return;
         const glyph = value[pos - 1];
         if (glyph !== '\u2610' && glyph !== '\u2611') return;
-        // Only when the glyph is the first thing on its line (a real checklist
-        // marker) and immediately followed by a space - guards against a stray
-        // checkbox character someone typed as ordinary text elsewhere.
-        const lineStart = value.lastIndexOf('\n', pos - 2) + 1;
-        if (lineStart !== pos - 1) return;
+        // Only when the glyph is the first non-whitespace thing on its line (a real
+        // checklist marker, however indented) and immediately followed by a space -
+        // guards against a stray checkbox character someone typed as ordinary text
+        // elsewhere.
+        const lineStart = pos - 1 <= 0 ? 0 : (value.lastIndexOf('\n', pos - 2) + 1);
+        if (value.slice(lineStart, pos - 1).trim() !== '') return;
         if (value[pos] !== ' ') return;
 
         let lineEnd = value.indexOf('\n', pos);
@@ -4430,7 +4454,7 @@ class FlowchartViewer {
         const block = value.slice(lineStart, blockEnd);
         const after = value.slice(blockEnd);
 
-        const CHECK_RE = /^(\u2610|\u2611)\s/;
+        const CHECK_RE = /^(\s*)(\u2610|\u2611)\s/;
         const BULLET_RE = /^(\s*)([\u2022\u25E6\u25AA])\s+/;
         const blockLines = block.split('\n');
         const isChecklistOrBlank = line => CHECK_RE.test(line) || line.trim() === '';
@@ -4439,17 +4463,24 @@ class FlowchartViewer {
         const newLines = blockLines.map(line => {
             const checkMatch = line.match(CHECK_RE);
             if (alreadyAllChecklist) {
-                // Toggle off: drop the checkbox glyph and restore any struck-through text.
+                // Toggle off: drop the checkbox glyph (keeping its indent as plain
+                // text) and restore any struck-through text.
                 if (!checkMatch) return line;
-                const wasChecked = checkMatch[1] === '☑';
+                const indent = checkMatch[1];
+                const wasChecked = checkMatch[2] === '☑';
                 const rest = line.slice(checkMatch[0].length);
-                return wasChecked ? this.unstrikethroughText(rest) : rest;
+                return indent + (wasChecked ? this.unstrikethroughText(rest) : rest);
             }
             if (checkMatch) return line; // already a checklist item
-            let content = line;
+            // Keep whatever indent the line already had - only replace its bullet
+            // (or lack of one) with a checkbox.
             const bulletMatch = line.match(BULLET_RE);
-            if (bulletMatch) content = line.slice(bulletMatch[0].length);
-            return '☐ ' + content;
+            if (bulletMatch) {
+                return bulletMatch[1] + '☐ ' + line.slice(bulletMatch[0].length);
+            }
+            const indentMatch = line.match(/^\s*/);
+            const indent = indentMatch[0];
+            return indent + '☐ ' + line.slice(indent.length);
         });
         const newBlock = newLines.join('\n');
         const lengthDelta = newBlock.length - block.length;
