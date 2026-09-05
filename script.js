@@ -146,7 +146,8 @@ class FlowchartViewer {
             'What evidence do I have that this is true? Is it evidence or interpretation?',
             'What is externally attached to this component or affecting this component? Can I alter that to solve the assumption?',
             'What constraints have I imposed with this assumption?',
-            'What alternatives might I be overlooking?'
+            'What alternatives might I be overlooking?',
+            'What can I do to make this problem worse?'
         ];
         this.SIMPLIFY_QUESTIONS = [
             'Is there anything I can remove to make this simpler?',
@@ -1229,6 +1230,13 @@ class FlowchartViewer {
 
                 this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
                 this.morphMatrix = this.sanitizeMorphMatrix(parsed.morphMatrix);
+                // rootData and morphMatrix were both just rebuilt fresh from this
+                // flowchart's saved JSON, so any _morphNodeRefs left over from
+                // whatever was open before are pointing at now-detached node objects
+                // from the *previous* tree - relink them to the freshly-parsed nodes
+                // (matched by name, same as when a row is first added) so
+                // resyncMorphRows has something live to actually follow.
+                this.relinkMorphNodeRefs();
                 this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
@@ -1754,7 +1762,18 @@ class FlowchartViewer {
             let dockCeiling;
             if (relevantChildren.length === 1) {
                 const onlyChild = relevantChildren[0];
-                const isLeafChild = !onlyChild.children || onlyChild.children.length === 0;
+                // "Leaf" here is judged from the underlying *data*'s real (non-
+                // placeholder) children, not onlyChild.children - the latter comes
+                // from the placeholder-filtered hierarchy (see childrenAccessor), so
+                // with placeholders hidden, a node whose only child was a trailing
+                // placeholder stub would otherwise get silently reclassified as a
+                // leaf the moment that stub is filtered out - purely because of the
+                // show/hide toggle, not because the tree's actual shape changed. That
+                // caused this node to start tracking a "leaf" that wasn't really one,
+                // compressing toward it and colliding with unrelated content, only
+                // when placeholders happened to be hidden.
+                const realGrandchildren = (onlyChild.data.children || []).filter(c => !this.isPlaceholderNodeData(c));
+                const isLeafChild = realGrandchildren.length === 0;
                 // Only an actual *leaf* child's raw position should be tracked - it's
                 // the one genuinely about to scroll out of view. A non-leaf child that
                 // hasn't started docking itself yet is just sitting wherever the tree
@@ -2337,6 +2356,7 @@ class FlowchartViewer {
         this.ensureRightmostPlaceholderNodes(this.rootData);
         this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
         
+        if (this.resyncMorphRows()) this.renderMorphPanel();
         this.renderFlowchart(this.rootData);
         this.updateUndoRedoButtons();
         this.hideNodeEditPopup(false);
@@ -2627,6 +2647,7 @@ class FlowchartViewer {
                     currentNode.data.color = '#00a67e';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+                    if (this.resyncMorphRows()) this.renderMorphPanel();
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
                     this.updateReflectionPanel(currentNode);
@@ -2656,6 +2677,7 @@ class FlowchartViewer {
                     currentNode.data.color = '#e75480';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+                    if (this.resyncMorphRows()) this.renderMorphPanel();
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
                     this.updateReflectionPanel(currentNode);
@@ -2685,6 +2707,7 @@ class FlowchartViewer {
                     currentNode.data.color = '#0074d9';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+                    if (this.resyncMorphRows()) this.renderMorphPanel();
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
                     this.updateReflectionPanel(currentNode);
@@ -2714,6 +2737,7 @@ class FlowchartViewer {
                     currentNode.data.color = '#ffcc00';
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+                    if (this.resyncMorphRows()) this.renderMorphPanel();
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
                     this.updateReflectionPanel(currentNode);
@@ -2741,6 +2765,7 @@ class FlowchartViewer {
                     currentNode.data._isPlaceholder = true;
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                     this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+                    if (this.resyncMorphRows()) this.renderMorphPanel();
                     this.renderFlowchart(this.rootData);
                     this._suppressPopupHide = false;
                     this.updateReflectionPanel(currentNode);
@@ -2754,6 +2779,33 @@ class FlowchartViewer {
             colorBtns.appendChild(blueBtn);
             colorBtns.appendChild(yellowBtn);
             colorBtns.appendChild(emptyBtn);
+
+            const moveLeftBtn = document.createElement('button');
+            moveLeftBtn.textContent = '\u2190';
+            moveLeftBtn.title = 'Move left (swap with previous sibling)';
+            moveLeftBtn.style.background = 'var(--control-bg)';
+            moveLeftBtn.style.color = 'var(--text)';
+            moveLeftBtn.style.border = '1px solid var(--border)';
+            moveLeftBtn.style.borderRadius = '5px';
+            moveLeftBtn.style.padding = '6px 12px';
+            moveLeftBtn.style.cursor = 'pointer';
+            moveLeftBtn.onmousedown = (e) => e.preventDefault();
+            moveLeftBtn.onclick = () => this.moveNodeLeft();
+
+            const moveRightBtn = document.createElement('button');
+            moveRightBtn.textContent = '\u2192';
+            moveRightBtn.title = 'Move right (swap with next sibling)';
+            moveRightBtn.style.background = 'var(--control-bg)';
+            moveRightBtn.style.color = 'var(--text)';
+            moveRightBtn.style.border = '1px solid var(--border)';
+            moveRightBtn.style.borderRadius = '5px';
+            moveRightBtn.style.padding = '6px 12px';
+            moveRightBtn.style.cursor = 'pointer';
+            moveRightBtn.onmousedown = (e) => e.preventDefault();
+            moveRightBtn.onclick = () => this.moveNodeRight();
+
+            colorBtns.appendChild(moveLeftBtn);
+            colorBtns.appendChild(moveRightBtn);
             this.nodeEditPopup.insertBefore(colorBtns, this.nodeEditPopup.firstChild);
 
             // Second row: quick-add this node's name into the Pugh Matrix as either a
@@ -3461,9 +3513,29 @@ class FlowchartViewer {
             const { level, prefixLen, content, hasBullet } = parsed;
 
             if (key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
-                const newLine = buildLine(0, '');
+                // The very first bullet in an otherwise-empty document starts
+                // pre-indented one level in, rather than flush left - every bullet
+                // after that still starts wherever the person actually indents it.
+                const isFirstEverBullet = value.trim() === '';
+                const newLine = buildLine(isFirstEverBullet ? 1 : 0, '');
                 textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
                 textarea.selectionStart = textarea.selectionEnd = lineStart + newLine.length;
+                this.resizeReflectionAnswer(textarea);
+                onChange(textarea.value);
+                return true;
+            }
+
+            // Space at the very start of a non-empty line (before its bullet, or
+            // before its text if it doesn't have one) indents the whole line by one
+            // level, same as Tab would - a plain (bulletless) line gets promoted to
+            // a bulleted one in the process, since indent levels are otherwise only
+            // tracked via the bullet/INDENT prefix.
+            if (key === ' ' && lineText !== '' && start === lineStart) {
+                const newLevel = (hasBullet ? level : 0) + 1;
+                const newLine = buildLine(newLevel, content);
+                textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+                const newPrefixLen = parseLine(newLine).prefixLen;
+                textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
                 this.resizeReflectionAnswer(textarea);
                 onChange(textarea.value);
                 return true;
@@ -4206,6 +4278,13 @@ class FlowchartViewer {
         insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
         header.appendChild(label);
         header.appendChild(insertDrawingBtn);
+        const checklistBtn = document.createElement('button');
+        checklistBtn.id = 'notes-checklist-btn';
+        checklistBtn.type = 'button';
+        checklistBtn.textContent = '☑ Checklist';
+        checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
+        checklistBtn.addEventListener('click', () => this.convertNotesLinesToChecklist());
+        header.appendChild(checklistBtn);
         this.notesPanelBody.appendChild(header);
 
         const notesArea = document.createElement('textarea');
@@ -4234,12 +4313,99 @@ class FlowchartViewer {
             }
         });
         notesArea.addEventListener('keyup', () => { this._notesCursorPos = notesArea.selectionStart; });
-        notesArea.addEventListener('click', () => { this._notesCursorPos = notesArea.selectionStart; });
+        notesArea.addEventListener('click', () => {
+            this._notesCursorPos = notesArea.selectionStart;
+            this.maybeToggleNotesChecklistItem(notesArea);
+        });
         notesArea.addEventListener('paste', (e) => this.handleNotesPaste(e));
         this.notesTextarea = notesArea;
         this.notesPanelBody.appendChild(notesArea);
 
         this.renderNotesMediaStrip();
+    }
+
+    // Called on every click inside the notes textarea (see renderNotesPanel) - a
+    // plain textarea has no way to attach a click handler to one specific
+    // character, so this just checks whether the cursor position the click landed
+    // on happens to sit immediately after a "☐"/"☑" glyph, and if so, treats that
+    // as clicking the checkbox itself: toggles it, and strikes through (or
+    // restores) the rest of that line's text.
+    maybeToggleNotesChecklistItem(textarea) {
+        const value = textarea.value;
+        const pos = textarea.selectionStart;
+        if (textarea.selectionEnd !== pos || pos < 1) return;
+        const glyph = value[pos - 1];
+        if (glyph !== '\u2610' && glyph !== '\u2611') return;
+        // Only when the glyph is the first thing on its line (a real checklist
+        // marker) and immediately followed by a space - guards against a stray
+        // checkbox character someone typed as ordinary text elsewhere.
+        const lineStart = value.lastIndexOf('\n', pos - 2) + 1;
+        if (lineStart !== pos - 1) return;
+        if (value[pos] !== ' ') return;
+
+        let lineEnd = value.indexOf('\n', pos);
+        if (lineEnd === -1) lineEnd = value.length;
+        const wasChecked = glyph === '\u2611';
+        const newGlyph = wasChecked ? '\u2610' : '\u2611';
+        const rest = value.slice(pos + 1, lineEnd); // everything after "glyph "
+        const newRest = wasChecked ? this.unstrikethroughText(rest) : this.strikethroughText(rest);
+        textarea.value = value.slice(0, pos - 1) + newGlyph + ' ' + newRest + value.slice(lineEnd);
+        textarea.selectionStart = textarea.selectionEnd = pos;
+        this.globalNotes = textarea.value;
+        this._pendingNotesSave = true;
+        this.resizeReflectionAnswer(textarea);
+    }
+
+    // Turns whichever lines the current selection touches (or just the current
+    // line, if nothing's selected) into checklist items - "☐ " prefixed, replacing
+    // any existing bullet. Clicking directly on a "☐"/"☑" glyph afterward (see
+    // setupIndentableTextarea's click handler) toggles it checked/unchecked.
+    convertNotesLinesToChecklist() {
+        const textarea = this.notesTextarea;
+        if (!textarea) return;
+        const value = textarea.value;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const lineStart = start <= 0 ? 0 : (value.lastIndexOf('\n', start - 1) + 1);
+        let blockEnd = value.indexOf('\n', end);
+        if (blockEnd === -1) blockEnd = value.length;
+
+        const before = value.slice(0, lineStart);
+        const block = value.slice(lineStart, blockEnd);
+        const after = value.slice(blockEnd);
+
+        const CHECK_RE = /^(\u2610|\u2611)\s/;
+        const BULLET_RE = /^(\s*)([\u2022\u25E6\u25AA])\s+/;
+        const newLines = block.split('\n').map(line => {
+            if (CHECK_RE.test(line)) return line; // already a checklist item
+            let content = line;
+            const bulletMatch = line.match(BULLET_RE);
+            if (bulletMatch) content = line.slice(bulletMatch[0].length);
+            return '\u2610 ' + content;
+        });
+        const newBlock = newLines.join('\n');
+        const lengthDelta = newBlock.length - block.length;
+
+        textarea.value = before + newBlock + after;
+        textarea.selectionStart = lineStart;
+        textarea.selectionEnd = blockEnd + lengthDelta;
+        this.globalNotes = textarea.value;
+        this.resizeReflectionAnswer(textarea);
+        this.renderNotesMediaStrip();
+        this.autosave();
+    }
+
+    // Wraps each visible character of `text` with a Unicode combining
+    // strikethrough (U+0336) - the closest thing to real strikethrough formatting
+    // achievable in a plain textarea, which has no rich text support at all.
+    strikethroughText(text) {
+        return Array.from(text).map(ch => (ch === '\n' ? ch : ch + '\u0336')).join('');
+    }
+
+    // Reverses strikethroughText - just strips every combining strikethrough
+    // character back out.
+    unstrikethroughText(text) {
+        return text.replace(/\u0336/g, '');
     }
 
     // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
@@ -4274,37 +4440,45 @@ class FlowchartViewer {
         const items = this.getNotesMediaMarkers();
         if (items.length === 0) return;
 
+        // A plain <textarea> can't contain a real clickable hyperlink no matter what
+        // text is used - the [[drawing:id]]/[[image:id]] markers (or a pasted image
+        // URL) sitting in the raw notes stay inert, plain text either way. This strip
+        // is the closest equivalent: every embedded drawing/image gets a labeled,
+        // clickable entry here that opens it, styled and captioned like a link
+        // rather than a bare thumbnail, so it's clear at a glance that tapping it
+        // does something.
         strip = document.createElement('div');
         strip.id = 'notes-drawings-strip';
+
+        const addEntry = (src, label, onClick) => {
+            const entry = document.createElement('div');
+            entry.className = 'notes-media-link';
+            entry.addEventListener('click', onClick);
+            const thumb = document.createElement('img');
+            thumb.className = 'notes-drawing-thumb';
+            thumb.src = src;
+            entry.appendChild(thumb);
+            const caption = document.createElement('span');
+            caption.className = 'notes-media-link-label';
+            caption.textContent = label;
+            entry.appendChild(caption);
+            strip.appendChild(entry);
+        };
+
         items.forEach(({ type, id }) => {
             if (type === 'drawing') {
                 const drawing = this.notesDrawings && this.notesDrawings[id];
                 if (!drawing) return;
-                const thumb = document.createElement('img');
-                thumb.className = 'notes-drawing-thumb';
-                thumb.src = drawing.dataUrl;
-                thumb.title = 'Tap to edit this drawing';
-                thumb.addEventListener('click', () => this.editNotesDrawing(id));
-                strip.appendChild(thumb);
+                addEntry(drawing.dataUrl, '🎨 Open drawing', () => this.editNotesDrawing(id));
             } else if (type === 'image') {
                 // Legacy marker format - kept for backward compatibility with
                 // already-saved notes from before URL pastes stopped using markers.
                 const image = this.notesImages && this.notesImages[id];
                 if (!image) return;
-                const thumb = document.createElement('img');
-                thumb.className = 'notes-drawing-thumb';
-                thumb.src = image.dataUrl || image.url;
-                thumb.title = 'Tap to view full size';
-                thumb.addEventListener('click', () => this.openNotesImageLightbox(image.dataUrl || image.url));
-                strip.appendChild(thumb);
+                addEntry(image.dataUrl || image.url, '🖼 View image', () => this.openNotesImageLightbox(image.dataUrl || image.url));
             } else if (type === 'image-url') {
                 // id IS the URL here - found directly in the text, no lookup needed.
-                const thumb = document.createElement('img');
-                thumb.className = 'notes-drawing-thumb';
-                thumb.src = id;
-                thumb.title = 'Tap to view full size';
-                thumb.addEventListener('click', () => this.openNotesImageLightbox(id));
-                strip.appendChild(thumb);
+                addEntry(id, '🖼 View image', () => this.openNotesImageLightbox(id));
             }
         });
         this.notesPanelBody.appendChild(strip);
@@ -4661,6 +4835,26 @@ class FlowchartViewer {
         const widthInput = document.getElementById('drawing-width');
         const eraserWidthInput = document.getElementById('drawing-eraser-width');
         if (colorInput) colorInput.addEventListener('input', () => { state.color = colorInput.value; });
+
+        // One-tap preset colors directly in the toolbar - the native <input type="color">
+        // picker is still there for anything custom, but common colors shouldn't need
+        // opening a whole separate picker dialog every time.
+        const swatchWrap = document.getElementById('drawing-color-swatches');
+        if (swatchWrap) {
+            const presetColors = ['#000000', '#ffffff', '#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#0074d9', '#af52de'];
+            presetColors.forEach(hex => {
+                const swatch = document.createElement('button');
+                swatch.type = 'button';
+                swatch.title = hex;
+                swatch.style.cssText = `width:22px; height:22px; border-radius:5px; padding:0; cursor:pointer; background:${hex}; border:1.5px solid rgba(255,255,255,0.6);`;
+                swatch.addEventListener('click', () => {
+                    state.color = hex;
+                    if (colorInput) colorInput.value = hex;
+                });
+                swatchWrap.appendChild(swatch);
+            });
+        }
+
         if (widthInput) widthInput.addEventListener('input', () => {
             state.width = parseInt(widthInput.value, 10) || 1;
             updateSizeIndicator();
@@ -4687,6 +4881,7 @@ class FlowchartViewer {
 
         document.getElementById('drawing-cancel-btn').addEventListener('click', () => this.closeDrawingOverlay(false));
         document.getElementById('drawing-done-btn').addEventListener('click', () => this.closeDrawingOverlay(true));
+        document.getElementById('drawing-delete-btn').addEventListener('click', () => this.deleteCurrentDrawing());
 
         // ---- Toggle button: drawing only happens while this is physically held
         // down. Pressing it also starts a stroke right away at wherever the handle's
@@ -4913,13 +5108,20 @@ class FlowchartViewer {
                     pinch = null;
                     return;
                 }
+                const midX = (a.clientX + b.clientX) / 2;
+                const midY = (a.clientY + b.clientY) / 2;
                 pinch = {
                     dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
-                    midX: (a.clientX + b.clientX) / 2,
-                    midY: (a.clientY + b.clientY) / 2,
                     startScale: state.scale,
-                    startPanX: state.panX,
-                    startPanY: state.panY
+                    // The canvas-wrap-space point currently sitting under the
+                    // fingers' midpoint. transform-origin is 0,0 (top-left), so a
+                    // scale change alone always expands/contracts everything away
+                    // from that corner, not from wherever the fingers actually are -
+                    // keeping this exact point anchored under the fingers as they
+                    // move is what makes the zoom (and any panning motion) track the
+                    // gesture correctly instead of just drifting toward the corner.
+                    anchorX: (midX - state.panX) / state.scale,
+                    anchorY: (midY - state.panY) / state.scale
                 };
             }
         }, { passive: true });
@@ -4931,18 +5133,28 @@ class FlowchartViewer {
                 const midX = (a.clientX + b.clientX) / 2;
                 const midY = (a.clientY + b.clientY) / 2;
                 state.scale = clampScale(pinch.startScale * (dist / pinch.dist));
-                state.panX = pinch.startPanX + (midX - pinch.midX);
-                state.panY = pinch.startPanY + (midY - pinch.midY);
+                // Solve for the pan that keeps the anchored point exactly under the
+                // fingers' current midpoint - this single formula correctly handles
+                // pure pinch (fingers spread, midpoint roughly stationary), pure pan
+                // (midpoint moves, spacing roughly stationary), and any combination
+                // of the two at once.
+                state.panX = midX - pinch.anchorX * state.scale;
+                state.panY = midY - pinch.anchorY * state.scale;
                 applyPanZoom();
             }
         }, { passive: false });
         this.drawingOverlay.addEventListener('touchend', (e) => {
             if (e.touches.length < 2) pinch = null;
         });
-        // Desktop equivalent: mouse wheel zooms.
+        // Desktop equivalent: mouse wheel zooms, anchored under the cursor rather
+        // than the top-left corner, for the same reason as the pinch fix above.
         this.drawingOverlay.addEventListener('wheel', (e) => {
             e.preventDefault();
+            const anchorX = (e.clientX - state.panX) / state.scale;
+            const anchorY = (e.clientY - state.panY) / state.scale;
             state.scale = clampScale(state.scale * (e.deltaY < 0 ? 1.1 : 0.9));
+            state.panX = e.clientX - anchorX * state.scale;
+            state.panY = e.clientY - anchorY * state.scale;
             applyPanZoom();
         }, { passive: false });
 
@@ -4967,16 +5179,42 @@ class FlowchartViewer {
         const canvas = this.drawingCanvas;
 
         this.drawingOverlay.style.display = 'block';
-        // Size the canvas 1:1 with CSS pixels for the whole editing session (no
-        // devicePixelRatio scaling) - toCanvasPoint derives drawing coordinates from
-        // the canvas's actual rendered bounding box, so keeping canvas.width/height
-        // equal to its displayed CSS size keeps that mapping simple and exact,
-        // rather than needing every draw call to also account for a separate DPI
-        // transform on the context.
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        canvas.style.width = window.innerWidth + 'px';
-        canvas.style.height = window.innerHeight + 'px';
+        // Fixed, device-independent internal resolution - NOT tied to
+        // window.innerWidth/innerHeight. Two problems this solves at once:
+        // 1. Reopening a drawing on a different-sized screen used to stretch it to
+        //    fill whatever the new window's dimensions happened to be, distorting
+        //    the whole image. A fixed internal size means the stored pixel grid
+        //    never changes shape no matter what device opens it.
+        // 2. It keeps the exported PNG's resolution - and so its file size - bounded
+        //    and consistent, rather than scaling up (and bloating the base64 that
+        //    gets pushed to cloud sync) on a large/high-DPI screen.
+        // The on-screen *display* size is fit to the current viewport separately,
+        // below, preserving this aspect ratio (letterboxed/centered by the wrap's
+        // flex centering) rather than stretching - toCanvasPoint already derives
+        // drawing coordinates from canvas.width/height vs. the actual rendered
+        // bounding box, so it doesn't need to know the two differ.
+        const DRAWING_CANVAS_W = 1600;
+        const DRAWING_CANVAS_H = 1000;
+        canvas.width = DRAWING_CANVAS_W;
+        canvas.height = DRAWING_CANVAS_H;
+
+        // Fit within the viewport, leaving room for the toolbar (top) and the
+        // hold-to-draw bar (bottom), preserving aspect ratio.
+        const availW = window.innerWidth - 24;
+        const availH = window.innerHeight - 140;
+        const fitScale = Math.max(0.1, Math.min(availW / DRAWING_CANVAS_W, availH / DRAWING_CANVAS_H));
+        canvas.style.width = Math.round(DRAWING_CANVAS_W * fitScale) + 'px';
+        canvas.style.height = Math.round(DRAWING_CANVAS_H * fitScale) + 'px';
+
+        // Smooths both scaled image loads (see the letterboxed drawImage below) and
+        // the visible on-screen rendering when the display size differs from the
+        // canvas's own resolution - actual pen strokes are still drawn at native
+        // resolution; this doesn't soften linework, only scaling artifacts.
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -5003,7 +5241,16 @@ class FlowchartViewer {
             img.onload = () => {
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                // Fit the loaded image within the fixed canvas preserving its own
+                // aspect ratio (letterboxed/centered) rather than stretching it to
+                // exactly fill the canvas - matters for drawings saved before this
+                // fixed-resolution canvas existed, which may have any aspect ratio.
+                const loadFitScale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                const drawW = img.width * loadFitScale;
+                const drawH = img.height * loadFitScale;
+                const offsetX = (canvas.width - drawW) / 2;
+                const offsetY = (canvas.height - drawH) / 2;
+                ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
             };
             img.src = this.notesDrawings[existingId].dataUrl;
         }
@@ -5035,6 +5282,8 @@ class FlowchartViewer {
             if (!state.editingId && this.notesTextarea) {
                 // Brand new drawing - insert its marker at wherever the cursor last was.
                 this.insertNotesMediaMarker('drawing', id);
+                this.drawingOverlay.style.display = 'none';
+                state.nodeTarget = null;
                 return;
             }
 
@@ -5044,6 +5293,43 @@ class FlowchartViewer {
 
         state.nodeTarget = null;
         this.drawingOverlay.style.display = 'none';
+    }
+
+    // Swaps the currently-edited node with its previous/next real (non-placeholder)
+    // sibling in their shared parent's children array - reordering left-to-right
+    // position without changing depth or parent, unlike drag-and-drop (which can
+    // also reparent). Does nothing at the leftmost/rightmost real sibling, or for
+    // the root (no parent to reorder within).
+    moveNodeLeft() {
+        this.swapNodeWithSibling(-1);
+    }
+
+    moveNodeRight() {
+        this.swapNodeWithSibling(1);
+    }
+
+    swapNodeWithSibling(direction) {
+        const d = this.nodeBeingEdited;
+        if (!d || !d.parent) return;
+        const siblings = d.parent.data.children;
+        if (!Array.isArray(siblings)) return;
+        const realIndices = siblings
+            .map((c, i) => ({ c, i }))
+            .filter(({ c }) => !this.isPlaceholderNodeData(c))
+            .map(({ i }) => i);
+        const myPos = realIndices.indexOf(siblings.indexOf(d.data));
+        const swapWithPos = myPos + direction;
+        if (myPos === -1 || swapWithPos < 0 || swapWithPos >= realIndices.length) return;
+
+        this.pushUndo();
+        const i1 = realIndices[myPos];
+        const i2 = realIndices[swapWithPos];
+        [siblings[i1], siblings[i2]] = [siblings[i2], siblings[i1]];
+
+        if (this.resyncMorphRows()) this.renderMorphPanel();
+        this.renderFlowchart(this.rootData);
+        this.hideNodeEditPopup(false);
+        this.autosave();
     }
 
     // Clears whichever image is attached to the currently-edited node - a pasted
@@ -5062,7 +5348,34 @@ class FlowchartViewer {
         this.showNotification('Image removed.');
     }
 
+    // Deletes whatever the drawing overlay is currently attached to (see the
+    // overlay's 🗑 Delete button) - a node's photo/drawing, or an existing Notes
+    // drawing (its marker included, not just the pixel data, so Notes doesn't end
+    // up with a dead "[[drawing:...]]" link pointing at nothing) - then closes the
+    // overlay without saving whatever unsaved edits were in progress.
+    deleteCurrentDrawing() {
+        const state = this._drawingState;
+        if (state.nodeTarget) {
+            delete state.nodeTarget._nodePhotoUrl;
+            state.nodeTarget = null;
+            this.renderFlowchart(this.rootData);
+            this.autosave();
+        } else if (state.editingId && this.notesDrawings[state.editingId]) {
+            delete this.notesDrawings[state.editingId];
+            const marker = `[[drawing:${state.editingId}]]`;
+            this.globalNotes = (this.globalNotes || '')
+                .split('\n')
+                .filter(line => line.trim() !== marker)
+                .join('\n');
+            this.renderNotesPanel();
+            this.autosave();
+        }
+        this.drawingOverlay.style.display = 'none';
+    }
+
     // Adds a node's name into the Pugh Matrix as a solution (column) or a criteria
+    // (row), from the "Add Solution"/"Add Criteria" buttons in the node edit popup -
+    // does nothing if that exact name is already present, rather than creating a
     // (row), from the "Add Solution"/"Add Criteria" buttons in the node edit popup -
     // does nothing if that exact name is already present, rather than creating a
     // duplicate every time the button's pressed again.
@@ -5686,6 +5999,7 @@ class FlowchartViewer {
             td.className = 'pugh-score-cell';
             td.dataset.colId = col.id;
             td.textContent = totals[i];
+            td.style.textAlign = 'center';
             if (m.criteria.length > 0 && bestTotal !== null && totals[i] === bestTotal && hasSpread) {
                 td.classList.add('pugh-max-weighted-cell');
             }
