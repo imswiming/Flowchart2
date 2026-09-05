@@ -340,23 +340,28 @@ body {
    of the old plain-textarea's Unicode glyphs and combining-strikethrough
    characters. */
 #notes-editor .ProseMirror ul[data-type="taskList"] {
+    /* Same per-level padding as a plain bullet list (see ul,ol above) rather
+       than its own smaller value - the checkbox is pulled back into that
+       space via the label's negative margin below instead of adding extra
+       width on top of it, so a nested/stacked checklist indents at the same
+       rate per level as a nested bullet list instead of much further. */
     list-style: none;
-    padding-left: 0.4em;
-}
-
-#notes-editor .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"] {
-    padding-left: 3.2em;
 }
 
 #notes-editor .ProseMirror ul[data-type="taskList"] li {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
 }
 
 #notes-editor .ProseMirror ul[data-type="taskList"] li > label {
     flex-shrink: 0;
     margin-top: 0.2em;
+    /* Pulls the checkbox back to the left edge of the padding this list
+       already reserves (see above), then re-adds a small visible gap before
+       the text - so the text itself still starts exactly where a plain
+       bullet's text would, at this same nesting depth. */
+    margin-left: -26px;
+    margin-right: 6px;
     user-select: none;
 }
 
