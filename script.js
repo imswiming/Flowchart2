@@ -4128,12 +4128,24 @@ class FlowchartViewer {
     // wherever the line is currently nested (Tiptap's own toggleTaskList/
     // toggleBulletList lift the line up to the top of its enclosing list
     // first, which loses its indent level - see that method for why).
+    //
+    // Uses the NEAREST enclosing listItem/taskItem, not editor.isActive() -
+    // isActive() matches if EITHER type appears ANYWHERE in the ancestor
+    // chain, so a checklist item nested inside a plain-bullet parent (or vice
+    // versa) would otherwise get misread as already being whatever type the
+    // OUTER ancestor happens to be, converting the wrong line entirely.
     toggleNotesChecklist() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
-        if (editor.isActive('taskItem')) {
+        const { $from } = editor.state.selection;
+        let nearestType = null;
+        for (let d = $from.depth; d > 0; d--) {
+            const name = $from.node(d).type.name;
+            if (name === 'taskItem' || name === 'listItem') { nearestType = name; break; }
+        }
+        if (nearestType === 'taskItem') {
             this.convertNotesListItemType('listItem', 'bulletList');
-        } else if (editor.isActive('listItem')) {
+        } else if (nearestType === 'listItem') {
             this.convertNotesListItemType('taskItem', 'taskList');
         } else {
             editor.chain().focus().toggleTaskList().run();
