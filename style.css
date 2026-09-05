@@ -265,29 +265,109 @@ body {
     flex-shrink: 0;
 }
 
-.reflection-notes-global {
+/* ===== Notes editor (Tiptap/ProseMirror) ===== */
+#notes-editor-wrap {
     flex: 1;
     width: 100%;
+    min-height: 0;
     box-sizing: border-box;
-    font-family: inherit;
-    font-size: 13px;
-    padding: 10px;
-    /* Hanging indent so a wrapped bullet's continuation lines land under its text
-       instead of back at the raw left edge - approximated to one indent level's
-       width (8 spaces + bullet + space), since a plain textarea can't vary this
-       per-line for different indent levels the way rich text could. */
-    padding-left: 46px;
-    text-indent: -36px;
     border-radius: 5px;
     border: 1px solid var(--border);
     background: var(--control-bg);
-    color: var(--text);
-    resize: none;
+    /* Each indent level gets a fixed amount of horizontal room instead of
+       wrapping at the box's edge - a long line just extends further right and
+       scrolls here rather than reflowing, so a wrapped-if-it-wrapped line's
+       continuation always lines up under that SAME line's own text at ANY
+       nesting depth (real per-line indent, via nested <ul>/<li> padding -
+       unlike the old plain-textarea version's single global hanging-indent
+       guess, which could only ever be exactly right for one depth at a time). */
     overflow: auto;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+}
+
+#notes-editor .ProseMirror {
+    padding: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
     line-height: 1.4;
-    tab-size: 4;
+    outline: none;
+    min-height: 100%;
+    box-sizing: border-box;
+}
+
+#notes-editor .ProseMirror p,
+#notes-editor .ProseMirror h4,
+#notes-editor .ProseMirror li {
+    white-space: nowrap;
+    margin: 0;
+}
+
+#notes-editor .ProseMirror > * + * {
+    margin-top: 0.35em;
+}
+
+#notes-editor .ProseMirror h4 {
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#notes-editor .ProseMirror ul,
+#notes-editor .ProseMirror ol {
+    padding-left: 1.4em;
+    margin: 0.2em 0;
+}
+
+#notes-editor .ProseMirror li {
+    margin: 0.15em 0;
+}
+
+#notes-editor .ProseMirror li > p {
+    display: inline;
+}
+
+/* Checklist items - real checkboxes and real strikethrough (via CSS), instead
+   of the old plain-textarea's Unicode glyphs and combining-strikethrough
+   characters. */
+#notes-editor .ProseMirror ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0.2em;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"] {
+    padding-left: 1.6em;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] li > label {
+    flex-shrink: 0;
+    margin-top: 0.2em;
+    user-select: none;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+    cursor: pointer;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] li > div {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Reset first, then only a checked item's OWN paragraph (not its nested
+   sub-items - see the ">div>p" scoping) turns strikethrough on, so checking a
+   parent item doesn't visually cross out its still-unchecked children. */
+#notes-editor .ProseMirror ul[data-type="taskList"] li > div > p {
+    text-decoration: none;
+}
+
+#notes-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div > p {
+    text-decoration: line-through;
+    opacity: 0.6;
 }
 
 /* ===== Pugh Matrix ===== */
@@ -1212,9 +1292,31 @@ body {
 #notes-panel-header-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
     margin-bottom: 4px;
     flex-shrink: 0;
+}
+
+#notes-panel-label {
+    margin-right: auto;
+}
+
+#notes-outdent-btn,
+#notes-indent-btn {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+
+#notes-outdent-btn:hover,
+#notes-indent-btn:hover {
+    background: var(--control-hover);
 }
 
 #notes-insert-drawing-btn {

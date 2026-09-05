@@ -425,9 +425,10 @@ class FlowchartViewer {
                 return;
             }
 
-            // Ignore other shortcuts if focus is in an input or textarea
+            // Ignore other shortcuts if focus is in an input/textarea, or in a
+            // contenteditable element (the Tiptap-based Notes editor).
             const tag = document.activeElement.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable) return;
 
             if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
                 e.preventDefault();
@@ -1237,7 +1238,14 @@ class FlowchartViewer {
                 // (matched by name, same as when a row is first added) so
                 // resyncMorphRows has something live to actually follow.
                 this.relinkMorphNodeRefs();
-                this.globalNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
+                const rawNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
+                // Legacy saves (from before Notes became a rich-text editor) store a
+                // plain-text bullet/checklist format that never starts with "<" -
+                // migrate those to HTML once on load; anything already HTML (or
+                // empty) passes through untouched.
+                this.globalNotes = (rawNotes && !/^\s*</.test(rawNotes))
+                    ? this.migrateLegacyNotesToHtml(rawNotes)
+                    : rawNotes;
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
                 this.renderNotesPanel();
@@ -3316,301 +3324,6 @@ class FlowchartViewer {
         });
     }
 
-    // Turns a plain textarea into a bulleted outline editor, the way Word's
-    // multilevel lists behave: every line gets a bullet matching its indent depth
-    // (•, then ◦, then ▪, cycling for deeper levels), Enter starts a new line at the
-    // same indent level with the matching bullet already in place, and Tab/Shift+Tab
-    // indent/dedent the current line - or every line touched by the selection - one
-    // level at a time, updating each line's bullet to match its new depth.
-    setupIndentableTextarea(textarea, onChange) {
-        const INDENT = '        '; // 8 spaces per indent level (doubled from 4)
-        const BULLETS = ['\u2022', '\u25E6', '\u25AA']; // •, ◦, ▪ - cycles for deeper levels
-        const CHECK_GLYPHS = ['\u2610', '\u2611']; // ☐, ☑ - a checklist item is its own kind of "bullet"
-        const bulletFor = (level) => BULLETS[level % BULLETS.length];
-
-        // Finds where the line containing `pos` starts. Plain `value.lastIndexOf('\n',
-        // pos - 1) + 1` looks equivalent but has a boundary bug at pos === 0: with a
-        // negative fromIndex, lastIndexOf clamps to searching only index 0 itself, and
-        // since the notes box always starts with a mandatory blank line (value[0] ===
-        // '\n'), that lookup finds *that* newline and incorrectly returns 1 - as if the
-        // cursor were on the second line - rather than 0, which is where the actual
-        // (empty) first line starts. This one helper is used everywhere a line start is
-        // needed so that boundary case only has to be handled correctly once.
-        const getLineStart = (value, pos) => {
-            if (pos <= 0) return 0;
-            return value.lastIndexOf('\n', pos - 1) + 1;
-        };
-
-        // Breaks a line into how many indent levels of leading INDENT it has, how
-        // many characters that indent + bullet + trailing space take up, and the
-        // actual text content after that.
-        const parseLine = (line) => {
-            let level = 0;
-            let rest = line;
-            while (rest.startsWith(INDENT)) {
-                rest = rest.slice(INDENT.length);
-                level++;
-            }
-            const indentLen = line.length - rest.length;
-
-            // Checklist glyphs are checked first and reported as their own `kind` so
-            // buildLine can reconstruct the checkbox (and its checked state) instead
-            // of overwriting it with a plain bullet - see CHECK_GLYPHS above.
-            for (const c of CHECK_GLYPHS) {
-                if (rest.startsWith(c)) {
-                    let consumed = c.length;
-                    while (rest[consumed] === ' ') consumed++;
-                    if (consumed > c.length) {
-                        return {
-                            level, hasBullet: true, kind: 'check', checked: c === '\u2611',
-                            prefixLen: indentLen + consumed, content: rest.slice(consumed)
-                        };
-                    }
-                    break;
-                }
-            }
-
-            let bulletLen = 0;
-            for (const b of BULLETS) {
-                if (rest.startsWith(b)) {
-                    // Consume the bullet plus *every* trailing space, not just one - this
-                    // is what lets us always rebuild the line with exactly one space
-                    // between the bullet and its text (see buildLine), collapsing any
-                    // extra spaces the person typed instead of leaving them in the content.
-                    let consumed = b.length;
-                    while (rest[consumed] === ' ') consumed++;
-                    if (consumed > b.length) bulletLen = consumed;
-                    break;
-                }
-            }
-            const hasBullet = bulletLen > 0;
-            // A line with no bullet is plain text (e.g. the mandatory blank first line,
-            // or any line whose bullet was just removed via Backspace) - report it as
-            // level 0 with no prefix and the whole line as its content, rather than
-            // treating stray leading spaces as a bullet's indent.
-            if (!hasBullet) {
-                return { level: 0, hasBullet: false, kind: 'bullet', checked: false, prefixLen: 0, content: line };
-            }
-            return { level, hasBullet: true, kind: 'bullet', checked: false, prefixLen: indentLen + bulletLen, content: rest.slice(bulletLen) };
-        };
-
-        const buildLine = (level, content, kind = 'bullet', checked = false) => {
-            const marker = kind === 'check' ? (checked ? '\u2611' : '\u2610') : bulletFor(level);
-            return INDENT.repeat(level) + marker + ' ' + content;
-        };
-
-        // Rebuilds just the line the cursor is currently on through parseLine/buildLine,
-        // which both enforces a single space after the bullet and re-derives the bullet
-        // glyph from the line's (possibly just-changed) indent level. Keeps the cursor
-        // anchored relative to the content rather than the raw character offset, so
-        // collapsing extra spaces doesn't make the cursor jump somewhere unexpected.
-        // Plain (bulletless) lines are left untouched - there's no bullet spacing to fix.
-        const normalizeCurrentLineSpacing = () => {
-            const value = textarea.value;
-            const cursor = textarea.selectionStart;
-            const lineStart = getLineStart(value, cursor);
-            let lineEnd = value.indexOf('\n', cursor);
-            if (lineEnd === -1) lineEnd = value.length;
-            const line = value.slice(lineStart, lineEnd);
-            const parsed = parseLine(line);
-            if (!parsed.hasBullet) return;
-            const rebuilt = buildLine(parsed.level, parsed.content, parsed.kind, parsed.checked);
-            if (rebuilt !== line) {
-                const delta = rebuilt.length - line.length;
-                textarea.value = value.slice(0, lineStart) + rebuilt + value.slice(lineEnd);
-                const newCursor = Math.max(lineStart, cursor + delta);
-                textarea.selectionStart = textarea.selectionEnd = newCursor;
-            }
-        };
-
-        // The notes box always keeps a blank line pinned at the very top, above
-        // anything the person writes, so their content never starts on line 1 itself.
-        const ensureBlankFirstLine = () => {
-            if (!textarea.value.startsWith('\n')) {
-                const cursor = textarea.selectionStart;
-                textarea.value = '\n' + textarea.value;
-                textarea.selectionStart = textarea.selectionEnd = cursor + 1;
-            }
-        };
-
-        textarea.addEventListener('focus', () => {
-            ensureBlankFirstLine();
-            this.resizeReflectionAnswer(textarea);
-        });
-
-        textarea.addEventListener('keydown', (e) => {
-            const value = textarea.value;
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-
-            // Never allow deleting the mandatory blank first line - the box should
-            // always open with an empty line at the top, so backspacing at the very
-            // start of the second line (right up against that boundary) does nothing
-            // rather than merging up into it.
-            if (e.key === 'Backspace' && start === end && start === 1 && value[0] === '\n') {
-                e.preventDefault();
-                return;
-            }
-
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                const lineStart = getLineStart(value, start);
-                let lineEnd = value.indexOf('\n', start);
-                if (lineEnd === -1) lineEnd = value.length;
-                const parsed = parseLine(value.slice(lineStart, lineEnd));
-                // Only continue the bullet onto the new line if the current line
-                // actually has one - a plain line just gets a plain new line under it.
-                // A checklist item continues as a new, unchecked checklist item.
-                const insertion = parsed.hasBullet ? '\n' + buildLine(parsed.level, '', parsed.kind, false) : '\n';
-                textarea.value = value.slice(0, start) + insertion + value.slice(end);
-                const newPos = start + insertion.length;
-                textarea.selectionStart = textarea.selectionEnd = newPos;
-                this.resizeReflectionAnswer(textarea);
-                onChange(textarea.value);
-                return;
-            }
-
-            if (e.key === 'Tab') {
-                e.preventDefault();
-
-                // Expand the affected range to cover every full line touched by the
-                // selection (or just the current line, if nothing is selected).
-                const lineStart = getLineStart(value, start);
-                let blockEnd = value.indexOf('\n', end);
-                if (blockEnd === -1) blockEnd = value.length;
-
-                const before = value.slice(0, lineStart);
-                const block = value.slice(lineStart, blockEnd);
-                const after = value.slice(blockEnd);
-
-                let firstLineDelta = 0;
-                const newLines = block.split('\n').map((line, i) => {
-                    const { level, content, kind, checked } = parseLine(line);
-                    const newLevel = e.shiftKey ? Math.max(0, level - 1) : level + 1;
-                    const newLine = buildLine(newLevel, content, kind, checked);
-                    if (i === 0) firstLineDelta = newLine.length - line.length;
-                    return newLine;
-                });
-                const newBlock = newLines.join('\n');
-                const lengthDelta = newBlock.length - block.length;
-
-                textarea.value = before + newBlock + after;
-                textarea.selectionStart = Math.max(lineStart, start + firstLineDelta);
-                textarea.selectionEnd = end + lengthDelta;
-
-                this.resizeReflectionAnswer(textarea);
-                onChange(textarea.value);
-                return;
-            }
-
-        });
-
-        // Space and Backspace right at the start of a bullet's text (i.e. the cursor
-        // sits immediately after the indent+bullet+space prefix, before any actual
-        // content) double up as quick indent/outdent shortcuts, mirroring Tab/
-        // Shift+Tab without requiring the modifier line to be selected first. Space on
-        // a completely blank (bulletless) line instead creates a new bullet there.
-        //
-        // This lives on 'beforeinput' rather than 'keydown' - keydown's preventDefault
-        // is unreliable for actually blocking the character on mobile virtual
-        // keyboards (many mobile browsers don't cancel the resulting input even when
-        // keydown is prevented), which is why Space-to-indent didn't work on mobile.
-        // beforeinput fires right before the DOM actually mutates and its
-        // preventDefault is honored consistently on both desktop and mobile.
-        const handleBulletSpaceOrBackspace = (key) => {
-            const value = textarea.value;
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            if (start !== end) return false;
-
-            if (key === 'Backspace' && start === 1 && value[0] === '\n') {
-                // Never allow deleting the mandatory blank first line.
-                return true;
-            }
-
-            const lineStart = getLineStart(value, start);
-            let lineEnd = value.indexOf('\n', start);
-            if (lineEnd === -1) lineEnd = value.length;
-            const lineText = value.slice(lineStart, lineEnd);
-            const parsed = parseLine(lineText);
-            const { level, prefixLen, content, hasBullet, kind, checked } = parsed;
-
-            if (key === ' ' && !hasBullet && lineText === '' && start === lineStart) {
-                // The very first bullet in an otherwise-empty document starts
-                // pre-indented one level in, rather than flush left - every bullet
-                // after that still starts wherever the person actually indents it.
-                const isFirstEverBullet = value.trim() === '';
-                const newLine = buildLine(isFirstEverBullet ? 1 : 0, '');
-                textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                textarea.selectionStart = textarea.selectionEnd = lineStart + newLine.length;
-                this.resizeReflectionAnswer(textarea);
-                onChange(textarea.value);
-                return true;
-            }
-
-            // Space at the very start of a non-empty line (before its bullet, or
-            // before its text if it doesn't have one) indents the whole line by one
-            // level, same as Tab would - a plain (bulletless) line gets promoted to
-            // a bulleted one in the process, since indent levels are otherwise only
-            // tracked via the bullet/INDENT prefix.
-            if (key === ' ' && lineText !== '' && start === lineStart) {
-                const newLevel = (hasBullet ? level : 0) + 1;
-                const newLine = buildLine(newLevel, content, kind, checked);
-                textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                const newPrefixLen = parseLine(newLine).prefixLen;
-                textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                this.resizeReflectionAnswer(textarea);
-                onChange(textarea.value);
-                return true;
-            }
-
-            if (hasBullet && start === lineStart + prefixLen) {
-                if (key === ' ') {
-                    const newLine = buildLine(level + 1, content, kind, checked);
-                    textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                    const newPrefixLen = parseLine(newLine).prefixLen;
-                    textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                    this.resizeReflectionAnswer(textarea);
-                    onChange(textarea.value);
-                    return true;
-                }
-
-                // Backspace: outdent one level, or - if already at the leftmost level -
-                // remove the bullet entirely, turning the line into plain text (keeping
-                // whatever content it already had) rather than merging into the line above.
-                if (level > 0) {
-                    const newLine = buildLine(level - 1, content, kind, checked);
-                    textarea.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-                    const newPrefixLen = parseLine(newLine).prefixLen;
-                    textarea.selectionStart = textarea.selectionEnd = lineStart + newPrefixLen;
-                } else {
-                    textarea.value = value.slice(0, lineStart) + content + value.slice(lineEnd);
-                    textarea.selectionStart = textarea.selectionEnd = lineStart;
-                }
-                this.resizeReflectionAnswer(textarea);
-                onChange(textarea.value);
-                return true;
-            }
-
-            return false;
-        };
-
-        textarea.addEventListener('beforeinput', (e) => {
-            if (e.inputType === 'insertText' && e.data === ' ') {
-                if (handleBulletSpaceOrBackspace(' ')) e.preventDefault();
-            } else if (e.inputType === 'deleteContentBackward') {
-                if (handleBulletSpaceOrBackspace('Backspace')) e.preventDefault();
-            }
-        });
-
-        textarea.addEventListener('input', () => {
-            ensureBlankFirstLine();
-            normalizeCurrentLineSpacing();
-            this.resizeReflectionAnswer(textarea);
-            onChange(textarea.value);
-        });
-    }
-
     updateReflectionPanel(d) {
         if (!d || !d.data) {
             this._reflectionQuestions = null;
@@ -3801,8 +3514,8 @@ class FlowchartViewer {
         if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = '';
         if (this.leftPanelZoomControls) this.leftPanelZoomControls.style.display = '';
         if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'none';
-        if (this.notesTextarea && document.activeElement === this.notesTextarea) {
-            this.notesTextarea.blur();
+        if (this.notesEditor && this.notesEditor.isFocused) {
+            this.notesEditor.commands.blur();
         }
     }
 
@@ -4225,8 +3938,8 @@ class FlowchartViewer {
         } else {
             this.openPughPanel();
         }
-        if (this.notesTextarea) {
-            this.notesTextarea.focus();
+        if (this.notesEditor) {
+            this.notesEditor.commands.focus();
         }
     }
 
@@ -4293,300 +4006,284 @@ class FlowchartViewer {
         const label = document.createElement('div');
         label.id = 'notes-panel-label';
         label.textContent = 'Notes';
+        header.appendChild(label);
+
         const insertDrawingBtn = document.createElement('button');
         insertDrawingBtn.id = 'notes-insert-drawing-btn';
         insertDrawingBtn.type = 'button';
-        insertDrawingBtn.textContent = '🎨 Insert Drawing';
+        insertDrawingBtn.textContent = '\uD83C\uDFA8 Insert Drawing';
         insertDrawingBtn.title = 'Insert a drawing at the cursor';
         insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
-        header.appendChild(label);
         header.appendChild(insertDrawingBtn);
+
         const checklistBtn = document.createElement('button');
         checklistBtn.id = 'notes-checklist-btn';
         checklistBtn.type = 'button';
-        checklistBtn.textContent = '☑ Checklist';
+        checklistBtn.textContent = '\u2611 Checklist';
         checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
-        checklistBtn.addEventListener('click', () => this.convertNotesLinesToChecklist());
+        checklistBtn.addEventListener('click', () => this.toggleNotesChecklist());
         header.appendChild(checklistBtn);
+
         const titleBtn = document.createElement('button');
         titleBtn.id = 'notes-title-btn';
         titleBtn.type = 'button';
-        titleBtn.textContent = 'T• Title';
+        titleBtn.textContent = 'T\u2022 Title';
         titleBtn.title = 'Make the selected (or current) lines a bold title';
-        titleBtn.addEventListener('click', () => this.convertNotesLinesToTitle());
+        titleBtn.addEventListener('click', () => this.toggleNotesTitle());
         header.appendChild(titleBtn);
+
+        const outdentBtn = document.createElement('button');
+        outdentBtn.id = 'notes-outdent-btn';
+        outdentBtn.type = 'button';
+        outdentBtn.textContent = '\u21E4 Outdent';
+        outdentBtn.title = 'Decrease indent';
+        outdentBtn.addEventListener('click', () => this.outdentNotesLine());
+        header.appendChild(outdentBtn);
+
+        const indentBtn = document.createElement('button');
+        indentBtn.id = 'notes-indent-btn';
+        indentBtn.type = 'button';
+        indentBtn.textContent = '\u21E5 Indent';
+        indentBtn.title = 'Increase indent';
+        indentBtn.addEventListener('click', () => this.indentNotesLine());
+        header.appendChild(indentBtn);
+
         this.notesPanelBody.appendChild(header);
 
-        const notesArea = document.createElement('textarea');
-        notesArea.className = 'reflection-notes-global';
-        notesArea.placeholder = 'Notes...';
-        const savedNotes = this.globalNotes || '';
-        notesArea.value = savedNotes.startsWith('\n') ? savedNotes : '\n' + savedNotes;
-        this.setupIndentableTextarea(notesArea, (value) => {
-            this.globalNotes = value;
-            this._pendingNotesSave = true;
-            // Lightweight - only rebuilds the small strip below, not the textarea
-            // itself, so this is safe to run on every keystroke without disturbing
-            // focus/cursor position. This is what makes a pasted image URL's preview
-            // appear right away, since the URL is left as plain pasted text rather
-            // than replaced by a marker (see handleNotesPaste).
-            this.renderNotesMediaStrip();
-            this.updateNotesHangIndent(notesArea);
+        const editorWrap = document.createElement('div');
+        editorWrap.id = 'notes-editor-wrap';
+        const editorEl = document.createElement('div');
+        editorEl.id = 'notes-editor';
+        editorWrap.appendChild(editorEl);
+        this.notesPanelBody.appendChild(editorWrap);
+
+        if (this.notesEditor) {
+            try { this.notesEditor.destroy(); } catch (err) { /* ignore */ }
+            this.notesEditor = null;
+        }
+
+        if (!window.TiptapNotes) {
+            // The CDN module (see index.html) failed to load - surface this rather
+            // than silently showing an empty, uneditable box.
+            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+            return;
+        }
+
+        const { Editor, StarterKit, TaskList, TaskItem } = window.TiptapNotes;
+        this.notesEditor = new Editor({
+            element: editorEl,
+            extensions: [
+                StarterKit.configure({ heading: { levels: [4] } }),
+                TaskList,
+                TaskItem.configure({ nested: true }),
+            ],
+            content: this.globalNotes || '<p></p>',
+            editorProps: {
+                // Only image *data* (a screenshot, or an image copied from an image
+                // editor) is intercepted here - everything else (plain text, a
+                // pasted URL) returns false so Tiptap's own default paste handling
+                // still runs normally.
+                handlePaste: (view, event) => !!this.handleNotesPaste(event),
+            },
+            onFocus: () => this.foldNotesSection(),
+            onBlur: () => {
+                if (this._pendingNotesSave) {
+                    this._pendingNotesSave = false;
+                    this.autosave();
+                }
+            },
+            onUpdate: ({ editor }) => {
+                this.globalNotes = editor.getHTML();
+                this._pendingNotesSave = true;
+                // Lightweight - only rebuilds the small strip below, not the editor
+                // itself, so this is safe to run on every keystroke without disturbing
+                // focus/cursor position. This is what makes a pasted image URL's preview
+                // appear right away, since the URL is left as plain pasted text rather
+                // than replaced by a marker (see handleNotesPaste).
+                this.renderNotesMediaStrip();
+            },
         });
-        notesArea.addEventListener('focus', () => {
-            this.foldNotesSection();
-        });
-        notesArea.addEventListener('blur', () => {
-            this._notesCursorPos = notesArea.selectionStart;
-            if (this._pendingNotesSave) {
-                this._pendingNotesSave = false;
-                this.autosave();
-            }
-        });
-        notesArea.addEventListener('keyup', () => { this._notesCursorPos = notesArea.selectionStart; });
-        notesArea.addEventListener('click', () => {
-            this._notesCursorPos = notesArea.selectionStart;
-            this.maybeToggleNotesChecklistItem(notesArea);
-        });
-        notesArea.addEventListener('paste', (e) => this.handleNotesPaste(e));
-        this.notesTextarea = notesArea;
-        this.notesPanelBody.appendChild(notesArea);
 
         this.renderNotesMediaStrip();
-        this.updateNotesHangIndent(notesArea);
     }
 
-    // A plain <textarea> applies padding-left/text-indent uniformly to the whole
-    // box, not per line - so the hanging indent that lines wrapped continuation
-    // text up under its own bullet (see .reflection-notes-global in style.css)
-    // can only ever exactly match ONE indent depth at a time. Rather than a
-    // static guess (which left every indented line's wrapped text realigned back
-    // to the top-level column, well short of its own bullet), this recomputes the
-    // hang to match whichever indent level is currently the DEEPEST anywhere in
-    // the notes, using the textarea's own real font metrics. That means a
-    // shallower line's wrap can end up hanging a bit further right than its own
-    // bullet (still reads fine), but nothing ever wraps back short of its bullet,
-    // which was the actually-broken/confusing case.
-    updateNotesHangIndent(textarea) {
-        if (!textarea) return;
-        const INDENT = '        '; // must match setupIndentableTextarea's INDENT
-        const lines = textarea.value.split('\n');
-        let maxLevel = 0;
-        for (const line of lines) {
+    // Toggles the selected (or current) lines' checklist state - Tiptap's
+    // TaskList/TaskItem extensions handle nesting, checked state, and real
+    // strikethrough (see style.css) natively, so this is just a thin wrapper
+    // around the built-in toggle command (which itself flips checklist on/off
+    // for whatever's selected, same as the old plain-text version's behavior).
+    toggleNotesChecklist() {
+        if (!this.notesEditor) return;
+        this.notesEditor.chain().focus().toggleTaskList().run();
+    }
+
+    // Toggles the selected (or current) lines between a plain line and a bold,
+    // slightly-larger "Title" line - a real heading now (see style.css for its
+    // size/weight), rather than the old Unicode-bold-character approximation a
+    // plain textarea needed.
+    toggleNotesTitle() {
+        if (!this.notesEditor) return;
+        this.notesEditor.chain().focus().toggleHeading({ level: 4 }).run();
+    }
+
+    // Indent/Outdent buttons replace the old plain-textarea's Tab/Space-to-indent
+    // shortcuts - sinkListItem/liftListItem are Tiptap's built-in commands for
+    // nesting a list item one level deeper/shallower, working the same way for a
+    // checklist item (taskItem) as for a plain bullet (listItem) - including
+    // preserving a checklist item's checked state, which the old plain-text
+    // version could corrupt (see the "Fix Notes checklist items..." commit).
+    // A plain paragraph (not yet in any list) starts a new bullet list on
+    // Indent, the same way Tab used to promote a plain line to a bullet.
+    indentNotesLine() {
+        if (!this.notesEditor) return;
+        const editor = this.notesEditor;
+        if (editor.isActive('taskItem')) {
+            editor.chain().focus().sinkListItem('taskItem').run();
+        } else if (editor.isActive('listItem')) {
+            editor.chain().focus().sinkListItem('listItem').run();
+        } else {
+            editor.chain().focus().toggleBulletList().run();
+        }
+    }
+
+    outdentNotesLine() {
+        if (!this.notesEditor) return;
+        const editor = this.notesEditor;
+        if (editor.isActive('taskItem')) {
+            editor.chain().focus().liftListItem('taskItem').run();
+        } else if (editor.isActive('listItem')) {
+            editor.chain().focus().liftListItem('listItem').run();
+        }
+    }
+
+    // Converts a legacy plain-text Notes value (the old bullet/checklist/title
+    // format the plain-textarea version used - 8-space indents, \u2022/\u25E6/\u25AA
+    // bullets, \u2610/\u2611 checkboxes, Mathematical-Bold "title" characters,
+    // combining-strikethrough for a checked item's done text) into the HTML this
+    // Tiptap-based editor expects. Only runs once, the first time an old save
+    // (from before this rewrite) is loaded - see loadFlowchartFromList. Any line
+    // that doesn't parse cleanly just becomes a plain paragraph rather than
+    // throwing, so a save can never fail to load because of this.
+    migrateLegacyNotesToHtml(text) {
+        if (!text) return '<p></p>';
+        const INDENT = '        '; // 8 spaces - must match the old setupIndentableTextarea
+        const BULLETS = ['\u2022', '\u25E6', '\u25AA'];
+        const CHECK_GLYPHS = ['\u2610', '\u2611'];
+
+        const escapeHtml = (s) => s
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        const unstrike = (s) => s.replace(/\u0336/g, '');
+        const isBoldChar = (ch) => {
+            const c = ch.codePointAt(0);
+            return (c >= 0x1D5D4 && c <= 0x1D607) || (c >= 0x1D7EC && c <= 0x1D7F5);
+        };
+        const unboldify = (s) => Array.from(s).map(ch => {
+            const c = ch.codePointAt(0);
+            if (c >= 0x1D5D4 && c <= 0x1D5ED) return String.fromCharCode(65 + (c - 0x1D5D4));
+            if (c >= 0x1D5EE && c <= 0x1D607) return String.fromCharCode(97 + (c - 0x1D5EE));
+            if (c >= 0x1D7EC && c <= 0x1D7F5) return String.fromCharCode(48 + (c - 0x1D7EC));
+            return ch;
+        }).join('');
+
+        const body = text.startsWith('\n') ? text.slice(1) : text;
+        const rawLines = body.split('\n');
+
+        const parseLegacyLine = (line) => {
             let level = 0;
             let rest = line;
             while (rest.startsWith(INDENT)) {
                 rest = rest.slice(INDENT.length);
                 level++;
             }
-            // Only counts if the line actually has a bullet/checkbox glyph after
-            // its leading indent - plain leading whitespace with no bullet isn't
-            // a real indent level.
-            if (level > 0 && /^[\u2022\u25E6\u25AA\u2610\u2611]/.test(rest)) {
-                maxLevel = Math.max(maxLevel, level);
+            let kind = 'plain';
+            let checked = false;
+            let content = line;
+
+            for (const c of CHECK_GLYPHS) {
+                if (rest.startsWith(c)) {
+                    let consumed = c.length;
+                    while (rest[consumed] === ' ') consumed++;
+                    if (consumed > c.length) {
+                        kind = 'check';
+                        checked = c === '\u2611';
+                        content = unstrike(rest.slice(consumed));
+                    }
+                    break;
+                }
             }
+            if (kind === 'plain') {
+                for (const b of BULLETS) {
+                    if (rest.startsWith(b)) {
+                        let consumed = b.length;
+                        while (rest[consumed] === ' ') consumed++;
+                        if (consumed > b.length) {
+                            kind = 'bullet';
+                            content = rest.slice(consumed);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (kind === 'plain') {
+                level = 0; // matches the old parseLine: bulletless lines are always level 0
+                content = line;
+            }
+            const bold = Array.from(content).some(isBoldChar);
+            if (bold) content = unboldify(content);
+            return { level, kind, checked, content, bold };
+        };
+
+        const items = rawLines.map(parseLegacyLine);
+
+        // Build a tree from the flat (level, kind, content, ...) list, then render
+        // it - a stack-based outline-to-tree walk, same idea as parseTreeDiagram
+        // uses for the AI-import outline format.
+        const root = { level: -1, children: [] };
+        const stack = [root];
+        for (const item of items) {
+            const node = { ...item, children: [] };
+            while (stack.length > 1 && stack[stack.length - 1].level >= node.level) stack.pop();
+            stack[stack.length - 1].children.push(node);
+            stack.push(node);
         }
 
-        if (!this._notesHangCtx) {
-            this._notesHangCtx = document.createElement('canvas').getContext('2d');
-        }
-        const computed = getComputedStyle(textarea);
-        this._notesHangCtx.font = `${computed.fontStyle} ${computed.fontWeight} ${computed.fontSize} ${computed.fontFamily}`;
-        const prefixSample = INDENT.repeat(maxLevel) + '\u2022 ';
-        const prefixWidth = this._notesHangCtx.measureText(prefixSample).width;
+        const renderLeaf = (node) => {
+            const escaped = escapeHtml(node.content);
+            return node.bold ? `<strong>${escaped}</strong>` : escaped;
+        };
 
-        const BASE_INSET = 10; // small left margin before the very first bullet
-        textarea.style.textIndent = -prefixWidth + 'px';
-        textarea.style.paddingLeft = (BASE_INSET + prefixWidth) + 'px';
-    }
-
-    // Called on every click inside the notes textarea (see renderNotesPanel) - a
-    // plain textarea has no way to attach a click handler to one specific
-    // character, so this just checks whether the cursor position the click landed
-    // on happens to sit immediately after a "☐"/"☑" glyph, and if so, treats that
-    // as clicking the checkbox itself: toggles it, and strikes through (or
-    // restores) the rest of that line's text.
-    maybeToggleNotesChecklistItem(textarea) {
-        const value = textarea.value;
-        const pos = textarea.selectionStart;
-        if (textarea.selectionEnd !== pos || pos < 1) return;
-        const glyph = value[pos - 1];
-        if (glyph !== '\u2610' && glyph !== '\u2611') return;
-        // Only when the glyph is the first non-whitespace thing on its line (a real
-        // checklist marker, however indented) and immediately followed by a space -
-        // guards against a stray checkbox character someone typed as ordinary text
-        // elsewhere.
-        const lineStart = pos - 1 <= 0 ? 0 : (value.lastIndexOf('\n', pos - 2) + 1);
-        if (value.slice(lineStart, pos - 1).trim() !== '') return;
-        if (value[pos] !== ' ') return;
-
-        let lineEnd = value.indexOf('\n', pos);
-        if (lineEnd === -1) lineEnd = value.length;
-        const wasChecked = glyph === '\u2611';
-        const newGlyph = wasChecked ? '\u2610' : '\u2611';
-        const rest = value.slice(pos + 1, lineEnd); // everything after "glyph "
-        const newRest = wasChecked ? this.unstrikethroughText(rest) : this.strikethroughText(rest);
-        textarea.value = value.slice(0, pos - 1) + newGlyph + ' ' + newRest + value.slice(lineEnd);
-        textarea.selectionStart = textarea.selectionEnd = pos;
-        this.globalNotes = textarea.value;
-        this._pendingNotesSave = true;
-        this.resizeReflectionAnswer(textarea);
-    }
-
-    // Turns whichever lines the current selection touches (or just the current
-    // line, if nothing's selected) into checklist items - "☐ " prefixed, replacing
-    // any existing bullet. Pressing it again on lines that are already all
-    // checklist items instead toggles them back to plain (non-checklist) lines,
-    // restoring any struck-through "done" text along the way. Clicking directly
-    // on a "☐"/"☑" glyph (see setupIndentableTextarea's click handler) still
-    // toggles just that one item checked/unchecked without leaving checklist mode.
-    convertNotesLinesToChecklist() {
-        const textarea = this.notesTextarea;
-        if (!textarea) return;
-        const value = textarea.value;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const lineStart = start <= 0 ? 0 : (value.lastIndexOf('\n', start - 1) + 1);
-        let blockEnd = value.indexOf('\n', end);
-        if (blockEnd === -1) blockEnd = value.length;
-
-        const before = value.slice(0, lineStart);
-        const block = value.slice(lineStart, blockEnd);
-        const after = value.slice(blockEnd);
-
-        const CHECK_RE = /^(\s*)(\u2610|\u2611)\s/;
-        const BULLET_RE = /^(\s*)([\u2022\u25E6\u25AA])\s+/;
-        const blockLines = block.split('\n');
-        const isChecklistOrBlank = line => CHECK_RE.test(line) || line.trim() === '';
-        const alreadyAllChecklist = blockLines.some(line => CHECK_RE.test(line)) && blockLines.every(isChecklistOrBlank);
-
-        const newLines = blockLines.map(line => {
-            const checkMatch = line.match(CHECK_RE);
-            if (alreadyAllChecklist) {
-                // Toggle off: drop the checkbox glyph (keeping its indent as plain
-                // text) and restore any struck-through text.
-                if (!checkMatch) return line;
-                const indent = checkMatch[1];
-                const wasChecked = checkMatch[2] === '☑';
-                const rest = line.slice(checkMatch[0].length);
-                return indent + (wasChecked ? this.unstrikethroughText(rest) : rest);
+        const renderChildren = (children) => {
+            let html = '';
+            let i = 0;
+            while (i < children.length) {
+                const node = children[i];
+                if (node.kind === 'plain') {
+                    html += node.bold ? `<h4>${escapeHtml(node.content)}</h4>` : `<p>${escapeHtml(node.content)}</p>`;
+                    i++;
+                    continue;
+                }
+                const kind = node.kind;
+                let group = '';
+                while (i < children.length && children[i].kind === kind) {
+                    const n = children[i];
+                    if (kind === 'check') {
+                        group += `<li data-type="taskItem" data-checked="${n.checked ? 'true' : 'false'}">`
+                            + `<label><input type="checkbox"${n.checked ? ' checked="checked"' : ''}><span></span></label>`
+                            + `<div><p>${renderLeaf(n)}</p>${renderChildren(n.children)}</div></li>`;
+                    } else {
+                        group += `<li><p>${renderLeaf(n)}</p>${renderChildren(n.children)}</li>`;
+                    }
+                    i++;
+                }
+                html += kind === 'check' ? `<ul data-type="taskList">${group}</ul>` : `<ul>${group}</ul>`;
             }
-            if (checkMatch) return line; // already a checklist item
-            // Keep whatever indent the line already had - only replace its bullet
-            // (or lack of one) with a checkbox.
-            const bulletMatch = line.match(BULLET_RE);
-            if (bulletMatch) {
-                return bulletMatch[1] + '☐ ' + line.slice(bulletMatch[0].length);
-            }
-            const indentMatch = line.match(/^\s*/);
-            const indent = indentMatch[0];
-            return indent + '☐ ' + line.slice(indent.length);
-        });
-        const newBlock = newLines.join('\n');
-        const lengthDelta = newBlock.length - block.length;
+            return html;
+        };
 
-        textarea.value = before + newBlock + after;
-        textarea.selectionStart = lineStart;
-        textarea.selectionEnd = blockEnd + lengthDelta;
-        this.globalNotes = textarea.value;
-        this.resizeReflectionAnswer(textarea);
-        this.renderNotesMediaStrip();
-        this.autosave();
-    }
-
-    // Wraps each visible character of `text` with a Unicode combining
-    // strikethrough (U+0336) - the closest thing to real strikethrough formatting
-    // achievable in a plain textarea, which has no rich text support at all.
-    strikethroughText(text) {
-        return Array.from(text).map(ch => (ch === '\n' ? ch : ch + '\u0336')).join('');
-    }
-
-    // Reverses strikethroughText - just strips every combining strikethrough
-    // character back out.
-    unstrikethroughText(text) {
-        return text.replace(/\u0336/g, '');
-    }
-
-    // Turns whichever lines the current selection touches (or just the current
-    // line, if nothing's selected) into a bold "title" line - toggles back to
-    // plain text if every touched line is already bolded. A plain <textarea> has
-    // no real font-size/weight per line, so this uses the Mathematical
-    // Sans-Serif Bold Unicode block (see boldifyText) to fake bold text; true
-    // font-size can't vary per line without a richer (contenteditable) editor.
-    convertNotesLinesToTitle() {
-        const textarea = this.notesTextarea;
-        if (!textarea) return;
-        const value = textarea.value;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const lineStart = start <= 0 ? 0 : (value.lastIndexOf('\n', start - 1) + 1);
-        let blockEnd = value.indexOf('\n', end);
-        if (blockEnd === -1) blockEnd = value.length;
-
-        const before = value.slice(0, lineStart);
-        const block = value.slice(lineStart, blockEnd);
-        const after = value.slice(blockEnd);
-
-        const PREFIX_RE = /^(\s*(?:[\u2022\u25E6\u25AA]|\u2610|\u2611)\s+)?/;
-        const blockLines = block.split('\n');
-        const alreadyBold = blockLines.some(line => {
-            const prefix = (line.match(PREFIX_RE) || [''])[0];
-            return this.isBoldifiedText(line.slice(prefix.length));
-        });
-
-        const newLines = blockLines.map(line => {
-            const prefix = (line.match(PREFIX_RE) || [''])[0];
-            const rest = line.slice(prefix.length);
-            const transformed = alreadyBold ? this.unboldifyText(rest) : this.boldifyText(rest);
-            return prefix + transformed;
-        });
-        const newBlock = newLines.join('\n');
-        const lengthDelta = newBlock.length - block.length;
-
-        textarea.value = before + newBlock + after;
-        textarea.selectionStart = lineStart;
-        textarea.selectionEnd = blockEnd + lengthDelta;
-        this.globalNotes = textarea.value;
-        this.resizeReflectionAnswer(textarea);
-        this.renderNotesMediaStrip();
-        this.autosave();
-    }
-
-    // Maps plain A-Z/a-z/0-9 characters to their Mathematical Sans-Serif Bold
-    // Unicode equivalents (U+1D5D4-U+1D607 letters, U+1D7EC-U+1D7F5 digits) -
-    // the closest a plain textarea can get to real bold text, the same trick
-    // strikethroughText above uses for strikethrough. Leaves any character
-    // outside A-Z/a-z/0-9 (spaces, punctuation, existing bold chars) untouched.
-    boldifyText(text) {
-        return Array.from(text).map(ch => {
-            const code = ch.codePointAt(0);
-            if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65));
-            if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97));
-            if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48));
-            return ch;
-        }).join('');
-    }
-
-    // Reverses boldifyText - maps Mathematical Sans-Serif Bold characters back
-    // to plain A-Z/a-z/0-9.
-    unboldifyText(text) {
-        return Array.from(text).map(ch => {
-            const code = ch.codePointAt(0);
-            if (code >= 0x1D5D4 && code <= 0x1D5ED) return String.fromCharCode(65 + (code - 0x1D5D4));
-            if (code >= 0x1D5EE && code <= 0x1D607) return String.fromCharCode(97 + (code - 0x1D5EE));
-            if (code >= 0x1D7EC && code <= 0x1D7F5) return String.fromCharCode(48 + (code - 0x1D7EC));
-            return ch;
-        }).join('');
-    }
-
-    // True if `text` contains at least one Mathematical Sans-Serif Bold
-    // character - used to decide whether convertNotesLinesToTitle is toggling
-    // bold on or off for a given block of lines.
-    isBoldifiedText(text) {
-        return Array.from(text).some(ch => {
-            const code = ch.codePointAt(0);
-            return (code >= 0x1D5D4 && code <= 0x1D607) || (code >= 0x1D7EC && code <= 0x1D7F5);
-        });
+        const html = renderChildren(root.children);
+        return html || '<p></p>';
     }
 
     // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
@@ -4667,17 +4364,18 @@ class FlowchartViewer {
 
     // Handles pasting either actual image *data* (e.g. a screenshot, or copied from
     // an image editor) or a plain text URL that looks like it points at an image.
-    // Raw image data has no natural text form, so it still gets a [[image:ID]]
-    // marker; a pasted URL is left as plain, ordinary URL text - readable and
-    // copyable, and picked up automatically for a preview by getNotesMediaMarkers -
-    // rather than replaced with an opaque marker, since a real clickable hyperlink
-    // isn't possible inside a plain textarea no matter what text is used.
+    // Raw image data has no natural embeddable form here, so it still gets a
+    // [[image:ID]] marker; a pasted URL is left as plain, ordinary URL text -
+    // readable and copyable, and picked up automatically for a preview by
+    // getNotesMediaMarkers. Called from editorProps.handlePaste (see
+    // renderNotesPanel) - returning true tells Tiptap "handled, don't also run
+    // your own default paste behavior"; returning false/undefined lets a plain
+    // text/URL paste go through normally.
     handleNotesPaste(e) {
         const items = e.clipboardData && e.clipboardData.items;
         if (items) {
             for (const item of items) {
                 if (item.type && item.type.startsWith('image/')) {
-                    e.preventDefault();
                     const blob = item.getAsFile();
                     if (!blob) continue;
                     const reader = new FileReader();
@@ -4687,28 +4385,25 @@ class FlowchartViewer {
                         this.insertNotesMediaMarker('image', id);
                     };
                     reader.readAsDataURL(blob);
-                    return;
+                    return true;
                 }
             }
         }
         // Otherwise, a pasted image URL (or any other text) just pastes normally -
         // getNotesMediaMarkers picks up the URL and shows its preview automatically
-        // once the resulting 'input' event fires and re-renders the strip.
+        // once the resulting update fires and re-renders the strip.
+        return false;
     }
 
     // Shared by the drawing tool - drops a [[type:id]] marker on its own line at
     // wherever the cursor last was, then re-renders so the preview strip picks it up.
     insertNotesMediaMarker(type, id) {
         const marker = `[[${type}:${id}]]`;
-        const value = this.globalNotes || '';
-        const pos = Math.min(this._notesCursorPos || value.length, value.length);
-        const lineStart = pos <= 0 ? 0 : (value.lastIndexOf('\n', pos - 1) + 1);
-        let lineEnd = value.indexOf('\n', pos);
-        if (lineEnd === -1) lineEnd = value.length;
-        const lineText = value.slice(lineStart, lineEnd);
-        const insertion = (lineText.trim() ? '\n' : '') + marker + '\n';
-        this.globalNotes = value.slice(0, lineEnd) + insertion + value.slice(lineEnd);
-        this.renderNotesPanel();
+        if (this.notesEditor) {
+            this.notesEditor.chain().focus().insertContent(`<p>${marker}</p>`).run();
+            this.globalNotes = this.notesEditor.getHTML();
+        }
+        this.renderNotesMediaStrip();
         this.autosave();
     }
 
@@ -4767,9 +4462,6 @@ class FlowchartViewer {
     // Opens the full-screen drawing overlay for a brand new drawing, to be inserted
     // at wherever the cursor last was in the notes textarea.
     startNewNotesDrawing() {
-        if (this.notesTextarea) {
-            this._notesCursorPos = this.notesTextarea.selectionStart;
-        }
         this.openDrawingOverlay(null);
     }
 
@@ -5467,7 +5159,7 @@ class FlowchartViewer {
             }
             this.notesDrawings[id] = { dataUrl };
 
-            if (!state.editingId && this.notesTextarea) {
+            if (!state.editingId && this.notesEditor) {
                 // Brand new drawing - insert its marker at wherever the cursor last was.
                 this.insertNotesMediaMarker('drawing', id);
                 this.drawingOverlay.style.display = 'none';
@@ -5551,11 +5243,11 @@ class FlowchartViewer {
         } else if (state.editingId && this.notesDrawings[state.editingId]) {
             delete this.notesDrawings[state.editingId];
             const marker = `[[drawing:${state.editingId}]]`;
+            const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             this.globalNotes = (this.globalNotes || '')
-                .split('\n')
-                .filter(line => line.trim() !== marker)
-                .join('\n');
-            this.renderNotesPanel();
+                .replace(new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`), '');
+            if (this.notesEditor) this.notesEditor.commands.setContent(this.globalNotes, false);
+            this.renderNotesMediaStrip();
             this.autosave();
         }
         this.drawingOverlay.style.display = 'none';
@@ -7712,7 +7404,11 @@ class FlowchartViewer {
     }
 }
 
-// Initialize the viewer when the page loads
+// Initialize the viewer when the page loads - waits for the Tiptap module
+// loader (see index.html) so Notes never tries to render before its editor
+// library has finished loading.
 document.addEventListener('DOMContentLoaded', () => {
-    new FlowchartViewer();
+    Promise.resolve(window.TiptapNotesReady).then(() => {
+        new FlowchartViewer();
+    });
 });
