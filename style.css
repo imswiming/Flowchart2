@@ -233,11 +233,11 @@ body {
    strip pinned below whichever of Questions/Pugh Matrix is currently showing above
    it, so it's always on screen whenever the panel itself is open. ===== */
 #notes-resize-handle {
-    height: 6px;
+    height: 10px;
     flex-shrink: 0;
     cursor: ns-resize;
     background: transparent;
-    border-top: 1px solid var(--border);
+    border-top: 3px solid var(--muted);
 }
 
 #notes-resize-handle:hover {
@@ -274,13 +274,14 @@ body {
     border-radius: 5px;
     border: 1px solid var(--border);
     background: var(--control-bg);
-    /* Each indent level gets a fixed amount of horizontal room instead of
-       wrapping at the box's edge - a long line just extends further right and
-       scrolls here rather than reflowing, so a wrapped-if-it-wrapped line's
-       continuation always lines up under that SAME line's own text at ANY
-       nesting depth (real per-line indent, via nested <ul>/<li> padding -
-       unlike the old plain-textarea version's single global hanging-indent
-       guess, which could only ever be exactly right for one depth at a time). */
+    /* Each line wraps after a fixed number of characters (see the p/h4 rule
+       below) rather than at the box's own edge - a real nested <ul>/<li>
+       gives every indent depth its own correct padding, so a wrapped line's
+       continuation always lines up under that SAME line's own text (unlike
+       the old plain-textarea version's single global hanging-indent guess,
+       which could only ever be exactly right for one depth at a time). Deep
+       indentation can still push a line's fixed-width column wider than the
+       visible box, hence the horizontal scroll here as a fallback. */
     overflow: auto;
 }
 
@@ -298,8 +299,14 @@ body {
 #notes-editor .ProseMirror p,
 #notes-editor .ProseMirror h4,
 #notes-editor .ProseMirror li {
-    white-space: nowrap;
     margin: 0;
+}
+
+#notes-editor .ProseMirror p,
+#notes-editor .ProseMirror h4 {
+    white-space: normal;
+    overflow-wrap: break-word;
+    max-width: 50ch;
 }
 
 #notes-editor .ProseMirror > * + * {
@@ -319,10 +326,6 @@ body {
 
 #notes-editor .ProseMirror li {
     margin: 0.15em 0;
-}
-
-#notes-editor .ProseMirror li > p {
-    display: inline;
 }
 
 /* Checklist items - real checkboxes and real strikethrough (via CSS), instead
@@ -1347,14 +1350,13 @@ body {
     background: var(--control-hover);
 }
 
-/* 1.5x the size of the other notes header buttons. */
 #notes-checklist-btn {
     background: var(--control-bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 18px;
-    padding: 6px 15px;
+    border-radius: 5px;
+    font-size: 12px;
+    padding: 4px 10px;
     cursor: pointer;
 }
 

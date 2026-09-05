@@ -4084,6 +4084,19 @@ class FlowchartViewer {
                 // pasted URL) returns false so Tiptap's own default paste handling
                 // still runs normally.
                 handlePaste: (view, event) => !!this.handleNotesPaste(event),
+                // Tab/Shift+Tab indent/outdent the current line - same commands as
+                // the Indent/Outdent buttons, so Tab on an empty (or plain) line
+                // starts a bullet the same way clicking Indent does.
+                handleKeyDown: (view, event) => {
+                    if (event.key !== 'Tab') return false;
+                    event.preventDefault();
+                    if (event.shiftKey) {
+                        this.outdentNotesLine();
+                    } else {
+                        this.indentNotesLine();
+                    }
+                    return true;
+                },
             },
             onFocus: () => this.foldNotesSection(),
             onBlur: () => {
@@ -4109,12 +4122,18 @@ class FlowchartViewer {
 
     // Toggles the selected (or current) lines' checklist state - Tiptap's
     // TaskList/TaskItem extensions handle nesting, checked state, and real
-    // strikethrough (see style.css) natively, so this is just a thin wrapper
-    // around the built-in toggle command (which itself flips checklist on/off
-    // for whatever's selected, same as the old plain-text version's behavior).
+    // strikethrough (see style.css) natively. Toggling ON is just the built-in
+    // command; toggling OFF an existing checklist turns it into a plain
+    // bullet point rather than bare paragraphs, since toggleTaskList() alone
+    // would lift it all the way out to plain text.
     toggleNotesChecklist() {
         if (!this.notesEditor) return;
-        this.notesEditor.chain().focus().toggleTaskList().run();
+        const editor = this.notesEditor;
+        if (editor.isActive('taskItem')) {
+            editor.chain().focus().toggleTaskList().toggleBulletList().run();
+        } else {
+            editor.chain().focus().toggleTaskList().run();
+        }
     }
 
     // Toggles the selected (or current) lines between a plain line and a bold,
