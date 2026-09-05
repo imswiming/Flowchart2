@@ -4122,18 +4122,96 @@ class FlowchartViewer {
 
     // Toggles the selected (or current) lines' checklist state - Tiptap's
     // TaskList/TaskItem extensions handle nesting, checked state, and real
-    // strikethrough (see style.css) natively. Toggling ON is just the built-in
-    // command; toggling OFF an existing checklist turns it into a plain
-    // bullet point rather than bare paragraphs, since toggleTaskList() alone
-    // would lift it all the way out to plain text.
+    // strikethrough (see style.css) natively. If the current line isn't in
+    // any list yet, this is just the built-in "start a checklist" command;
+    // otherwise it hands off to convertNotesListItemType, which preserves
+    // wherever the line is currently nested (Tiptap's own toggleTaskList/
+    // toggleBulletList lift the line up to the top of its enclosing list
+    // first, which loses its indent level - see that method for why).
     toggleNotesChecklist() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
         if (editor.isActive('taskItem')) {
-            editor.chain().focus().toggleTaskList().toggleBulletList().run();
+            this.convertNotesListItemType('listItem', 'bulletList');
+        } else if (editor.isActive('listItem')) {
+            this.convertNotesListItemType('taskItem', 'taskList');
         } else {
             editor.chain().focus().toggleTaskList().run();
         }
+    }
+
+    // Converts the list item(s) touched by the current selection to a
+    // different item/list type (listItem/bulletList <-> taskItem/taskList) IN
+    // PLACE - same parent, same depth, same position among siblings - unlike
+    // Tiptap's built-in toggleBulletList/toggleTaskList, which lift the
+    // selection out of its enclosing list before rewrapping it (fine for a
+    // top-level line, but it silently un-nests anything indented under a
+    // parent line). Any untouched sibling items on either side are split off
+    // into their own list of the original type, so only the selected item(s)
+    // actually change type.
+    convertNotesListItemType(targetItemType, targetListType) {
+        const editor = this.notesEditor;
+        const { state } = editor;
+        const { $from, $to } = state.selection;
+
+        const sourceItemType = targetItemType === 'listItem' ? 'taskItem' : 'listItem';
+
+        // The nearest ancestor of the (source) item type wrapping the
+        // selection's start, and the enclosing list one level up from it.
+        let itemDepth = null;
+        for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name === sourceItemType) { itemDepth = d; break; }
+        }
+        if (itemDepth === null) return; // not actually in a list of that type - nothing to do
+
+        const listDepth = itemDepth - 1;
+        const listNode = $from.node(listDepth);
+        const listStart = $from.before(listDepth);
+        const listEnd = $from.after(listDepth);
+
+        // Which of the list's children does the selection touch? Only
+        // $from's list is considered - a selection spanning into a
+        // differently-nested list falls back to just $from's own item,
+        // which keeps this from doing something surprising across a more
+        // complex selection.
+        let childIndexFrom = -1;
+        let childIndexTo = -1;
+        let offset = listStart + 1;
+        for (let i = 0; i < listNode.childCount; i++) {
+            const childEnd = offset + listNode.child(i).nodeSize;
+            if (childIndexFrom === -1 && $from.pos < childEnd) childIndexFrom = i;
+            if ($to.pos <= childEnd) { childIndexTo = i; break; }
+            offset = childEnd;
+        }
+        if (childIndexFrom === -1) return;
+        if (childIndexTo === -1) childIndexTo = childIndexFrom;
+
+        const schema = state.schema;
+        const targetItemNodeType = schema.nodes[targetItemType];
+        const targetListNodeType = schema.nodes[targetListType];
+        if (!targetItemNodeType || !targetListNodeType) return;
+
+        const itemsBefore = [];
+        const itemsSelected = [];
+        const itemsAfter = [];
+        for (let i = 0; i < listNode.childCount; i++) {
+            const child = listNode.child(i);
+            if (i < childIndexFrom) itemsBefore.push(child);
+            else if (i > childIndexTo) itemsAfter.push(child);
+            else {
+                const attrs = targetItemType === 'taskItem' ? { checked: false } : {};
+                itemsSelected.push(targetItemNodeType.create(attrs, child.content));
+            }
+        }
+
+        const pieces = [];
+        if (itemsBefore.length) pieces.push(listNode.type.create(listNode.attrs, itemsBefore));
+        pieces.push(targetListNodeType.create(null, itemsSelected));
+        if (itemsAfter.length) pieces.push(listNode.type.create(listNode.attrs, itemsAfter));
+
+        const tr = state.tr.replaceWith(listStart, listEnd, pieces);
+        editor.view.dispatch(tr);
+        editor.commands.focus();
     }
 
     // Toggles the selected (or current) lines between a plain line and a bold,
