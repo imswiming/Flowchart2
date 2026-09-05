@@ -4285,6 +4285,13 @@ class FlowchartViewer {
         checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
         checklistBtn.addEventListener('click', () => this.convertNotesLinesToChecklist());
         header.appendChild(checklistBtn);
+        const titleBtn = document.createElement('button');
+        titleBtn.id = 'notes-title-btn';
+        titleBtn.type = 'button';
+        titleBtn.textContent = 'T• Title';
+        titleBtn.title = 'Make the selected (or current) lines a bold title';
+        titleBtn.addEventListener('click', () => this.convertNotesLinesToTitle());
+        header.appendChild(titleBtn);
         this.notesPanelBody.appendChild(header);
 
         const notesArea = document.createElement('textarea');
@@ -4301,6 +4308,7 @@ class FlowchartViewer {
             // appear right away, since the URL is left as plain pasted text rather
             // than replaced by a marker (see handleNotesPaste).
             this.renderNotesMediaStrip();
+            this.updateNotesHangIndent(notesArea);
         });
         notesArea.addEventListener('focus', () => {
             this.foldNotesSection();
@@ -4322,6 +4330,51 @@ class FlowchartViewer {
         this.notesPanelBody.appendChild(notesArea);
 
         this.renderNotesMediaStrip();
+        this.updateNotesHangIndent(notesArea);
+    }
+
+    // A plain <textarea> applies padding-left/text-indent uniformly to the whole
+    // box, not per line - so the hanging indent that lines wrapped continuation
+    // text up under its own bullet (see .reflection-notes-global in style.css)
+    // can only ever exactly match ONE indent depth at a time. Rather than a
+    // static guess (which left every indented line's wrapped text realigned back
+    // to the top-level column, well short of its own bullet), this recomputes the
+    // hang to match whichever indent level is currently the DEEPEST anywhere in
+    // the notes, using the textarea's own real font metrics. That means a
+    // shallower line's wrap can end up hanging a bit further right than its own
+    // bullet (still reads fine), but nothing ever wraps back short of its bullet,
+    // which was the actually-broken/confusing case.
+    updateNotesHangIndent(textarea) {
+        if (!textarea) return;
+        const INDENT = '        '; // must match setupIndentableTextarea's INDENT
+        const lines = textarea.value.split('\n');
+        let maxLevel = 0;
+        for (const line of lines) {
+            let level = 0;
+            let rest = line;
+            while (rest.startsWith(INDENT)) {
+                rest = rest.slice(INDENT.length);
+                level++;
+            }
+            // Only counts if the line actually has a bullet/checkbox glyph after
+            // its leading indent - plain leading whitespace with no bullet isn't
+            // a real indent level.
+            if (level > 0 && /^[\u2022\u25E6\u25AA\u2610\u2611]/.test(rest)) {
+                maxLevel = Math.max(maxLevel, level);
+            }
+        }
+
+        if (!this._notesHangCtx) {
+            this._notesHangCtx = document.createElement('canvas').getContext('2d');
+        }
+        const computed = getComputedStyle(textarea);
+        this._notesHangCtx.font = `${computed.fontStyle} ${computed.fontWeight} ${computed.fontSize} ${computed.fontFamily}`;
+        const prefixSample = INDENT.repeat(maxLevel) + '\u2022 ';
+        const prefixWidth = this._notesHangCtx.measureText(prefixSample).width;
+
+        const BASE_INSET = 10; // small left margin before the very first bullet
+        textarea.style.textIndent = -prefixWidth + 'px';
+        textarea.style.paddingLeft = (BASE_INSET + prefixWidth) + 'px';
     }
 
     // Called on every click inside the notes textarea (see renderNotesPanel) - a
@@ -4358,8 +4411,11 @@ class FlowchartViewer {
 
     // Turns whichever lines the current selection touches (or just the current
     // line, if nothing's selected) into checklist items - "☐ " prefixed, replacing
-    // any existing bullet. Clicking directly on a "☐"/"☑" glyph afterward (see
-    // setupIndentableTextarea's click handler) toggles it checked/unchecked.
+    // any existing bullet. Pressing it again on lines that are already all
+    // checklist items instead toggles them back to plain (non-checklist) lines,
+    // restoring any struck-through "done" text along the way. Clicking directly
+    // on a "☐"/"☑" glyph (see setupIndentableTextarea's click handler) still
+    // toggles just that one item checked/unchecked without leaving checklist mode.
     convertNotesLinesToChecklist() {
         const textarea = this.notesTextarea;
         if (!textarea) return;
@@ -4376,12 +4432,24 @@ class FlowchartViewer {
 
         const CHECK_RE = /^(\u2610|\u2611)\s/;
         const BULLET_RE = /^(\s*)([\u2022\u25E6\u25AA])\s+/;
-        const newLines = block.split('\n').map(line => {
-            if (CHECK_RE.test(line)) return line; // already a checklist item
+        const blockLines = block.split('\n');
+        const isChecklistOrBlank = line => CHECK_RE.test(line) || line.trim() === '';
+        const alreadyAllChecklist = blockLines.some(line => CHECK_RE.test(line)) && blockLines.every(isChecklistOrBlank);
+
+        const newLines = blockLines.map(line => {
+            const checkMatch = line.match(CHECK_RE);
+            if (alreadyAllChecklist) {
+                // Toggle off: drop the checkbox glyph and restore any struck-through text.
+                if (!checkMatch) return line;
+                const wasChecked = checkMatch[1] === '☑';
+                const rest = line.slice(checkMatch[0].length);
+                return wasChecked ? this.unstrikethroughText(rest) : rest;
+            }
+            if (checkMatch) return line; // already a checklist item
             let content = line;
             const bulletMatch = line.match(BULLET_RE);
             if (bulletMatch) content = line.slice(bulletMatch[0].length);
-            return '\u2610 ' + content;
+            return '☐ ' + content;
         });
         const newBlock = newLines.join('\n');
         const lengthDelta = newBlock.length - block.length;
@@ -4406,6 +4474,88 @@ class FlowchartViewer {
     // character back out.
     unstrikethroughText(text) {
         return text.replace(/\u0336/g, '');
+    }
+
+    // Turns whichever lines the current selection touches (or just the current
+    // line, if nothing's selected) into a bold "title" line - toggles back to
+    // plain text if every touched line is already bolded. A plain <textarea> has
+    // no real font-size/weight per line, so this uses the Mathematical
+    // Sans-Serif Bold Unicode block (see boldifyText) to fake bold text; true
+    // font-size can't vary per line without a richer (contenteditable) editor.
+    convertNotesLinesToTitle() {
+        const textarea = this.notesTextarea;
+        if (!textarea) return;
+        const value = textarea.value;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const lineStart = start <= 0 ? 0 : (value.lastIndexOf('\n', start - 1) + 1);
+        let blockEnd = value.indexOf('\n', end);
+        if (blockEnd === -1) blockEnd = value.length;
+
+        const before = value.slice(0, lineStart);
+        const block = value.slice(lineStart, blockEnd);
+        const after = value.slice(blockEnd);
+
+        const PREFIX_RE = /^(\s*(?:[\u2022\u25E6\u25AA]|\u2610|\u2611)\s+)?/;
+        const blockLines = block.split('\n');
+        const alreadyBold = blockLines.some(line => {
+            const prefix = (line.match(PREFIX_RE) || [''])[0];
+            return this.isBoldifiedText(line.slice(prefix.length));
+        });
+
+        const newLines = blockLines.map(line => {
+            const prefix = (line.match(PREFIX_RE) || [''])[0];
+            const rest = line.slice(prefix.length);
+            const transformed = alreadyBold ? this.unboldifyText(rest) : this.boldifyText(rest);
+            return prefix + transformed;
+        });
+        const newBlock = newLines.join('\n');
+        const lengthDelta = newBlock.length - block.length;
+
+        textarea.value = before + newBlock + after;
+        textarea.selectionStart = lineStart;
+        textarea.selectionEnd = blockEnd + lengthDelta;
+        this.globalNotes = textarea.value;
+        this.resizeReflectionAnswer(textarea);
+        this.renderNotesMediaStrip();
+        this.autosave();
+    }
+
+    // Maps plain A-Z/a-z/0-9 characters to their Mathematical Sans-Serif Bold
+    // Unicode equivalents (U+1D5D4-U+1D607 letters, U+1D7EC-U+1D7F5 digits) -
+    // the closest a plain textarea can get to real bold text, the same trick
+    // strikethroughText above uses for strikethrough. Leaves any character
+    // outside A-Z/a-z/0-9 (spaces, punctuation, existing bold chars) untouched.
+    boldifyText(text) {
+        return Array.from(text).map(ch => {
+            const code = ch.codePointAt(0);
+            if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65));
+            if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97));
+            if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48));
+            return ch;
+        }).join('');
+    }
+
+    // Reverses boldifyText - maps Mathematical Sans-Serif Bold characters back
+    // to plain A-Z/a-z/0-9.
+    unboldifyText(text) {
+        return Array.from(text).map(ch => {
+            const code = ch.codePointAt(0);
+            if (code >= 0x1D5D4 && code <= 0x1D5ED) return String.fromCharCode(65 + (code - 0x1D5D4));
+            if (code >= 0x1D5EE && code <= 0x1D607) return String.fromCharCode(97 + (code - 0x1D5EE));
+            if (code >= 0x1D7EC && code <= 0x1D7F5) return String.fromCharCode(48 + (code - 0x1D7EC));
+            return ch;
+        }).join('');
+    }
+
+    // True if `text` contains at least one Mathematical Sans-Serif Bold
+    // character - used to decide whether convertNotesLinesToTitle is toggling
+    // bold on or off for a given block of lines.
+    isBoldifiedText(text) {
+        return Array.from(text).some(ch => {
+            const code = ch.codePointAt(0);
+            return (code >= 0x1D5D4 && code <= 0x1D607) || (code >= 0x1D7EC && code <= 0x1D7F5);
+        });
     }
 
     // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
@@ -4718,7 +4868,7 @@ class FlowchartViewer {
         // big the stroke will actually look) and keeps it centered on the exact point
         // toCrosshairCanvasPoint draws at, regardless of diameter.
         const updateSizeIndicator = () => {
-            const diameter = Math.max(4, activeWidth() * state.scale);
+            const diameter = Math.max(4, activeWidth() * state.scale * (state.fitScale || 1));
             const indicator = document.getElementById('drawing-size-indicator');
             if (!indicator) return;
             indicator.style.width = diameter + 'px';
@@ -5205,6 +5355,13 @@ class FlowchartViewer {
         const fitScale = Math.max(0.1, Math.min(availW / DRAWING_CANVAS_W, availH / DRAWING_CANVAS_H));
         canvas.style.width = Math.round(DRAWING_CANVAS_W * fitScale) + 'px';
         canvas.style.height = Math.round(DRAWING_CANVAS_H * fitScale) + 'px';
+        // Brush/eraser widths are defined in the canvas's own fixed pixel space
+        // (ctx.lineWidth), but the canvas is displayed at fitScale * state.scale
+        // relative to that (see updateSizeIndicator) - without dividing back out
+        // fitScale here, the on-screen size indicator ignored how much the fixed
+        // 1600x1000 canvas was shrunk to fit the viewport, so it never matched the
+        // actual rendered stroke size except when fitScale happened to be 1.
+        state.fitScale = fitScale;
 
         // Smooths both scaled image loads (see the letterboxed drawImage below) and
         // the visible on-screen rendering when the display size differs from the
