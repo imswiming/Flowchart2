@@ -306,7 +306,15 @@ body {
 #notes-editor .ProseMirror h4 {
     white-space: normal;
     overflow-wrap: break-word;
-    max-width: 50ch;
+    /* A fixed width (not max-width) so a deeply-indented line wraps after the
+       same number of characters as a top-level one, starting from wherever
+       its own indent places it - rather than being squeezed down to wrap at
+       whatever room is left in the box, which is what max-width still did
+       once indentation ate into the available width. Overflowing past the
+       visible box at deep indent levels is expected - #notes-editor-wrap's
+       horizontal scroll (below) is how the rest is reached. */
+    width: 50ch;
+    flex-shrink: 0;
 }
 
 #notes-editor .ProseMirror > * + * {
@@ -357,8 +365,10 @@ body {
 }
 
 #notes-editor .ProseMirror ul[data-type="taskList"] li > div {
-    flex: 1;
-    min-width: 0;
+    /* Not flex:1/min-width:0 (which would let flex shrink this - and the
+       fixed-width <p> inside it - down to fit) - it should size to its
+       content's actual (fixed) width instead, same as a plain bullet's <li>. */
+    flex: 0 0 auto;
 }
 
 /* Reset first, then only a checked item's OWN paragraph (not its nested
