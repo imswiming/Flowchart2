@@ -4137,12 +4137,7 @@ class FlowchartViewer {
     toggleNotesChecklist() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
-        const { $from } = editor.state.selection;
-        let nearestType = null;
-        for (let d = $from.depth; d > 0; d--) {
-            const name = $from.node(d).type.name;
-            if (name === 'taskItem' || name === 'listItem') { nearestType = name; break; }
-        }
+        const nearestType = this.getNearestNotesListItemType();
         if (nearestType === 'taskItem') {
             this.convertNotesListItemType('listItem', 'bulletList');
         } else if (nearestType === 'listItem') {
@@ -4150,6 +4145,21 @@ class FlowchartViewer {
         } else {
             editor.chain().focus().toggleTaskList().run();
         }
+    }
+
+    // Shared by toggleNotesChecklist/indentNotesLine/outdentNotesLine - finds
+    // the NEAREST enclosing listItem/taskItem, not editor.isActive() (which
+    // matches if EITHER type appears anywhere in the ancestor chain, so a
+    // checklist item nested inside a plain-bullet parent - or vice versa -
+    // would get misread as whatever the OUTER ancestor happens to be).
+    getNearestNotesListItemType() {
+        if (!this.notesEditor) return null;
+        const { $from } = this.notesEditor.state.selection;
+        for (let d = $from.depth; d > 0; d--) {
+            const name = $from.node(d).type.name;
+            if (name === 'taskItem' || name === 'listItem') return name;
+        }
+        return null;
     }
 
     // Converts the list item(s) touched by the current selection to a
@@ -4165,6 +4175,8 @@ class FlowchartViewer {
         const editor = this.notesEditor;
         const { state } = editor;
         const { $from, $to } = state.selection;
+        const origFromPos = $from.pos;
+        const origToPos = $to.pos;
 
         const sourceItemType = targetItemType === 'listItem' ? 'taskItem' : 'listItem';
 
@@ -4216,13 +4228,36 @@ class FlowchartViewer {
             }
         }
 
+        const beforePiece = itemsBefore.length ? listNode.type.create(listNode.attrs, itemsBefore) : null;
+        const selectedPiece = targetListNodeType.create(null, itemsSelected);
         const pieces = [];
-        if (itemsBefore.length) pieces.push(listNode.type.create(listNode.attrs, itemsBefore));
-        pieces.push(targetListNodeType.create(null, itemsSelected));
+        if (beforePiece) pieces.push(beforePiece);
+        pieces.push(selectedPiece);
         if (itemsAfter.length) pieces.push(listNode.type.create(listNode.attrs, itemsAfter));
+
+        // tr.mapping.map() can't recover a sensible position here - the whole
+        // [listStart, listEnd) range is replaced with brand-new nodes, so any
+        // position that fell INSIDE the old range has no direct counterpart
+        // and gets snapped to an edge (read as "the cursor jumped to the next
+        // line"). Instead, compute the new position directly: itemsSelected
+        // keeps the exact same content (just a different item wrapper, which
+        // contributes the same 1 open + 1 close token either way), so the
+        // cursor's offset relative to where itemsSelected begins is unchanged
+        // - only the absolute start position (before vs. after this edit)
+        // differs.
+        let origSumBefore = 0;
+        for (const child of itemsBefore) origSumBefore += child.nodeSize;
+        const origSelectedStart = listStart + 1 + origSumBefore;
+        const relFrom = origFromPos - origSelectedStart;
+        const relTo = origToPos - origSelectedStart;
+
+        const newSelectedStart = listStart + (beforePiece ? beforePiece.nodeSize : 0) + 1;
+        const newFrom = newSelectedStart + relFrom;
+        const newTo = newSelectedStart + relTo;
 
         const tr = state.tr.replaceWith(listStart, listEnd, pieces);
         editor.view.dispatch(tr);
+        editor.commands.setTextSelection({ from: newFrom, to: newTo });
         editor.commands.focus();
     }
 
@@ -4246,22 +4281,114 @@ class FlowchartViewer {
     indentNotesLine() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
-        if (editor.isActive('taskItem')) {
-            editor.chain().focus().sinkListItem('taskItem').run();
-        } else if (editor.isActive('listItem')) {
-            editor.chain().focus().sinkListItem('listItem').run();
-        } else {
+        const itemType = this.getNearestNotesListItemType();
+        if (itemType === null) {
             editor.chain().focus().toggleBulletList().run();
+            return;
+        }
+        if (editor.can().sinkListItem(itemType)) {
+            editor.chain().focus().sinkListItem(itemType).run();
+        } else {
+            this.sinkNotesListItemAcrossBoundary(itemType);
         }
     }
 
     outdentNotesLine() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
-        if (editor.isActive('taskItem')) {
-            editor.chain().focus().liftListItem('taskItem').run();
-        } else if (editor.isActive('listItem')) {
-            editor.chain().focus().liftListItem('listItem').run();
+        const itemType = this.getNearestNotesListItemType();
+        if (itemType === null) return;
+        editor.chain().focus().liftListItem(itemType).run();
+    }
+
+    // sinkListItem only ever nests an item under its own IMMEDIATELY
+    // PRECEDING SIBLING within the same list node - so it fails (silently
+    // no-ops) whenever the current item is the first child of its list, even
+    // if something that could reasonably hold it sits right before that list
+    // (most commonly: a checklist conversion split one shared list into
+    // several separate list nodes side by side - see convertNotesListItemType
+    // - so the second and later items could no longer be sunk under the
+    // first at all). This walks upward from the current item through
+    // enclosing list boundaries, and at the first ancestor level where
+    // something (an item or a list) precedes it, relocates the current item
+    // to become a new nested child there - preserving its own type
+    // (bullet stays a bullet, checklist stays a checklist) - rather than
+    // capping how deep a line can go relative to whatever's directly above.
+    sinkNotesListItemAcrossBoundary(itemType) {
+        const editor = this.notesEditor;
+        const { state } = editor;
+        const { $from } = state.selection;
+        const LIST_TYPES = ['bulletList', 'orderedList', 'taskList'];
+        const schema = state.schema;
+        const listTypeForItem = schema.nodes[itemType === 'taskItem' ? 'taskList' : 'bulletList'];
+
+        let itemDepth = null;
+        for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
+        }
+        if (itemDepth === null) return;
+
+        // Walk up from the item's own enclosing list, checking progressively
+        // higher list-boundaries for something to nest into.
+        for (let listDepth = itemDepth - 1; listDepth >= 1; listDepth -= 2) {
+            const boundaryPos = $from.before(listDepth);
+            if (boundaryPos <= 0) continue;
+            const prevNode = state.doc.resolve(boundaryPos).nodeBefore;
+            if (!prevNode || !LIST_TYPES.includes(prevNode.type.name)) continue;
+
+            // Found a preceding list at this depth - append our own item
+            // into its last child's content. Its last child's own [start,
+            // end) range is computed explicitly and replaced wholesale
+            // (rather than inserting at the bare boundary position, which is
+            // ambiguous between "inside the last child" and "after the
+            // list" - ProseMirror resolved it as the latter, silently
+            // landing the moved item as a new top-level sibling instead of
+            // actually nesting it).
+            const prevNodeStart = boundaryPos - prevNode.nodeSize;
+            let lastChildStart = prevNodeStart + 1;
+            for (let i = 0; i < prevNode.childCount - 1; i++) lastChildStart += prevNode.child(i).nodeSize;
+            const lastChildNode = prevNode.child(prevNode.childCount - 1);
+            const lastChildEnd = lastChildStart + lastChildNode.nodeSize;
+
+            const ownListDepth = itemDepth - 1;
+            const ownListNode = $from.node(ownListDepth);
+            const ownListStart = $from.before(ownListDepth);
+            const ownListEnd = $from.after(ownListDepth);
+            const ownItemStart = $from.before(itemDepth);
+
+            let ownChildIndex = -1;
+            let off = ownListStart + 1;
+            for (let i = 0; i < ownListNode.childCount; i++) {
+                if (off === ownItemStart) { ownChildIndex = i; break; }
+                off += ownListNode.child(i).nodeSize;
+            }
+            if (ownChildIndex === -1) return;
+
+            const ownItemNode = ownListNode.child(ownChildIndex);
+            const remaining = [];
+            for (let i = 0; i < ownListNode.childCount; i++) {
+                if (i !== ownChildIndex) remaining.push(ownListNode.child(i));
+            }
+
+            const wrapper = listTypeForItem.create(null, [ownItemNode]);
+            const newLastChildContent = [];
+            lastChildNode.content.forEach(child => newLastChildContent.push(child));
+            newLastChildContent.push(wrapper);
+            const newLastChildNode = lastChildNode.type.create(lastChildNode.attrs, newLastChildContent);
+
+            const tr = state.tr;
+            if (remaining.length) {
+                tr.replaceWith(ownListStart, ownListEnd, ownListNode.type.create(ownListNode.attrs, remaining));
+            } else {
+                tr.delete(ownListStart, ownListEnd);
+            }
+            // lastChildStart/lastChildEnd sit entirely before ownListStart
+            // (prevNode is what immediately precedes our own list), so
+            // they're unaffected by the edit above and don't need remapping.
+            tr.replaceWith(lastChildStart, lastChildEnd, newLastChildNode);
+            editor.view.dispatch(tr);
+            editor.commands.focus();
+            return;
         }
     }
 
