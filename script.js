@@ -19,6 +19,7 @@ class FlowchartViewer {
         this.leftPanelTabQuestions = document.getElementById('left-panel-tab-questions');
         this.leftPanelTabPugh = document.getElementById('left-panel-tab-pugh');
         this.leftPanelTabMorph = document.getElementById('left-panel-tab-morph');
+        this.leftPanelTabNotes = document.getElementById('left-panel-tab-notes');
         this.leftPanelTabsContainer = document.getElementById('left-panel-tabs');
         this.notesUnfoldBtn = document.getElementById('notes-unfold-btn');
         this.leftPanelZoomOutBtn = document.getElementById('left-panel-zoom-out');
@@ -2595,6 +2596,25 @@ class FlowchartViewer {
         el.style.height = (el.scrollHeight + 2) + 'px';
     }
 
+    // Mobile-only fold state for the node edit menu's extra rows (Pugh/Morph
+    // "add" buttons, "Remove Image") - colors and move-left/right stay
+    // visible regardless. this._nodeEditMenuFolded persists across opening
+    // the popup for different nodes (it's only ever changed by the toggle
+    // button itself), so the fold state carries over rather than resetting
+    // every time a node is selected.
+    applyNodeEditMenuFoldState() {
+        const folded = !!this._nodeEditMenuFolded;
+        const pughAddRow = document.getElementById('node-pugh-add-row');
+        const imageActionsRow = document.getElementById('node-image-actions-row');
+        const foldToggleBtn = document.getElementById('node-edit-fold-toggle-btn');
+        if (pughAddRow) pughAddRow.style.display = folded ? 'none' : '';
+        if (imageActionsRow) imageActionsRow.style.display = folded ? 'none' : 'flex';
+        if (foldToggleBtn) {
+            foldToggleBtn.textContent = folded ? '+' : '−';
+            foldToggleBtn.title = folded ? 'Show more options' : 'Hide extra options';
+        }
+    }
+
     showNodeEditPopup(d) {
         if (!d || !d.data) return;
 
@@ -2894,8 +2914,31 @@ class FlowchartViewer {
 
             imageActionsRow.appendChild(removeImageBtn);
             this.nodeEditPopup.insertBefore(imageActionsRow, pughAddRow.nextSibling);
+
+            // Mobile-only: folds/unfolds every row except colors/move (this
+            // one) - see the CSS media query hiding this on desktop, where
+            // there's already room to show everything at once.
+            const foldToggleBtn = document.createElement('button');
+            foldToggleBtn.id = 'node-edit-fold-toggle-btn';
+            foldToggleBtn.type = 'button';
+            foldToggleBtn.textContent = '+';
+            foldToggleBtn.title = 'Show/hide more options';
+            foldToggleBtn.style.background = 'var(--control-bg)';
+            foldToggleBtn.style.color = 'var(--text)';
+            foldToggleBtn.style.border = '1px solid var(--border)';
+            foldToggleBtn.style.borderRadius = '5px';
+            foldToggleBtn.style.padding = '6px 12px';
+            foldToggleBtn.style.cursor = 'pointer';
+            foldToggleBtn.onmousedown = (e) => e.preventDefault();
+            foldToggleBtn.onclick = () => {
+                this._nodeEditMenuFolded = !this._nodeEditMenuFolded;
+                this.applyNodeEditMenuFoldState();
+            };
+            colorBtns.appendChild(foldToggleBtn);
         }
-        
+
+        this.applyNodeEditMenuFoldState();
+
         Array.from(colorBtns.children).forEach(btn => {
             if (btn.textContent === 'Green' && d.data.color === '#00a67e') {
                 btn.style.outline = '2px solid #00a67e';
@@ -3457,6 +3500,7 @@ class FlowchartViewer {
         const questionsActive = this._reflectionPanelActive;
         const panelActive = this._leftPanelMode === 'pugh' ? this._pughPanelActive
             : this._leftPanelMode === 'morph' ? this._morphPanelActive
+            : this._leftPanelMode === 'notes' ? this._notesTabActive
             : questionsActive;
 
         if (!isMobile) {
@@ -3918,6 +3962,9 @@ class FlowchartViewer {
         if (this.leftPanelTabMorph) {
             this.leftPanelTabMorph.addEventListener('click', () => this.switchLeftPanelMode('morph'));
         }
+        if (this.leftPanelTabNotes) {
+            this.leftPanelTabNotes.addEventListener('click', () => this.switchLeftPanelMode('notes'));
+        }
     }
 
     // Opens the left panel directly to the Pugh Matrix tab - used by the toolbar/
@@ -3951,6 +3998,8 @@ class FlowchartViewer {
         } else if (mode === 'morph') {
             this._morphPanelActive = true;
             this.renderMorphPanel();
+        } else if (mode === 'notes') {
+            this._notesTabActive = true;
         } else if (mode === 'questions') {
             // Save any in-progress ranking before leaving the Pugh tab, same as
             // leaving Rank mode itself - otherwise switching tabs mid-ranking
@@ -3980,6 +4029,9 @@ class FlowchartViewer {
         if (this.leftPanelTabMorph) {
             this.leftPanelTabMorph.classList.toggle('active', this._leftPanelMode === 'morph');
         }
+        if (this.leftPanelTabNotes) {
+            this.leftPanelTabNotes.classList.toggle('active', this._leftPanelMode === 'notes');
+        }
         if (this.reflectionPanelBody) {
             this.reflectionPanelBody.style.display = this._leftPanelMode === 'questions' ? 'flex' : 'none';
         }
@@ -3988,6 +4040,20 @@ class FlowchartViewer {
         }
         if (this.morphPanelBody) {
             this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
+        }
+        // The "Notes" tab only exists on mobile (see #left-panel-tab-notes'
+        // CSS) - on mobile it swaps the whole content area over to Notes,
+        // taking over from the always-visible-below strip desktop uses;
+        // on desktop, Notes stays visible below regardless of which tab is
+        // active, same as before this tab existed.
+        const isMobileNotesTab = this._leftPanelMode === 'notes' && window.matchMedia('(max-width: 600px)').matches;
+        if (this.leftPanelMain) {
+            this.leftPanelMain.style.display = isMobileNotesTab ? 'none' : '';
+        }
+        if (this.notesPanelBody) {
+            this.notesPanelBody.style.display = isMobileNotesTab
+                ? 'flex'
+                : (window.matchMedia('(max-width: 600px)').matches && this._leftPanelMode !== 'notes' ? 'none' : '');
         }
     }
 
@@ -4088,14 +4154,19 @@ class FlowchartViewer {
                 // the Indent/Outdent buttons, so Tab on an empty (or plain) line
                 // starts a bullet the same way clicking Indent does.
                 handleKeyDown: (view, event) => {
-                    if (event.key !== 'Tab') return false;
-                    event.preventDefault();
-                    if (event.shiftKey) {
-                        this.outdentNotesLine();
-                    } else {
-                        this.indentNotesLine();
+                    if (event.key === 'Tab') {
+                        event.preventDefault();
+                        if (event.shiftKey) {
+                            this.outdentNotesLine();
+                        } else {
+                            this.indentNotesLine();
+                        }
+                        return true;
                     }
-                    return true;
+                    if (event.key === 'Backspace') {
+                        return this.handleNotesBackspace();
+                    }
+                    return false;
                 },
             },
             onFocus: () => this.foldNotesSection(),
@@ -4106,6 +4177,7 @@ class FlowchartViewer {
                 }
             },
             onUpdate: ({ editor }) => {
+                this.capitalizeNotesCurrentLine();
                 this.globalNotes = editor.getHTML();
                 this._pendingNotesSave = true;
                 // Lightweight - only rebuilds the small strip below, not the editor
@@ -4118,6 +4190,35 @@ class FlowchartViewer {
         });
 
         this.renderNotesMediaStrip();
+    }
+
+    // Auto-capitalizes the first letter of whichever line/indent the cursor
+    // is currently in - runs on every keystroke (see onUpdate above), but
+    // only ever touches that one character, and only when it's actually
+    // lowercase, so it's a no-op once a line's first letter is already
+    // correct.
+    capitalizeNotesCurrentLine() {
+        const editor = this.notesEditor;
+        if (!editor) return;
+        const { state } = editor;
+        const { $from } = state.selection;
+        for (let d = $from.depth; d >= 0; d--) {
+            const node = $from.node(d);
+            if (node.isTextblock) {
+                const text = node.textContent;
+                if (text.length > 0) {
+                    const first = text[0];
+                    const upper = first.toUpperCase();
+                    if (first !== upper) {
+                        const blockStart = $from.start(d);
+                        const tr = state.tr.insertText(upper, blockStart, blockStart + first.length);
+                        tr.setMeta('addToHistory', false);
+                        editor.view.dispatch(tr);
+                    }
+                }
+                break;
+            }
+        }
     }
 
     // Toggles the selected (or current) lines' checklist state - Tiptap's
@@ -4299,6 +4400,69 @@ class FlowchartViewer {
         const itemType = this.getNearestNotesListItemType();
         if (itemType === null) return;
         editor.chain().focus().liftListItem(itemType).run();
+    }
+
+    // Backspace at the very start of an empty list item's text - with
+    // nothing else in that item (no nested sub-list) - outdents it (drops
+    // just the bullet/checkbox, leaving a plain empty line in the same
+    // spot) instead of Tiptap's default behavior of merging it into the
+    // PREVIOUS item's own content as an extra paragraph. That default made
+    // an empty line "disappear" into whatever was above it in one press,
+    // skipping past the useful "now it's just a plain line" state on the
+    // way to actually joining the line above - so the intended sequence
+    // (empty line -> becomes a bullet -> loses the bullet -> merges with
+    // the line above) needed 4 presses where only 3 should be needed once a
+    // line has already become a bullet. Returning false for every other
+    // case (non-empty item, no item at all, item has extra content) lets
+    // Tiptap's normal Backspace handling run as usual.
+    handleNotesBackspace() {
+        const editor = this.notesEditor;
+        const { state } = editor;
+        const { $from, empty } = state.selection;
+        if (!empty || $from.parentOffset !== 0) return false;
+
+        const itemType = this.getNearestNotesListItemType();
+        if (itemType !== null) {
+            let itemDepth = null;
+            for (let d = $from.depth; d > 0; d--) {
+                if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
+            }
+            if (itemDepth === null) return false;
+            // Only when the cursor's own paragraph is the FIRST thing in the
+            // item (guards against outdenting when the cursor is actually in
+            // a second paragraph or nested sub-list further down the item).
+            if ($from.index(itemDepth) !== 0) return false;
+
+            const itemNode = $from.node(itemDepth);
+            const isEmptyLeafItem = itemNode.childCount === 1 && itemNode.child(0).content.size === 0;
+            if (!isEmptyLeafItem) return false;
+
+            this.outdentNotesLine();
+            // Remember exactly where this landed - if the very next thing
+            // that happens is ANOTHER Backspace at this same spot (below),
+            // that means the line is back to being a plain empty paragraph
+            // sitting right after a list, and should actually merge into it
+            // rather than repeat this same outdent's precondition forever.
+            this._lastBackspaceOutdentPos = this.notesEditor.state.selection.from;
+            return true;
+        }
+
+        // Not in any list - an empty plain paragraph immediately following a
+        // list would otherwise get silently re-absorbed as a new bullet on
+        // Backspace (Tiptap's default), right back to the state the outdent
+        // above just left it in. Only when THIS exact spot is where that
+        // outdent just landed does Backspace instead merge it into the
+        // list's last item, actually reaching "join the line above".
+        if ($from.parent.content.size === 0 && this._lastBackspaceOutdentPos === $from.pos) {
+            this._lastBackspaceOutdentPos = null;
+            const paraStart = $from.before($from.depth);
+            const paraEnd = $from.after($from.depth);
+            const tr = state.tr.delete(paraStart, paraEnd);
+            editor.view.dispatch(tr);
+            return true;
+        }
+        this._lastBackspaceOutdentPos = null;
+        return false;
     }
 
     // sinkListItem only ever nests an item under its own IMMEDIATELY
@@ -5444,7 +5608,18 @@ class FlowchartViewer {
 
         if (this.resyncMorphRows()) this.renderMorphPanel();
         this.renderFlowchart(this.rootData);
-        this.hideNodeEditPopup(false);
+        // Re-find the (same underlying data, new D3 node object) and reopen
+        // the popup on it, instead of closing - the node stays active/
+        // selected and its edit menu stays open after moving, matching
+        // moveNodeInSiblings' behavior elsewhere.
+        let found = null;
+        d3.hierarchy(this.rootData).each(node => {
+            if (node.data === d.data) found = node;
+        });
+        if (found) {
+            const renderedNode = this.findRenderedNode(d.data) || found;
+            this.centerNodeOnMobile(renderedNode, () => this.showNodeEditPopup(found));
+        }
         this.autosave();
     }
 

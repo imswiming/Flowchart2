@@ -100,6 +100,19 @@ body {
     border-color: var(--accent);
 }
 
+/* Notes only exists as a tab on mobile - on desktop it's already always
+   visible below the other tabs' content (see #notes-panel-body), so a
+   separate "Notes" tab there would be redundant. */
+#left-panel-tab-notes {
+    display: none;
+}
+
+/* The node edit menu's fold/unfold toggle is mobile-only - on desktop
+   there's already enough room to show every row at once. */
+#node-edit-fold-toggle-btn {
+    display: none;
+}
+
 .left-panel-tab.active {
     background: var(--accent);
     color: white;
@@ -287,6 +300,10 @@ body {
 
 #notes-editor .ProseMirror {
     padding: 10px;
+    /* Extra room at the bottom so the last line can still be scrolled up
+       away from the very edge of the box, instead of staying pinned flush
+       against it with nowhere further to scroll. */
+    padding-bottom: 40vh;
     font-family: inherit;
     font-size: 13px;
     color: var(--text);
@@ -759,6 +776,29 @@ body {
        still matters for tab/keyboard navigation and other logic elsewhere). */
     #reflection-panel-close {
         order: -1;
+    }
+
+    #left-panel-tab-notes {
+        display: inline-block;
+    }
+
+    /* No divider needed on mobile - Notes is a full tab there (see
+       updateLeftPanelTabs), not a strip pinned below the other tabs'
+       content, so there's nothing for this to divide. */
+    #notes-resize-handle {
+        display: none;
+    }
+
+    /* When Notes is the active tab, let it fill the available height
+       instead of staying pinned to whatever height the desktop resize
+       handle left it at. */
+    #notes-panel-body {
+        flex: 1 1 auto !important;
+        height: auto !important;
+    }
+
+    #node-edit-fold-toggle-btn {
+        display: inline-block;
     }
 }
 
@@ -1312,13 +1352,9 @@ body {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    justify-content: flex-end;
+    justify-content: flex-start;
     margin-bottom: 4px;
     flex-shrink: 0;
-}
-
-#notes-panel-label {
-    margin-right: auto;
 }
 
 #notes-outdent-btn,
@@ -1442,6 +1478,16 @@ body {
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
+}
+
+/* Cancel/Done are text labels, not icons like the other drawing-tool-btn
+   buttons - the shared fixed 38px icon width was too narrow for their text,
+   which overflowed and visually overlapped the neighboring button. */
+#drawing-cancel-btn,
+#drawing-done-btn {
+    width: auto;
+    padding: 0 14px;
+    font-size: 14px;
 }
 
 .drawing-tool-btn:hover {
