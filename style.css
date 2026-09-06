@@ -18,6 +18,39 @@ body {
     --control-hover: #1b2832;
     --popup-bg: #0f1724;
     --accent: #00a67e;
+    --scrollbar-thumb: #3a4756;
+    --scrollbar-thumb-hover: #4c5c72;
+}
+
+/* Dark-themed scrollbars app-wide (Notes, Pugh/Morph Matrix, popups, etc.) -
+   otherwise every browser draws its own light default scrollbar regardless
+   of the rest of the UI being dark. */
+* {
+    scrollbar-color: var(--scrollbar-thumb) var(--control-bg);
+    scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: var(--control-bg);
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 5px;
+    border: 2px solid var(--control-bg);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+    background: var(--control-bg);
 }
 
 body {
@@ -63,12 +96,14 @@ body {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border);
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     gap: 10px;
     font-weight: bold;
     flex-shrink: 0;
     color: var(--text);
+    overflow: hidden;
 }
 
 #reflection-panel-title {
@@ -77,8 +112,15 @@ body {
 }
 
 #left-panel-tabs {
-    flex: 1;
+    flex: 1 1 auto;
+    /* Without this, a flex item can never shrink below its content's natural
+       (unwrapped) width - so once the panel got narrow enough, the tabs
+       stopped shrinking and pushed the zoom controls/close button (which do
+       have flex-shrink:0, so they hold their own size) out past the panel's
+       own edge, spilling onto the chart view behind it. */
+    min-width: 0;
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
     gap: 6px;
 }
@@ -339,7 +381,7 @@ body {
 }
 
 #notes-editor .ProseMirror h4 {
-    font-size: 15px;
+    font-size: 30px;
     font-weight: bold;
 }
 
@@ -1035,6 +1077,28 @@ body {
     align-items: flex-end;
 }
 
+/* Desktop-only - folds/unfolds .desktop-controls below. Stays outside that
+   row (a sibling, not a child) so it's always visible regardless of fold
+   state - otherwise there'd be no way to unfold it again once folded. */
+#desktop-controls-fold-btn {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    width: 26px;
+    height: 22px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+#desktop-controls-fold-btn:hover {
+    background: var(--control-hover);
+}
+
 #connection-controls {
     display: flex;
     align-items: center;
@@ -1180,6 +1244,10 @@ body {
         margin: 0;
         right: 0;
         bottom: 0;
+    }
+
+    #desktop-controls-fold-btn {
+        display: none;
     }
 
     .reset-view-controls>div {

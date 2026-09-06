@@ -2832,9 +2832,29 @@ class FlowchartViewer {
             moveRightBtn.onmousedown = (e) => e.preventDefault();
             moveRightBtn.onclick = () => this.moveNodeRight();
 
-            colorBtns.appendChild(moveLeftBtn);
-            colorBtns.appendChild(moveRightBtn);
-            this.nodeEditPopup.insertBefore(colorBtns, this.nodeEditPopup.firstChild);
+            // Its own row, a flex sibling of colorBtns rather than appended
+            // inside it - on mobile (see CSS), the shared wrapper's wrap
+            // drops this row underneath the color buttons instead of
+            // crowding them into the same line; on desktop there's enough
+            // room for both side by side, same as before this was split out.
+            const moveBtnsRow = document.createElement('div');
+            moveBtnsRow.id = 'node-move-btns-row';
+            moveBtnsRow.style.display = 'flex';
+            moveBtnsRow.style.gap = '10px';
+            moveBtnsRow.style.justifyContent = 'center';
+            moveBtnsRow.appendChild(moveLeftBtn);
+            moveBtnsRow.appendChild(moveRightBtn);
+
+            const colorAndMoveWrap = document.createElement('div');
+            colorAndMoveWrap.id = 'node-color-and-move-wrap';
+            colorAndMoveWrap.style.display = 'flex';
+            colorAndMoveWrap.style.flexWrap = 'wrap';
+            colorAndMoveWrap.style.gap = '10px';
+            colorAndMoveWrap.style.justifyContent = 'center';
+            colorAndMoveWrap.style.marginBottom = '10px';
+            colorAndMoveWrap.appendChild(colorBtns);
+            colorAndMoveWrap.appendChild(moveBtnsRow);
+            this.nodeEditPopup.insertBefore(colorAndMoveWrap, this.nodeEditPopup.firstChild);
 
             // Second row: quick-add this node's name into the Pugh Matrix as either a
             // solution (column) or a criteria (row), for people who'd rather build the
@@ -2887,7 +2907,7 @@ class FlowchartViewer {
             pughAddRow.appendChild(addSolutionBtn);
             pughAddRow.appendChild(addCriteriaBtn);
             pughAddRow.appendChild(addMorphBtn);
-            this.nodeEditPopup.insertBefore(pughAddRow, colorBtns.nextSibling);
+            this.nodeEditPopup.insertBefore(pughAddRow, colorAndMoveWrap.nextSibling);
 
             // Third row: removes whichever image is attached to this node - a pasted
             // photo (see captureNodePhotoFromClipboard) or a hand-drawn one (see the
@@ -3248,6 +3268,16 @@ class FlowchartViewer {
 
         if (this.notesUnfoldBtn) {
             this.notesUnfoldBtn.addEventListener('click', () => this.unfoldNotesSection());
+        }
+
+        const desktopControlsFoldBtn = document.getElementById('desktop-controls-fold-btn');
+        const desktopControls = document.querySelector('.desktop-controls');
+        if (desktopControlsFoldBtn && desktopControls) {
+            desktopControlsFoldBtn.addEventListener('click', () => {
+                this._desktopControlsFolded = !this._desktopControlsFolded;
+                desktopControls.style.display = this._desktopControlsFolded ? 'none' : 'flex';
+                desktopControlsFoldBtn.innerHTML = this._desktopControlsFolded ? '&#9652;' : '&#9662;';
+            });
         }
 
         if (this.reflectionPanelResizeHandle) {
