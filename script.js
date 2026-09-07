@@ -1474,9 +1474,12 @@ class FlowchartViewer {
     }
 
     resetView() {
-        this.transform = d3.zoomIdentity;
+        // fitView (not just an identity transform) recomputes pan/zoom from the
+        // tree's actual bounding box, so this centers and scales the whole
+        // flowchart to fill the chart view instead of just returning to a fixed
+        // 1:1 origin that may not show all of it.
         this._zoomBehavior = null;
-        this.updateFlowchart();
+        this.renderFlowchart(this.rootData, { fitView: true });
     }
 
     toggleOrientation() {
@@ -3227,8 +3230,14 @@ class FlowchartViewer {
         this.nodeEditPopup.style.display = 'none';
         this.nodeBeingEdited = null;
         this._suppressPopupHide = false;
-        const colorBtns = document.getElementById('node-color-btns');
-        if (colorBtns) colorBtns.remove();
+        // Removes the *whole* color+move wrapper, not just the color buttons
+        // inside it - showNodeEditPopup's "(!colorBtns)" guard only recreates
+        // colorBtns/moveBtnsRow together as a matched pair, so leaving the
+        // wrapper (and the move-buttons row still inside it) behind here left
+        // an orphaned, colorBtns-less move-arrows row every time the popup
+        // was closed and reopened - one more piling up on each cycle.
+        const colorAndMoveWrap = document.getElementById('node-color-and-move-wrap');
+        if (colorAndMoveWrap) colorAndMoveWrap.remove();
         const pughAddRow = document.getElementById('node-pugh-add-row');
         if (pughAddRow) pughAddRow.remove();
         const imageActionsRow = document.getElementById('node-image-actions-row');
