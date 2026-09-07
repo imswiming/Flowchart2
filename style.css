@@ -794,6 +794,13 @@ body {
         order: -1;
         flex-shrink: 0;
     }
+
+    /* Desktop only - the leftmost (unindented) line sits one indent level in
+       from the box's edge instead of flush against it, matching the same
+       per-level width bullets/checklists already use (see ul,ol above). */
+    #notes-editor .ProseMirror {
+        padding-left: 2.8em;
+    }
 }
 
 /* Mobile: the reflection panel becomes a full-screen overlay (there's no room for a

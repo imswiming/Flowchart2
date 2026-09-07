@@ -4382,13 +4382,29 @@ class FlowchartViewer {
         const relFrom = origFromPos - origSelectedStart;
         const relTo = origToPos - origSelectedStart;
 
-        const newSelectedStart = listStart + (beforePiece ? beforePiece.nodeSize : 0) + 1;
+        const selectedPieceStart = listStart + (beforePiece ? beforePiece.nodeSize : 0);
+        const newSelectedStart = selectedPieceStart + 1;
         const newFrom = newSelectedStart + relFrom;
         const newTo = newSelectedStart + relTo;
 
+        // After converting, land the cursor at the start of whichever item
+        // comes right after the one(s) just converted (if any), so
+        // repeatedly pressing the Checklist button walks down the list
+        // converting one item at a time, instead of leaving the cursor on
+        // the item that was just handled.
+        let nextItemPos = null;
+        if (itemsAfter.length) {
+            const afterPieceStart = selectedPieceStart + selectedPiece.nodeSize;
+            nextItemPos = afterPieceStart + 1;
+        }
+
         const tr = state.tr.replaceWith(listStart, listEnd, pieces);
         editor.view.dispatch(tr);
-        editor.commands.setTextSelection({ from: newFrom, to: newTo });
+        if (nextItemPos !== null) {
+            editor.commands.setTextSelection(nextItemPos);
+        } else {
+            editor.commands.setTextSelection({ from: newFrom, to: newTo });
+        }
         editor.commands.focus();
     }
 
@@ -4909,11 +4925,24 @@ class FlowchartViewer {
         let startY = 0;
         let startHeight = 0;
 
+        // #notes-panel-body is rendered at `zoom: var(--panel-zoom)` (see the Notes
+        // panel's +/- zoom controls), which getBoundingClientRect() reports AFTER
+        // scaling AND includes this element's own padding (content-box style.height
+        // does not) - so re-deriving the drag's starting height from the rect (even
+        // after dividing out the zoom) came out padding-taller than the real logical
+        // height, and the very first onMove - even with ~0 mouse movement yet -
+        // jumped the panel to that inflated size. this._notesPanelHeight is already
+        // the correct logical height (it's exactly what gets written to style.height
+        // elsewhere), so use it directly instead of reading the rect at all. Only
+        // the mouse-movement delta itself (real, un-zoomed screen pixels, since the
+        // handle isn't inside a zoomed element) needs converting to logical pixels.
+        const currentPanelZoom = () => (typeof this.panelZoom === 'number' && this.panelZoom > 0) ? this.panelZoom : 1;
+
         const onMove = (clientY) => {
             if (!dragging) return;
             // Dragging up (clientY decreasing) should grow the notes strip, since it's
             // pinned to the bottom of the panel.
-            const delta = startY - clientY;
+            const delta = (startY - clientY) / currentPanelZoom();
             const panelHeight = this.reflectionPanel.getBoundingClientRect().height || window.innerHeight;
             const maxHeight = Math.max(120, panelHeight - 120);
             const newHeight = Math.max(80, Math.min(startHeight + delta, maxHeight));
@@ -4930,7 +4959,7 @@ class FlowchartViewer {
         this.notesResizeHandle.addEventListener('mousedown', (e) => {
             dragging = true;
             startY = e.clientY;
-            startHeight = this.notesPanelBody.getBoundingClientRect().height;
+            startHeight = this._notesPanelHeight;
             document.body.style.userSelect = 'none';
             e.preventDefault();
         });
@@ -4939,7 +4968,7 @@ class FlowchartViewer {
         this.notesResizeHandle.addEventListener('touchstart', (e) => {
             dragging = true;
             startY = e.touches[0].clientY;
-            startHeight = this.notesPanelBody.getBoundingClientRect().height;
+            startHeight = this._notesPanelHeight;
         }, { passive: true });
         window.addEventListener('touchmove', (e) => {
             if (!dragging) return;
