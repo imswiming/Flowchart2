@@ -470,6 +470,97 @@ body {
     zoom: var(--panel-zoom, 1);
 }
 
+/* Matrix tabs: lets a Pugh/Morph Matrix panel hold several independent
+   matrices (each with its own criteria/solutions or rows/ideas), switchable
+   the same way the outer Questions/Pugh/Morph tabs work, one level in. */
+.matrix-tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-bottom: 4px;
+}
+
+.matrix-tab {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 3px 4px 3px 10px;
+    cursor: pointer;
+    max-width: 160px;
+}
+
+.matrix-tab:hover {
+    border-color: var(--accent);
+}
+
+.matrix-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.matrix-tab.active .matrix-tab-label {
+    color: white;
+}
+
+.matrix-tab-label {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.matrix-tab-name-input {
+    font-size: 12px;
+    font-weight: bold;
+    font-family: inherit;
+    width: 90px;
+    background: var(--control-hover);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.matrix-tab-delete-btn {
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 3px;
+    flex-shrink: 0;
+}
+
+.matrix-tab-delete-btn:hover {
+    opacity: 1;
+}
+
+.matrix-tab-add-btn {
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 12px;
+    width: 24px;
+    height: 24px;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.matrix-tab-add-btn:hover {
+    background: var(--control-hover);
+}
+
 .pugh-toolbar {
     display: flex;
     gap: 8px;
@@ -801,6 +892,7 @@ body {
     #notes-editor .ProseMirror {
         padding-left: 2.8em;
     }
+
 }
 
 /* Mobile: the reflection panel becomes a full-screen overlay (there's no room for a
@@ -961,6 +1053,18 @@ body {
     background: var(--control-hover) !important;
 }
 
+/* The top-right icon row (.zoom-controls) is the mobile equivalent of the
+   bottom-right .desktop-controls toolbar - every action it offers (Undo,
+   Redo, Open, Hide Placeholders, Cloud Sync, Pugh Matrix, Notes, Help)
+   already has its own labeled button down there, so on desktop it was just
+   a duplicate set of the same buttons. Mobile keeps it (that's where
+   .desktop-controls itself is hidden instead - see the mobile media query). */
+@media (min-width: 601px) {
+    .zoom-controls {
+        display: none;
+    }
+}
+
 .reset-view-btn {
     height: 34px;
     min-width: 90px;
@@ -1091,14 +1195,14 @@ body {
     background: var(--control-bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    width: 26px;
-    height: 22px;
-    margin-bottom: 4px;
+    border-radius: 8px;
+    width: 56px;
+    height: 44px;
+    margin-bottom: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 26px;
     cursor: pointer;
 }
 

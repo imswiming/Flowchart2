@@ -168,12 +168,14 @@ class FlowchartViewer {
         this._pughPanelActive = false;
         this._morphPanelActive = false;
         this._pughIdCounter = 0;
-        this.pughMatrix = this.getDefaultPughMatrix();
+        this.pughMatrices = this.getDefaultPughMatrices();
+        this.activePughMatrixId = this.pughMatrices[0].id;
         // Morphological Analysis matrix: each row is a "parameter" (a parent node's
         // name), its columns are that parent's immediate green children (candidate
         // options) - see addNodeToMorph/renderMorphPanel.
         this._morphIdCounter = 0;
-        this.morphMatrix = this.getDefaultMorphMatrix();
+        this.morphMatrices = this.getDefaultMorphMatrices();
+        this.activeMorphMatrixId = this.morphMatrices[0].id;
         // Ranking mode: a pairwise "beat the baseline" tournament for ordering the
         // solutions (columns) under whichever single criteria is currently active -
         // see startOrResumeRankSession/handlePughReRank for the algorithm.
@@ -1230,8 +1232,14 @@ class FlowchartViewer {
                     this.ensureRightmostPlaceholderNodes(this.rootData);
                 }
 
-                this.pughMatrix = this.sanitizePughMatrix(parsed.pughMatrix);
-                this.morphMatrix = this.sanitizeMorphMatrix(parsed.morphMatrix);
+                this.pughMatrices = this.sanitizePughMatrices(parsed.pughMatrices, parsed.pughMatrix);
+                this.activePughMatrixId = (typeof parsed.activePughMatrixId === 'string' && this.pughMatrices.some(t => t.id === parsed.activePughMatrixId))
+                    ? parsed.activePughMatrixId
+                    : this.pughMatrices[0].id;
+                this.morphMatrices = this.sanitizeMorphMatrices(parsed.morphMatrices, parsed.morphMatrix);
+                this.activeMorphMatrixId = (typeof parsed.activeMorphMatrixId === 'string' && this.morphMatrices.some(t => t.id === parsed.activeMorphMatrixId))
+                    ? parsed.activeMorphMatrixId
+                    : this.morphMatrices[0].id;
                 // rootData and morphMatrix were both just rebuilt fresh from this
                 // flowchart's saved JSON, so any _morphNodeRefs left over from
                 // whatever was open before are pointing at now-detached node objects
@@ -3509,8 +3517,10 @@ class FlowchartViewer {
         this._pughPanelActive = false;
         this._morphPanelActive = false;
         this._notesFolded = false;
-        this.pughMatrix = this.getDefaultPughMatrix();
-        this.morphMatrix = this.getDefaultMorphMatrix();
+        this.pughMatrices = this.getDefaultPughMatrices();
+        this.activePughMatrixId = this.pughMatrices[0].id;
+        this.morphMatrices = this.getDefaultMorphMatrices();
+        this.activeMorphMatrixId = this.morphMatrices[0].id;
         this.globalNotes = '';
         this.notesDrawings = {};
         this.notesImages = {};
@@ -3614,8 +3624,30 @@ class FlowchartViewer {
         return `${prefix}-${Date.now().toString(36)}-${this._pughIdCounter}`;
     }
 
-    getDefaultPughMatrix() {
+    // Pugh Matrix tabs: this.pughMatrices holds every tab, this.activePughMatrixId
+    // points at whichever one is currently shown/edited. this.pughMatrix is a
+    // read-only view of the active tab - the huge majority of existing code just
+    // reads/mutates its properties (m.criteria.push(...), m.columns = ..., etc.)
+    // and keeps working unchanged, since it's the same live object reference.
+    // Whole-tab replacement (add/delete/switch tabs, loading a saved flowchart)
+    // goes through pughMatrices/activePughMatrixId directly instead.
+    get pughMatrix() {
+        if (!Array.isArray(this.pughMatrices) || this.pughMatrices.length === 0) {
+            this.pughMatrices = this.getDefaultPughMatrices();
+            this.activePughMatrixId = this.pughMatrices[0].id;
+        }
+        let m = this.pughMatrices.find(t => t.id === this.activePughMatrixId);
+        if (!m) {
+            m = this.pughMatrices[0];
+            this.activePughMatrixId = m.id;
+        }
+        return m;
+    }
+
+    getDefaultPughMatrix(name) {
         return {
+            id: this.nextPughId('tab'),
+            name: name || 'Matrix 1',
             criteria: [],
             columns: [
                 { id: this.nextPughId('col'), title: 'Solution 1' }
@@ -3624,10 +3656,14 @@ class FlowchartViewer {
         };
     }
 
+    getDefaultPughMatrices() {
+        return [this.getDefaultPughMatrix('Matrix 1')];
+    }
+
     // Validates/repairs a Pugh Matrix loaded from saved JSON, falling back to sane
     // defaults for anything missing or malformed rather than trusting the shape.
-    sanitizePughMatrix(raw) {
-        if (!raw || typeof raw !== 'object') return this.getDefaultPughMatrix();
+    sanitizePughMatrix(raw, fallbackName) {
+        if (!raw || typeof raw !== 'object') return this.getDefaultPughMatrix(fallbackName);
 
         const columns = Array.isArray(raw.columns) ? raw.columns
             .filter(c => c && typeof c === 'object')
@@ -3660,7 +3696,73 @@ class FlowchartViewer {
             });
         }
 
-        return { criteria, columns, scores };
+        return {
+            id: (typeof raw.id === 'string' && raw.id) ? raw.id : this.nextPughId('tab'),
+            name: (typeof raw.name === 'string' && raw.name.trim()) ? raw.name : (fallbackName || 'Matrix 1'),
+            criteria, columns, scores
+        };
+    }
+
+    // Sanitizes the whole set of Pugh Matrix tabs. Accepts the current
+    // multi-tab save shape (rawArray) or falls back to migrating an older
+    // single-matrix save (legacySingle, the pre-tabs "pughMatrix" key) into a
+    // one-tab array, so existing saved flowcharts still load correctly.
+    sanitizePughMatrices(rawArray, legacySingle) {
+        if (Array.isArray(rawArray) && rawArray.length > 0) {
+            const seenIds = new Set();
+            return rawArray.map((raw, i) => {
+                const m = this.sanitizePughMatrix(raw, `Matrix ${i + 1}`);
+                if (seenIds.has(m.id)) m.id = this.nextPughId('tab');
+                seenIds.add(m.id);
+                return m;
+            });
+        }
+        if (legacySingle && typeof legacySingle === 'object') {
+            return [this.sanitizePughMatrix(legacySingle, 'Matrix 1')];
+        }
+        return this.getDefaultPughMatrices();
+    }
+
+    addPughMatrixTab() {
+        const tab = this.getDefaultPughMatrix(`Matrix ${this.pughMatrices.length + 1}`);
+        this.pughMatrices.push(tab);
+        this.activePughMatrixId = tab.id;
+        this._pughRankMode = false;
+        this._pughActiveCriteriaId = null;
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    deletePughMatrixTab(tabId) {
+        if (this.pughMatrices.length <= 1) return;
+        const idx = this.pughMatrices.findIndex(t => t.id === tabId);
+        if (idx === -1) return;
+        this.pughMatrices.splice(idx, 1);
+        if (this.activePughMatrixId === tabId) {
+            this.activePughMatrixId = this.pughMatrices[Math.max(0, idx - 1)].id;
+            this._pughRankMode = false;
+            this._pughActiveCriteriaId = null;
+        }
+        this.renderPughPanel();
+        this.autosave();
+    }
+
+    switchPughMatrixTab(tabId) {
+        if (tabId === this.activePughMatrixId || !this.pughMatrices.some(t => t.id === tabId)) return;
+        if (this._pughActiveCriteriaId) {
+            this.finalizeInProgressRankSessionIfAny(this._pughActiveCriteriaId);
+        }
+        this.activePughMatrixId = tabId;
+        this._pughRankMode = false;
+        this._pughActiveCriteriaId = null;
+        this.renderPughPanel();
+    }
+
+    renamePughMatrixTab(tabId, name) {
+        const tab = this.pughMatrices.find(t => t.id === tabId);
+        if (!tab) return;
+        tab.name = (name || '').trim() || 'Untitled';
+        this.autosave();
     }
 
     // ===================== Morph Matrix (Morphological Analysis) =====================
@@ -3676,15 +3778,38 @@ class FlowchartViewer {
         return `${prefix}-${Date.now().toString(36)}-${this._morphIdCounter}`;
     }
 
-    getDefaultMorphMatrix() {
+    // Morph Matrix tabs - same pattern as the Pugh Matrix's get pughMatrix()
+    // above: this.morphMatrices holds every tab, this.activeMorphMatrixId
+    // points at the active one, and this.morphMatrix is a read-only view of
+    // it so existing code mutating its rows/ideas keeps working unchanged.
+    get morphMatrix() {
+        if (!Array.isArray(this.morphMatrices) || this.morphMatrices.length === 0) {
+            this.morphMatrices = this.getDefaultMorphMatrices();
+            this.activeMorphMatrixId = this.morphMatrices[0].id;
+        }
+        let m = this.morphMatrices.find(t => t.id === this.activeMorphMatrixId);
+        if (!m) {
+            m = this.morphMatrices[0];
+            this.activeMorphMatrixId = m.id;
+        }
+        return m;
+    }
+
+    getDefaultMorphMatrix(name) {
         return {
+            id: this.nextMorphId('tab'),
+            name: name || 'Matrix 1',
             rows: [],   // [{ id, name, options: [string, ...] }]
             ideas: []   // [{ id, text, selections: { [rowId]: optionText[] } }]
         };
     }
 
-    sanitizeMorphMatrix(raw) {
-        if (!raw || typeof raw !== 'object') return this.getDefaultMorphMatrix();
+    getDefaultMorphMatrices() {
+        return [this.getDefaultMorphMatrix('Matrix 1')];
+    }
+
+    sanitizeMorphMatrix(raw, fallbackName) {
+        if (!raw || typeof raw !== 'object') return this.getDefaultMorphMatrix(fallbackName);
 
         const rows = Array.isArray(raw.rows) ? raw.rows
             .filter(r => r && typeof r === 'object')
@@ -3710,7 +3835,70 @@ class FlowchartViewer {
                     : {}
             })) : [];
 
-        return { rows, ideas };
+        return {
+            id: (typeof raw.id === 'string' && raw.id) ? raw.id : this.nextMorphId('tab'),
+            name: (typeof raw.name === 'string' && raw.name.trim()) ? raw.name : (fallbackName || 'Matrix 1'),
+            rows, ideas
+        };
+    }
+
+    // Mirrors sanitizePughMatrices: accepts the current multi-tab save shape
+    // or migrates an older single-matrix save into a one-tab array.
+    sanitizeMorphMatrices(rawArray, legacySingle) {
+        if (Array.isArray(rawArray) && rawArray.length > 0) {
+            const seenIds = new Set();
+            return rawArray.map((raw, i) => {
+                const m = this.sanitizeMorphMatrix(raw, `Matrix ${i + 1}`);
+                if (seenIds.has(m.id)) m.id = this.nextMorphId('tab');
+                seenIds.add(m.id);
+                return m;
+            });
+        }
+        if (legacySingle && typeof legacySingle === 'object') {
+            return [this.sanitizeMorphMatrix(legacySingle, 'Matrix 1')];
+        }
+        return this.getDefaultMorphMatrices();
+    }
+
+    addMorphMatrixTab() {
+        const tab = this.getDefaultMorphMatrix(`Matrix ${this.morphMatrices.length + 1}`);
+        this.morphMatrices.push(tab);
+        this.activeMorphMatrixId = tab.id;
+        this.renderMorphPanel();
+        this.autosave();
+    }
+
+    deleteMorphMatrixTab(tabId) {
+        if (this.morphMatrices.length <= 1) return;
+        const idx = this.morphMatrices.findIndex(t => t.id === tabId);
+        if (idx === -1) return;
+        const [removed] = this.morphMatrices.splice(idx, 1);
+        // Row ids are globally unique (see nextMorphId), so this only ever
+        // touches entries belonging to the tab just removed.
+        if (removed && Array.isArray(removed.rows)) {
+            removed.rows.forEach(row => {
+                if (this._morphNodeRefs) delete this._morphNodeRefs[row.id];
+                if (this._morphCurrentSelection) delete this._morphCurrentSelection[row.id];
+            });
+        }
+        if (this.activeMorphMatrixId === tabId) {
+            this.activeMorphMatrixId = this.morphMatrices[Math.max(0, idx - 1)].id;
+        }
+        this.renderMorphPanel();
+        this.autosave();
+    }
+
+    switchMorphMatrixTab(tabId) {
+        if (tabId === this.activeMorphMatrixId || !this.morphMatrices.some(t => t.id === tabId)) return;
+        this.activeMorphMatrixId = tabId;
+        this.renderMorphPanel();
+    }
+
+    renameMorphMatrixTab(tabId, name) {
+        const tab = this.morphMatrices.find(t => t.id === tabId);
+        if (!tab) return;
+        tab.name = (name || '').trim() || 'Untitled';
+        this.autosave();
     }
 
     // Green leaf nodes automatically get a " (Simplify?)" suffix appended to their
@@ -6121,6 +6309,82 @@ class FlowchartViewer {
         return new Set(distinct.slice(0, 3));
     }
 
+    // Builds the row of tabs shown above a Pugh/Morph Matrix's own toolbar -
+    // one tab per saved matrix, a "+" to add another, and (once there's more
+    // than one) a small delete button per tab. Shared between both panels
+    // since they're visually and behaviorally identical; `kind` picks which
+    // matrix collection/CRUD methods to wire up.
+    buildMatrixTabBar(kind) {
+        const isPugh = kind === 'pugh';
+        const matrices = isPugh ? this.pughMatrices : this.morphMatrices;
+        const activeId = isPugh ? this.activePughMatrixId : this.activeMorphMatrixId;
+
+        const bar = document.createElement('div');
+        bar.className = 'matrix-tab-bar';
+
+        matrices.forEach(tab => {
+            const tabEl = document.createElement('div');
+            tabEl.className = 'matrix-tab' + (tab.id === activeId ? ' active' : '');
+            tabEl.addEventListener('click', (e) => {
+                if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                if (isPugh) this.switchPughMatrixTab(tab.id); else this.switchMorphMatrixTab(tab.id);
+            });
+
+            const label = document.createElement('span');
+            label.className = 'matrix-tab-label';
+            label.textContent = tab.name || 'Untitled';
+            label.title = 'Double-click to rename';
+            label.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'matrix-tab-name-input';
+                input.value = tab.name || '';
+                label.replaceWith(input);
+                input.focus();
+                input.select();
+                const commit = () => {
+                    if (isPugh) this.renamePughMatrixTab(tab.id, input.value);
+                    else this.renameMorphMatrixTab(tab.id, input.value);
+                    (isPugh ? this.renderPughPanel : this.renderMorphPanel).call(this);
+                };
+                input.addEventListener('click', (e2) => e2.stopPropagation());
+                input.addEventListener('keydown', (e2) => {
+                    if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
+                    else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
+                });
+                input.addEventListener('blur', commit);
+            });
+            tabEl.appendChild(label);
+
+            if (matrices.length > 1) {
+                const delBtn = document.createElement('button');
+                delBtn.className = 'matrix-tab-delete-btn';
+                delBtn.title = 'Delete this tab';
+                delBtn.textContent = '×';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
+                    if (isPugh) this.deletePughMatrixTab(tab.id); else this.deleteMorphMatrixTab(tab.id);
+                });
+                tabEl.appendChild(delBtn);
+            }
+
+            bar.appendChild(tabEl);
+        });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'matrix-tab-add-btn';
+        addBtn.title = 'Add a new tab';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', () => {
+            if (isPugh) this.addPughMatrixTab(); else this.addMorphMatrixTab();
+        });
+        bar.appendChild(addBtn);
+
+        return bar;
+    }
+
     // Builds the Pugh Matrix table fresh into #pugh-panel-body. Called on open and
     // after every add/delete/select-node change; individual keystrokes into the
     // number/text inputs update the underlying data directly without a full re-render
@@ -6130,6 +6394,8 @@ class FlowchartViewer {
         const m = this.pughMatrix;
         this.pughPanelBody.innerHTML = '';
         this.pughPanelBody.style.display = this._leftPanelMode === 'pugh' ? 'flex' : 'none';
+
+        this.pughPanelBody.appendChild(this.buildMatrixTabBar('pugh'));
 
         // Toolbar
         const toolbar = document.createElement('div');
@@ -6391,6 +6657,8 @@ class FlowchartViewer {
         this.morphPanelBody.innerHTML = '';
         this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
 
+        this.morphPanelBody.appendChild(this.buildMatrixTabBar('morph'));
+
         const toolbar = document.createElement('div');
         toolbar.className = 'pugh-toolbar';
         const hint = document.createElement('div');
@@ -6590,8 +6858,10 @@ class FlowchartViewer {
             orientation: this.orientation,
             showPlaceholders: this.showPlaceholders,
             transform: { x: this.transform.x, y: this.transform.y, k: this.transform.k },
-            pughMatrix: this.pughMatrix,
-            morphMatrix: this.morphMatrix,
+            pughMatrices: this.pughMatrices,
+            activePughMatrixId: this.activePughMatrixId,
+            morphMatrices: this.morphMatrices,
+            activeMorphMatrixId: this.activeMorphMatrixId,
             globalNotes: this.globalNotes,
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages
