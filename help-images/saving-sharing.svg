@@ -1,0 +1,27 @@
+<svg viewBox="0 0 640 190" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+  <rect x="0" y="0" width="640" height="190" rx="10" fill="#323a4a"/>
+
+  <g font-size="12" font-weight="bold" fill="#e6eef8">
+    <rect x="20" y="24" width="100" height="34" rx="6" fill="#111827" stroke="#26313a"/>
+    <text x="70" y="45" text-anchor="middle">📂 Open</text>
+
+    <rect x="132" y="24" width="120" height="34" rx="6" fill="#111827" stroke="#26313a"/>
+    <text x="192" y="45" text-anchor="middle" font-size="11">🤖 Export to AI</text>
+
+    <rect x="264" y="24" width="130" height="34" rx="6" fill="#111827" stroke="#26313a"/>
+    <text x="329" y="45" text-anchor="middle" font-size="11">🤖 Import from AI</text>
+
+    <rect x="406" y="24" width="112" height="34" rx="6" fill="#111827" stroke="#26313a"/>
+    <text x="462" y="45" text-anchor="middle" font-size="11">☁ Cloud Sync</text>
+
+    <rect x="530" y="24" width="90" height="34" rx="6" fill="#111827" stroke="#26313a"/>
+    <text x="575" y="45" text-anchor="middle">↩ Undo</text>
+  </g>
+
+  <line x1="20" y1="78" x2="620" y2="78" stroke="#26313a"/>
+
+  <text x="20" y="100" fill="#9aa6b2" font-size="12"><tspan font-weight="bold" fill="#e6eef8">Open</tspan> - browse saved flowcharts, or export/import as JSON files.</text>
+  <text x="20" y="122" fill="#9aa6b2" font-size="12"><tspan font-weight="bold" fill="#e6eef8">Export/Import to AI</tspan> - a plain-text outline to paste to an AI assistant, then paste its reply back in.</text>
+  <text x="20" y="144" fill="#9aa6b2" font-size="12"><tspan font-weight="bold" fill="#e6eef8">Cloud Sync</tspan> - sync one flowchart between devices via a shared Sync ID.</text>
+  <text x="20" y="163" fill="#9aa6b2" font-size="12"><tspan font-weight="bold" fill="#e6eef8">Undo/Redo</tspan> cover every edit; your work also autosaves locally as you go.</text>
+</svg>

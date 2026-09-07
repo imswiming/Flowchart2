@@ -1,0 +1,50 @@
+<svg viewBox="0 0 640 220" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+  <rect x="0" y="0" width="640" height="220" rx="10" fill="#323a4a"/>
+
+  <!-- Green -->
+  <rect x="20" y="24" width="112" height="40" rx="6" fill="#00a67e"/>
+  <text x="76" y="49" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="bold">Simplify?</text>
+  <text x="20" y="90" fill="#e6eef8" font-size="13" font-weight="bold">Green</text>
+  <text x="20" y="107" fill="#9aa6b2" font-size="10.5">Solution / idea.</text>
+  <text x="20" y="121" fill="#9aa6b2" font-size="10.5">A leaf auto-tags</text>
+  <text x="20" y="135" fill="#9aa6b2" font-size="10.5">"(Simplify?)" and</text>
+  <text x="20" y="149" fill="#9aa6b2" font-size="10.5">gets guided prompts.</text>
+
+  <!-- Pink -->
+  <rect x="144" y="24" width="112" height="40" rx="6" fill="#e75480"/>
+  <text x="200" y="49" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="bold">Assumption</text>
+  <text x="144" y="90" fill="#e6eef8" font-size="13" font-weight="bold">Pink</text>
+  <text x="144" y="107" fill="#9aa6b2" font-size="10.5">Assumption node.</text>
+  <text x="144" y="121" fill="#9aa6b2" font-size="10.5">Gets guided prompts</text>
+  <text x="144" y="135" fill="#9aa6b2" font-size="10.5">to help you</text>
+  <text x="144" y="149" fill="#9aa6b2" font-size="10.5">challenge it.</text>
+
+  <!-- Blue -->
+  <rect x="268" y="24" width="112" height="40" rx="6" fill="#0074d9"/>
+  <text x="324" y="49" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="bold">Blue</text>
+  <text x="268" y="90" fill="#e6eef8" font-size="13" font-weight="bold">Blue</text>
+  <text x="268" y="107" fill="#9aa6b2" font-size="10.5">General-purpose,</text>
+  <text x="268" y="121" fill="#9aa6b2" font-size="10.5">no special behavior -</text>
+  <text x="268" y="135" fill="#9aa6b2" font-size="10.5">use for your own</text>
+  <text x="268" y="149" fill="#9aa6b2" font-size="10.5">categorization.</text>
+
+  <!-- Yellow -->
+  <rect x="392" y="24" width="112" height="40" rx="6" fill="#ffcc00"/>
+  <text x="448" y="49" text-anchor="middle" fill="#1a1e27" font-size="12" font-weight="bold">Yellow</text>
+  <text x="392" y="90" fill="#e6eef8" font-size="13" font-weight="bold">Yellow</text>
+  <text x="392" y="107" fill="#9aa6b2" font-size="10.5">Same as Blue -</text>
+  <text x="392" y="121" fill="#9aa6b2" font-size="10.5">general-purpose,</text>
+  <text x="392" y="135" fill="#9aa6b2" font-size="10.5">use for your own</text>
+  <text x="392" y="149" fill="#9aa6b2" font-size="10.5">categorization.</text>
+
+  <!-- Empty / grey placeholder -->
+  <rect x="516" y="24" width="112" height="40" rx="6" fill="#323a4a" stroke="#9aa6b2" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="516" y="90" fill="#e6eef8" font-size="13" font-weight="bold">Empty (grey)</text>
+  <text x="516" y="107" fill="#9aa6b2" font-size="10.5">An unfilled</text>
+  <text x="516" y="121" fill="#9aa6b2" font-size="10.5">placeholder stub -</text>
+  <text x="516" y="135" fill="#9aa6b2" font-size="10.5">click it to turn into</text>
+  <text x="516" y="149" fill="#9aa6b2" font-size="10.5">a real node.</text>
+
+  <line x1="20" y1="172" x2="620" y2="172" stroke="#26313a" stroke-width="1"/>
+  <text x="20" y="194" fill="#9aa6b2" font-size="12">Toggle "Hide Placeholders" (👻) to hide/show empty stubs everywhere.</text>
+</svg>
