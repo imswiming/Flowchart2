@@ -7,37 +7,16 @@
   <title>Flowchart Editor</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script type="module">
-    // Notes uses Tiptap (ProseMirror) as a real rich-text backend instead of a
-    // plain textarea - loaded straight from a CDN as ES modules since this
-    // project has no build step/bundler. script.js (a classic, non-module
-    // script) can't use `import`, so this exposes the pieces it needs on
-    // `window.TiptapNotes`, plus `window.TiptapNotesReady` - a promise
-    // script.js awaits before constructing the app, so Notes is never
-    // rendered before the editor library has actually finished loading.
-    let resolveReady;
-    window.TiptapNotesReady = new Promise((resolve) => { resolveReady = resolve; });
-    import('https://esm.sh/@tiptap/core@2.9.1')
-      .then((core) => Promise.all([
-        core,
-        import('https://esm.sh/@tiptap/starter-kit@2.9.1'),
-        import('https://esm.sh/@tiptap/extension-task-list@2.9.1'),
-        import('https://esm.sh/@tiptap/extension-task-item@2.9.1'),
-      ]))
-      .then(([core, starterKit, taskList, taskItem]) => {
-        window.TiptapNotes = {
-          Editor: core.Editor,
-          StarterKit: starterKit.default,
-          TaskList: taskList.default,
-          TaskItem: taskItem.default,
-        };
-        resolveReady();
-      })
-      .catch((err) => {
-        console.error('Failed to load Tiptap for Notes:', err);
-        resolveReady(); // don't hang the app forever - renderNotesPanel handles a missing window.TiptapNotes
-      });
-  </script>
+  <!-- Notes uses CKEditor 5 as its rich-text backend, vendored locally
+       (vendor/ckeditor5/) rather than loaded from ckeditor.com's own CDN -
+       CKEditor's CDN build requires a paid license key even for basic use;
+       only the npm-distributed build (what's vendored here) accepts the
+       free 'GPL' key (see renderNotesPanel's licenseKey config). A plain,
+       non-deferred script tag (not ESM) exposes the global `CKEDITOR`
+       synchronously, so it's guaranteed ready before script.js (deferred)
+       runs. -->
+  <link rel="stylesheet" href="vendor/ckeditor5/ckeditor5.css">
+  <script src="vendor/ckeditor5/ckeditor5.umd.js"></script>
   <script src="script.js" defer></script>
   <style>
     /* Hamburger menu styles */

@@ -429,7 +429,7 @@ class FlowchartViewer {
             }
 
             // Ignore other shortcuts if focus is in an input/textarea, or in a
-            // contenteditable element (the Tiptap-based Notes editor).
+            // contenteditable element (the CKEditor-based Notes editor).
             const tag = document.activeElement.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable) return;
 
@@ -3605,8 +3605,9 @@ class FlowchartViewer {
         if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = '';
         if (this.leftPanelZoomControls) this.leftPanelZoomControls.style.display = '';
         if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'none';
-        if (this.notesEditor && this.notesEditor.isFocused) {
-            this.notesEditor.commands.blur();
+        if (this.notesEditor && this.notesEditor.ui.focusTracker.isFocused) {
+            const domRoot = this.notesEditor.editing.view.getDomRoot();
+            if (domRoot) domRoot.blur();
         }
     }
 
@@ -4211,7 +4212,7 @@ class FlowchartViewer {
             this.openPughPanel();
         }
         if (this.notesEditor) {
-            this.notesEditor.commands.focus();
+            this.notesEditor.editing.view.focus();
         }
     }
 
@@ -4323,6 +4324,14 @@ class FlowchartViewer {
         titleBtn.addEventListener('click', () => this.toggleNotesTitle());
         header.appendChild(titleBtn);
 
+        const highlightBtn = document.createElement('button');
+        highlightBtn.id = 'notes-highlight-btn';
+        highlightBtn.type = 'button';
+        highlightBtn.textContent = '\u270f\ufe0f Highlight';
+        highlightBtn.title = 'Highlight the selected text in yellow';
+        highlightBtn.addEventListener('click', () => this.toggleNotesHighlight());
+        header.appendChild(highlightBtn);
+
         const outdentBtn = document.createElement('button');
         outdentBtn.id = 'notes-outdent-btn';
         outdentBtn.type = 'button';
@@ -4353,635 +4362,137 @@ class FlowchartViewer {
             this.notesEditor = null;
         }
 
-        if (!window.TiptapNotes) {
-            // The CDN module (see index.html) failed to load - surface this rather
-            // than silently showing an empty, uneditable box.
+        if (!window.CKEDITOR) {
+            // vendor/ckeditor5/ckeditor5.umd.js (see index.html) failed to load -
+            // surface this rather than silently showing an empty, uneditable box.
             editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
             return;
         }
 
-        const { Editor, StarterKit, TaskList, TaskItem } = window.TiptapNotes;
-        this.notesEditor = new Editor({
-            element: editorEl,
-            extensions: [
-                StarterKit.configure({ heading: { levels: [4] } }),
-                TaskList,
-                TaskItem.configure({ nested: true }),
-            ],
-            content: this.globalNotes || '<p></p>',
-            editorProps: {
-                // Only image *data* (a screenshot, or an image copied from an image
-                // editor) is intercepted here - everything else (plain text, a
-                // pasted URL) returns false so Tiptap's own default paste handling
-                // still runs normally.
-                handlePaste: (view, event) => !!this.handleNotesPaste(event),
-                // Tab/Shift+Tab indent/outdent the current line - same commands as
-                // the Indent/Outdent buttons, so Tab on an empty (or plain) line
-                // starts a bullet the same way clicking Indent does.
-                handleKeyDown: (view, event) => {
-                    if (event.key === 'Tab') {
-                        event.preventDefault();
-                        if (event.shiftKey) {
-                            this.outdentNotesLine();
-                        } else {
-                            this.indentNotesLine();
-                        }
-                        return true;
-                    }
-                    if (event.key === 'Backspace') {
-                        return this.handleNotesBackspace();
-                    }
-                    return false;
-                },
+        const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
+        DecoupledEditor.create(editorEl, {
+            licenseKey: 'GPL',
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight],
+            // Only paragraph/heading4 ("Title") are offered - matches the old
+            // Tiptap config (StarterKit's heading restricted to level 4 only).
+            heading: {
+                options: [
+                    { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
+                    { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
+                ],
             },
-            onFocus: () => this.foldNotesSection(),
-            onBlur: () => {
-                if (this._pendingNotesSave) {
+            // Just the one yellow marker - the Highlight button toggles this
+            // single option on/off rather than offering a color picker.
+            highlight: {
+                options: [
+                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#fdfd77', type: 'marker' },
+                ],
+            },
+            initialData: this.globalNotes || '<p></p>',
+        }).then((editor) => {
+            // DecoupledEditor doesn't attach its own toolbar/UI anywhere by
+            // default - this app drives it entirely through its own
+            // Checklist/Title/Outdent/Indent buttons above instead (see
+            // toggleNotesChecklist/toggleNotesTitle/indentNotesLine/
+            // outdentNotesLine), so editor.ui.view.toolbar.element is
+            // deliberately never inserted into the page.
+            this.notesEditor = editor;
+
+            // Only image *data* (a screenshot, or an image copied from an image
+            // editor) is intercepted here - everything else (plain text, a
+            // pasted URL) leaves the event alone so CKEditor's own default
+            // paste handling still runs normally.
+            editor.editing.view.document.on('clipboardInput', (evt, data) => {
+                if (this.handleNotesPaste(data.dataTransfer)) {
+                    evt.stop();
+                }
+            });
+
+            editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
+                if (isFocused) {
+                    this.foldNotesSection();
+                } else if (this._pendingNotesSave) {
                     this._pendingNotesSave = false;
                     this.autosave();
                 }
-            },
-            onUpdate: ({ editor }) => {
-                this.capitalizeNotesCurrentLine();
-                this.globalNotes = editor.getHTML();
+            });
+
+            editor.model.document.on('change:data', () => {
+                this.globalNotes = editor.getData();
                 this._pendingNotesSave = true;
-                // Lightweight - only rebuilds the small strip below, not the editor
-                // itself, so this is safe to run on every keystroke without disturbing
-                // focus/cursor position. This is what makes a pasted image URL's preview
-                // appear right away, since the URL is left as plain pasted text rather
-                // than replaced by a marker (see handleNotesPaste).
                 this.renderNotesMediaStrip();
-            },
+            });
+
+            this.renderNotesMediaStrip();
+        }).catch((err) => {
+            console.error('Failed to create Notes editor:', err);
+            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
         });
-
-        this.renderNotesMediaStrip();
     }
 
-    // Auto-capitalizes the first letter of whichever line/indent the cursor
-    // is currently in - runs on every keystroke (see onUpdate above), but
-    // only ever touches that one character, and only when it's actually
-    // lowercase, so it's a no-op once a line's first letter is already
-    // correct.
-    capitalizeNotesCurrentLine() {
-        const editor = this.notesEditor;
-        if (!editor) return;
-        const { state } = editor;
-        const { $from } = state.selection;
-        for (let d = $from.depth; d >= 0; d--) {
-            const node = $from.node(d);
-            if (node.isTextblock) {
-                const text = node.textContent;
-                if (text.length > 0) {
-                    const first = text[0];
-                    const upper = first.toUpperCase();
-                    if (first !== upper) {
-                        const blockStart = $from.start(d);
-                        const tr = state.tr.insertText(upper, blockStart, blockStart + first.length);
-                        tr.setMeta('addToHistory', false);
-                        editor.view.dispatch(tr);
-                    }
-                }
-                break;
-            }
-        }
-    }
-
-    // Toggles the selected (or current) lines' checklist state - Tiptap's
-    // TaskList/TaskItem extensions handle nesting, checked state, and real
-    // strikethrough (see style.css) natively. If the current line isn't in
-    // any list yet, this is just the built-in "start a checklist" command;
-    // otherwise it hands off to convertNotesListItemType, which preserves
-    // wherever the line is currently nested (Tiptap's own toggleTaskList/
-    // toggleBulletList lift the line up to the top of its enclosing list
-    // first, which loses its indent level - see that method for why).
-    //
-    // Uses the NEAREST enclosing listItem/taskItem, not editor.isActive() -
-    // isActive() matches if EITHER type appears ANYWHERE in the ancestor
-    // chain, so a checklist item nested inside a plain-bullet parent (or vice
-    // versa) would otherwise get misread as already being whatever type the
-    // OUTER ancestor happens to be, converting the wrong line entirely.
+    // Toggles the selected (or current) lines' checklist state. Uses
+    // CKEditor's own default TodoList command as-is for now (no custom
+    // per-item conversion yet) - like Tiptap's own default toggleTaskList,
+    // this converts the WHOLE enclosing list, not just the current line;
+    // preserving only the current line's nesting (the way the old Tiptap
+    // version's custom convertNotesListItemType worked) is a follow-up.
     toggleNotesChecklist() {
         if (!this.notesEditor) return;
-        const editor = this.notesEditor;
-        const nearestType = this.getNearestNotesListItemType();
-        if (nearestType === 'taskItem') {
-            this.convertNotesListItemType('listItem', 'bulletList');
-        } else if (nearestType === 'listItem') {
-            this.convertNotesListItemType('taskItem', 'taskList');
-        } else {
-            editor.chain().focus().toggleTaskList().run();
-        }
+        this.notesEditor.execute('todoList');
+        this.notesEditor.editing.view.focus();
     }
 
-    // Shared by toggleNotesChecklist/indentNotesLine/outdentNotesLine - finds
-    // the NEAREST enclosing listItem/taskItem, not editor.isActive() (which
-    // matches if EITHER type appears anywhere in the ancestor chain, so a
-    // checklist item nested inside a plain-bullet parent - or vice versa -
-    // would get misread as whatever the OUTER ancestor happens to be).
-    getNearestNotesListItemType() {
-        if (!this.notesEditor) return null;
-        const { $from } = this.notesEditor.state.selection;
-        for (let d = $from.depth; d > 0; d--) {
-            const name = $from.node(d).type.name;
-            if (name === 'taskItem' || name === 'listItem') return name;
-        }
-        return null;
-    }
-
-    // Converts the list item(s) touched by the current selection to a
-    // different item/list type (listItem/bulletList <-> taskItem/taskList) IN
-    // PLACE - same parent, same depth, same position among siblings - unlike
-    // Tiptap's built-in toggleBulletList/toggleTaskList, which lift the
-    // selection out of its enclosing list before rewrapping it (fine for a
-    // top-level line, but it silently un-nests anything indented under a
-    // parent line). Any untouched sibling items on either side are split off
-    // into their own list of the original type, so only the selected item(s)
-    // actually change type.
-    convertNotesListItemType(targetItemType, targetListType) {
-        const editor = this.notesEditor;
-        const { state } = editor;
-        const { $from, $to } = state.selection;
-        const origFromPos = $from.pos;
-        const origToPos = $to.pos;
-
-        const sourceItemType = targetItemType === 'listItem' ? 'taskItem' : 'listItem';
-
-        // The nearest ancestor of the (source) item type wrapping the
-        // selection's start, and the enclosing list one level up from it.
-        let itemDepth = null;
-        for (let d = $from.depth; d > 0; d--) {
-            if ($from.node(d).type.name === sourceItemType) { itemDepth = d; break; }
-        }
-        if (itemDepth === null) return; // not actually in a list of that type - nothing to do
-
-        const listDepth = itemDepth - 1;
-        const listNode = $from.node(listDepth);
-        const listStart = $from.before(listDepth);
-        const listEnd = $from.after(listDepth);
-
-        // Which of the list's children does the selection touch? Only
-        // $from's list is considered - a selection spanning into a
-        // differently-nested list falls back to just $from's own item,
-        // which keeps this from doing something surprising across a more
-        // complex selection.
-        let childIndexFrom = -1;
-        let childIndexTo = -1;
-        let offset = listStart + 1;
-        for (let i = 0; i < listNode.childCount; i++) {
-            const childEnd = offset + listNode.child(i).nodeSize;
-            if (childIndexFrom === -1 && $from.pos < childEnd) childIndexFrom = i;
-            if ($to.pos <= childEnd) { childIndexTo = i; break; }
-            offset = childEnd;
-        }
-        if (childIndexFrom === -1) return;
-        if (childIndexTo === -1) childIndexTo = childIndexFrom;
-
-        const schema = state.schema;
-        const targetItemNodeType = schema.nodes[targetItemType];
-        const targetListNodeType = schema.nodes[targetListType];
-        if (!targetItemNodeType || !targetListNodeType) return;
-
-        const itemsBefore = [];
-        const itemsSelected = [];
-        const itemsAfter = [];
-        for (let i = 0; i < listNode.childCount; i++) {
-            const child = listNode.child(i);
-            if (i < childIndexFrom) itemsBefore.push(child);
-            else if (i > childIndexTo) itemsAfter.push(child);
-            else {
-                const attrs = targetItemType === 'taskItem' ? { checked: false } : {};
-                itemsSelected.push(targetItemNodeType.create(attrs, child.content));
-            }
-        }
-
-        const beforePiece = itemsBefore.length ? listNode.type.create(listNode.attrs, itemsBefore) : null;
-        const selectedPiece = targetListNodeType.create(null, itemsSelected);
-        const pieces = [];
-        if (beforePiece) pieces.push(beforePiece);
-        pieces.push(selectedPiece);
-        if (itemsAfter.length) pieces.push(listNode.type.create(listNode.attrs, itemsAfter));
-
-        // tr.mapping.map() can't recover a sensible position here - the whole
-        // [listStart, listEnd) range is replaced with brand-new nodes, so any
-        // position that fell INSIDE the old range has no direct counterpart
-        // and gets snapped to an edge (read as "the cursor jumped to the next
-        // line"). Instead, compute the new position directly: itemsSelected
-        // keeps the exact same content (just a different item wrapper, which
-        // contributes the same 1 open + 1 close token either way), so the
-        // cursor's offset relative to where itemsSelected begins is unchanged
-        // - only the absolute start position (before vs. after this edit)
-        // differs.
-        let origSumBefore = 0;
-        for (const child of itemsBefore) origSumBefore += child.nodeSize;
-        const origSelectedStart = listStart + 1 + origSumBefore;
-        const relFrom = origFromPos - origSelectedStart;
-        const relTo = origToPos - origSelectedStart;
-
-        const selectedPieceStart = listStart + (beforePiece ? beforePiece.nodeSize : 0);
-        const newSelectedStart = selectedPieceStart + 1;
-        const newFrom = newSelectedStart + relFrom;
-        const newTo = newSelectedStart + relTo;
-
-        // After converting, land the cursor at the start of whichever item
-        // comes right after the one(s) just converted (if any), so
-        // repeatedly pressing the Checklist button walks down the list
-        // converting one item at a time, instead of leaving the cursor on
-        // the item that was just handled.
-        let nextItemPos = null;
-        if (itemsAfter.length) {
-            const afterPieceStart = selectedPieceStart + selectedPiece.nodeSize;
-            nextItemPos = afterPieceStart + 1;
-        }
-
-        const tr = state.tr.replaceWith(listStart, listEnd, pieces);
-        editor.view.dispatch(tr);
-        if (nextItemPos !== null) {
-            editor.commands.setTextSelection(nextItemPos);
-        } else {
-            editor.commands.setTextSelection({ from: newFrom, to: newTo });
-        }
-        editor.commands.focus();
-    }
-
-    // Toggles the selected (or current) lines between a plain line and a bold,
-    // slightly-larger "Title" line - a real heading now (see style.css for its
-    // size/weight), rather than the old Unicode-bold-character approximation a
-    // plain textarea needed.
+    // Toggles the current line between a plain paragraph and a bold,
+    // slightly-larger "Title" line (heading4 - see the heading.options
+    // config in renderNotesPanel, and its size/weight in style.css).
     toggleNotesTitle() {
         if (!this.notesEditor) return;
-        this.notesEditor.chain().focus().toggleHeading({ level: 4 }).run();
+        const editor = this.notesEditor;
+        const isTitle = editor.commands.get('heading').value === 'heading4';
+        editor.execute(isTitle ? 'paragraph' : 'heading', isTitle ? undefined : { value: 'heading4' });
+        editor.editing.view.focus();
     }
 
-    // Indent/Outdent buttons replace the old plain-textarea's Tab/Space-to-indent
-    // shortcuts - sinkListItem/liftListItem are Tiptap's built-in commands for
-    // nesting a list item one level deeper/shallower, working the same way for a
-    // checklist item (taskItem) as for a plain bullet (listItem) - including
-    // preserving a checklist item's checked state, which the old plain-text
-    // version could corrupt (see the "Fix Notes checklist items..." commit).
-    // A plain paragraph (not yet in any list) starts a new bullet list on
-    // Indent, the same way Tab used to promote a plain line to a bullet.
-    indentNotesLine() {
+    // Toggles a yellow highlight marker on the selected text - a no-op if
+    // nothing is selected, same as the other formatting buttons only acting
+    // on an actual selection/current line.
+    toggleNotesHighlight() {
         if (!this.notesEditor) return;
         const editor = this.notesEditor;
-        const itemType = this.getNearestNotesListItemType();
-        if (itemType === null) {
-            editor.chain().focus().toggleBulletList().run();
-            return;
-        }
-        if (editor.can().sinkListItem(itemType)) {
-            editor.chain().focus().sinkListItem(itemType).run();
-        } else {
-            this.sinkNotesListItemAcrossBoundary(itemType);
-        }
+        const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
+        editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
+        editor.editing.view.focus();
+    }
+
+    // Indent/Outdent buttons - CKEditor's List plugin provides these
+    // directly (also bound to Tab/Shift+Tab by default while inside a
+    // list), including preserving a checklist item's checked state.
+    indentNotesLine() {
+        if (!this.notesEditor) return;
+        this.notesEditor.execute('indentList');
+        this.notesEditor.editing.view.focus();
     }
 
     outdentNotesLine() {
         if (!this.notesEditor) return;
-        const editor = this.notesEditor;
-        const itemType = this.getNearestNotesListItemType();
-        if (itemType === null) return;
-        if (this.canLiftNotesListItemSafely(itemType)) {
-            editor.chain().focus().liftListItem(itemType).run();
-        } else {
-            this.liftNotesListItemAcrossBoundary(itemType);
-        }
+        this.notesEditor.execute('outdentList');
+        this.notesEditor.editing.view.focus();
     }
 
-    // liftListItem's own applicability check (editor.can().liftListItem) only
-    // asks "is there a liftable wrapping here", not "does the schema actually
-    // have somewhere valid to put it" - after a checklist conversion splits a
-    // list (see convertNotesListItemType), an item can be nested two levels
-    // deep with its GRANDPARENT list being the wrong type for it (e.g. a
-    // taskItem sitting inside a taskList that's itself tucked inside a plain
-    // listItem's content, with no taskList among that listItem's own
-    // siblings). liftListItem still reports "yes" and still runs, but with
-    // nowhere valid of the right type to land in, it silently drops the
-    // item's own list-item wrapper instead - the outdented line loses its
-    // checkbox/bullet and becomes a bare paragraph. This checks whether the
-    // list two levels up the item's own list is schema-compatible with it,
-    // which is what actually determines whether the default command is safe.
-    canLiftNotesListItemSafely(itemType) {
-        const { $from } = this.notesEditor.state.selection;
-        let itemDepth = null;
-        for (let d = $from.depth; d > 0; d--) {
-            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
-        }
-        if (itemDepth === null) return true;
-        const ownListDepth = itemDepth - 1;
-        const parentItemDepth = ownListDepth - 1;
-        if (parentItemDepth < 1) return true; // own list is already top-level
-        const outerListDepth = parentItemDepth - 1;
-        if (outerListDepth < 1) return true;
-        const outerListType = $from.node(outerListDepth).type.name;
-        if (itemType === 'taskItem') return outerListType === 'taskList';
-        return outerListType === 'bulletList' || outerListType === 'orderedList';
-    }
-
-    // Mirrors sinkNotesListItemAcrossBoundary for the outdent direction: pulls
-    // the item out of its own (wrongly-typed-for-the-outer-list) nesting and
-    // reinserts it as a new sibling list at the outer boundary, right next to
-    // whichever item it was nested under - same schema-safe cross-type jump
-    // sinking used to get it there in the first place, just reversed. Any
-    // later siblings still in the item's own list get dragged along as its
-    // own new nested sub-list, matching how a normal same-type outdent
-    // behaves when the outdented item has siblings after it.
-    liftNotesListItemAcrossBoundary(itemType) {
-        const editor = this.notesEditor;
-        const { state } = editor;
-        const { $from, $to } = state.selection;
-        const origFromPos = $from.pos;
-        const origToPos = $to.pos;
-        const schema = state.schema;
-        const listTypeForItem = schema.nodes[itemType === 'taskItem' ? 'taskList' : 'bulletList'];
-
-        let itemDepth = null;
-        for (let d = $from.depth; d > 0; d--) {
-            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
-        }
-        if (itemDepth === null) return;
-
-        const ownListDepth = itemDepth - 1;
-        const parentItemDepth = ownListDepth - 1;
-        if (parentItemDepth < 1) return;
-        const outerListDepth = parentItemDepth - 1;
-        if (outerListDepth < 1) return;
-
-        const ownListNode = $from.node(ownListDepth);
-        const ownListStart = $from.before(ownListDepth);
-        const ownItemStart = $from.before(itemDepth);
-
-        let ownChildIndex = -1;
-        let off = ownListStart + 1;
-        for (let i = 0; i < ownListNode.childCount; i++) {
-            if (off === ownItemStart) { ownChildIndex = i; break; }
-            off += ownListNode.child(i).nodeSize;
-        }
-        if (ownChildIndex === -1) return;
-
-        const thisItem = ownListNode.child(ownChildIndex);
-        const itemsBefore = [];
-        const itemsAfter = [];
-        for (let i = 0; i < ownListNode.childCount; i++) {
-            if (i < ownChildIndex) itemsBefore.push(ownListNode.child(i));
-            else if (i > ownChildIndex) itemsAfter.push(ownListNode.child(i));
-        }
-
-        // Later siblings in the item's own list are dragged along as its own
-        // new trailing sub-list, exactly like a normal same-type outdent.
-        const newThisItemContent = [];
-        thisItem.content.forEach(c => newThisItemContent.push(c));
-        if (itemsAfter.length) {
-            newThisItemContent.push(ownListNode.type.create(ownListNode.attrs, itemsAfter));
-        }
-        const newThisItem = thisItem.type.create(thisItem.attrs, newThisItemContent);
-
-        // The parent item keeps only whichever of its own list's children
-        // came before our item (or loses that nested list entirely if none did).
-        const parentItemNode = $from.node(parentItemDepth);
-        const parentItemStart = $from.before(parentItemDepth);
-        const newParentContent = [];
-        let sawOwnList = false;
-        parentItemNode.forEach((child, offsetInParent) => {
-            const childAbsStart = parentItemStart + 1 + offsetInParent;
-            if (childAbsStart === ownListStart) {
-                sawOwnList = true;
-                if (itemsBefore.length) newParentContent.push(ownListNode.type.create(ownListNode.attrs, itemsBefore));
-            } else {
-                newParentContent.push(child);
-            }
-        });
-        if (!sawOwnList) return;
-        const newParentItem = parentItemNode.type.create(parentItemNode.attrs, newParentContent);
-
-        // Split the outer list around the parent item - the lifted item
-        // becomes a new, separate sibling list sitting right after it,
-        // exactly the same schema-safe insertion point
-        // sinkNotesListItemAcrossBoundary uses (a bare boundary position is
-        // ambiguous between "inside the last child" and "after the list").
-        const outerListNode = $from.node(outerListDepth);
-        const outerListStart = $from.before(outerListDepth);
-        const outerListEnd = $from.after(outerListDepth);
-        let parentIndex = -1;
-        let off2 = outerListStart + 1;
-        for (let i = 0; i < outerListNode.childCount; i++) {
-            if (off2 === parentItemStart) { parentIndex = i; break; }
-            off2 += outerListNode.child(i).nodeSize;
-        }
-        if (parentIndex === -1) return;
-
-        const outerBefore = [];
-        const outerAfter = [];
-        for (let i = 0; i < outerListNode.childCount; i++) {
-            if (i < parentIndex) outerBefore.push(outerListNode.child(i));
-            else if (i === parentIndex) outerBefore.push(newParentItem);
-            else outerAfter.push(outerListNode.child(i));
-        }
-
-        const pieces = [];
-        const beforePiece = outerListNode.type.create(outerListNode.attrs, outerBefore);
-        pieces.push(beforePiece);
-        pieces.push(listTypeForItem.create(null, [newThisItem]));
-        if (outerAfter.length) pieces.push(outerListNode.type.create(outerListNode.attrs, outerAfter));
-
-        // Same reasoning as sinkNotesListItemAcrossBoundary/
-        // convertNotesListItemType: a full-range replace with brand-new nodes
-        // leaves tr.mapping.map() nothing sensible to recover, so the new
-        // position is computed directly from the relative offset within the
-        // item instead.
-        const relFrom = origFromPos - ownItemStart;
-        const relTo = origToPos - ownItemStart;
-        const newListStart = outerListStart + beforePiece.nodeSize;
-        const newItemStart = newListStart + 1;
-        const newFrom = newItemStart + relFrom;
-        const newTo = newItemStart + relTo;
-
-        const tr = state.tr;
-        tr.replaceWith(outerListStart, outerListEnd, pieces);
-        editor.view.dispatch(tr);
-        editor.commands.setTextSelection({ from: newFrom, to: newTo });
-        editor.commands.focus();
-    }
-
-    // Backspace at the very start of an empty list item's text - with
-    // nothing else in that item (no nested sub-list) - outdents it (drops
-    // just the bullet/checkbox, leaving a plain empty line in the same
-    // spot) instead of Tiptap's default behavior of merging it into the
-    // PREVIOUS item's own content as an extra paragraph. That default made
-    // an empty line "disappear" into whatever was above it in one press,
-    // skipping past the useful "now it's just a plain line" state on the
-    // way to actually joining the line above - so the intended sequence
-    // (empty line -> becomes a bullet -> loses the bullet -> merges with
-    // the line above) needed 4 presses where only 3 should be needed once a
-    // line has already become a bullet. Returning false for every other
-    // case (non-empty item, no item at all, item has extra content) lets
-    // Tiptap's normal Backspace handling run as usual.
-    handleNotesBackspace() {
-        const editor = this.notesEditor;
-        const { state } = editor;
-        const { $from, empty } = state.selection;
-        if (!empty || $from.parentOffset !== 0) return false;
-
-        const itemType = this.getNearestNotesListItemType();
-        if (itemType !== null) {
-            let itemDepth = null;
-            for (let d = $from.depth; d > 0; d--) {
-                if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
-            }
-            if (itemDepth === null) return false;
-            // Only when the cursor's own paragraph is the FIRST thing in the
-            // item (guards against outdenting when the cursor is actually in
-            // a second paragraph or nested sub-list further down the item).
-            if ($from.index(itemDepth) !== 0) return false;
-
-            const itemNode = $from.node(itemDepth);
-            const isEmptyLeafItem = itemNode.childCount === 1 && itemNode.child(0).content.size === 0;
-            if (!isEmptyLeafItem) return false;
-
-            this.outdentNotesLine();
-            // Remember exactly where this landed - if the very next thing
-            // that happens is ANOTHER Backspace at this same spot (below),
-            // that means the line is back to being a plain empty paragraph
-            // sitting right after a list, and should actually merge into it
-            // rather than repeat this same outdent's precondition forever.
-            this._lastBackspaceOutdentPos = this.notesEditor.state.selection.from;
-            return true;
-        }
-
-        // Not in any list - an empty plain paragraph immediately following a
-        // list would otherwise get silently re-absorbed as a new bullet on
-        // Backspace (Tiptap's default), right back to the state the outdent
-        // above just left it in. Only when THIS exact spot is where that
-        // outdent just landed does Backspace instead merge it into the
-        // list's last item, actually reaching "join the line above".
-        if ($from.parent.content.size === 0 && this._lastBackspaceOutdentPos === $from.pos) {
-            this._lastBackspaceOutdentPos = null;
-            const paraStart = $from.before($from.depth);
-            const paraEnd = $from.after($from.depth);
-            const tr = state.tr.delete(paraStart, paraEnd);
-            editor.view.dispatch(tr);
-            return true;
-        }
-        this._lastBackspaceOutdentPos = null;
-        return false;
-    }
-
-    // sinkListItem only ever nests an item under its own IMMEDIATELY
-    // PRECEDING SIBLING within the same list node - so it fails (silently
-    // no-ops) whenever the current item is the first child of its list, even
-    // if something that could reasonably hold it sits right before that list
-    // (most commonly: a checklist conversion split one shared list into
-    // several separate list nodes side by side - see convertNotesListItemType
-    // - so the second and later items could no longer be sunk under the
-    // first at all). This walks upward from the current item through
-    // enclosing list boundaries, and at the first ancestor level where
-    // something (an item or a list) precedes it, relocates the current item
-    // to become a new nested child there - preserving its own type
-    // (bullet stays a bullet, checklist stays a checklist) - rather than
-    // capping how deep a line can go relative to whatever's directly above.
-    sinkNotesListItemAcrossBoundary(itemType) {
-        const editor = this.notesEditor;
-        const { state } = editor;
-        const { $from, $to } = state.selection;
-        const origFromPos = $from.pos;
-        const origToPos = $to.pos;
-        const LIST_TYPES = ['bulletList', 'orderedList', 'taskList'];
-        const schema = state.schema;
-        const listTypeForItem = schema.nodes[itemType === 'taskItem' ? 'taskList' : 'bulletList'];
-
-        let itemDepth = null;
-        for (let d = $from.depth; d > 0; d--) {
-            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
-        }
-        if (itemDepth === null) return;
-
-        // Walk up from the item's own enclosing list, checking progressively
-        // higher list-boundaries for something to nest into.
-        for (let listDepth = itemDepth - 1; listDepth >= 1; listDepth -= 2) {
-            const boundaryPos = $from.before(listDepth);
-            if (boundaryPos <= 0) continue;
-            const prevNode = state.doc.resolve(boundaryPos).nodeBefore;
-            if (!prevNode || !LIST_TYPES.includes(prevNode.type.name)) continue;
-
-            // Found a preceding list at this depth - append our own item
-            // into its last child's content. Its last child's own [start,
-            // end) range is computed explicitly and replaced wholesale
-            // (rather than inserting at the bare boundary position, which is
-            // ambiguous between "inside the last child" and "after the
-            // list" - ProseMirror resolved it as the latter, silently
-            // landing the moved item as a new top-level sibling instead of
-            // actually nesting it).
-            const prevNodeStart = boundaryPos - prevNode.nodeSize;
-            let lastChildStart = prevNodeStart + 1;
-            for (let i = 0; i < prevNode.childCount - 1; i++) lastChildStart += prevNode.child(i).nodeSize;
-            const lastChildNode = prevNode.child(prevNode.childCount - 1);
-            const lastChildEnd = lastChildStart + lastChildNode.nodeSize;
-
-            const ownListDepth = itemDepth - 1;
-            const ownListNode = $from.node(ownListDepth);
-            const ownListStart = $from.before(ownListDepth);
-            const ownListEnd = $from.after(ownListDepth);
-            const ownItemStart = $from.before(itemDepth);
-
-            let ownChildIndex = -1;
-            let off = ownListStart + 1;
-            for (let i = 0; i < ownListNode.childCount; i++) {
-                if (off === ownItemStart) { ownChildIndex = i; break; }
-                off += ownListNode.child(i).nodeSize;
-            }
-            if (ownChildIndex === -1) return;
-
-            const ownItemNode = ownListNode.child(ownChildIndex);
-            const remaining = [];
-            for (let i = 0; i < ownListNode.childCount; i++) {
-                if (i !== ownChildIndex) remaining.push(ownListNode.child(i));
-            }
-
-            const wrapper = listTypeForItem.create(null, [ownItemNode]);
-            const newLastChildContent = [];
-            lastChildNode.content.forEach(child => newLastChildContent.push(child));
-            newLastChildContent.push(wrapper);
-            const newLastChildNode = lastChildNode.type.create(lastChildNode.attrs, newLastChildContent);
-
-            // tr.mapping.map() can't recover a sensible position here either
-            // (same reasoning as convertNotesListItemType above) - ownItemNode
-            // gets moved wholesale into a brand-new wrapper replacing
-            // [lastChildStart, lastChildEnd), so the cursor's offset relative
-            // to ownItemNode's own start is computed up front and re-applied
-            // to its new location, instead of letting the default mapping
-            // snap it to wherever the edit happens to land (in practice, the
-            // very next sibling list - reported as "the cursor jumped away
-            // after indenting").
-            const relFrom = origFromPos - ownItemStart;
-            const relTo = origToPos - ownItemStart;
-            const newOwnItemStart = lastChildStart + 1 + lastChildNode.content.size + 1;
-            const newFrom = newOwnItemStart + relFrom;
-            const newTo = newOwnItemStart + relTo;
-
-            const tr = state.tr;
-            if (remaining.length) {
-                tr.replaceWith(ownListStart, ownListEnd, ownListNode.type.create(ownListNode.attrs, remaining));
-            } else {
-                tr.delete(ownListStart, ownListEnd);
-            }
-            // lastChildStart/lastChildEnd sit entirely before ownListStart
-            // (prevNode is what immediately precedes our own list), so
-            // they're unaffected by the edit above and don't need remapping.
-            tr.replaceWith(lastChildStart, lastChildEnd, newLastChildNode);
-            editor.view.dispatch(tr);
-            editor.commands.setTextSelection({ from: newFrom, to: newTo });
-            editor.commands.focus();
-            return;
-        }
-    }
 
     // Converts a legacy plain-text Notes value (the old bullet/checklist/title
-    // format the plain-textarea version used - 8-space indents, \u2022/\u25E6/\u25AA
-    // bullets, \u2610/\u2611 checkboxes, Mathematical-Bold "title" characters,
-    // combining-strikethrough for a checked item's done text) into the HTML this
-    // Tiptap-based editor expects. Only runs once, the first time an old save
-    // (from before this rewrite) is loaded - see loadFlowchartFromList. Any line
-    // that doesn't parse cleanly just becomes a plain paragraph rather than
-    // throwing, so a save can never fail to load because of this.
+    // format the original plain-textarea version used - 8-space indents,
+    // \u2022/\u25E6/\u25AA bullets, \u2610/\u2611 checkboxes, Mathematical-Bold "title"
+    // characters, combining-strikethrough for a checked item's done text) into
+    // plain <ul>/<li>/<h4> HTML - CKEditor's data processor recognizes a
+    // <label><input type="checkbox"></label> pattern as a checklist item
+    // regardless of the exact class/data-attribute naming, so this output
+    // (originally written for the Tiptap-based editor this replaced) still
+    // loads correctly. Only runs once, the first time an old save (from
+    // before the original plain-textarea rewrite) is loaded - see
+    // loadFlowchartFromList. Any line that doesn't parse cleanly just becomes
+    // a plain paragraph rather than throwing, so a save can never fail to
+    // load because of this.
     migrateLegacyNotesToHtml(text) {
         if (!text) return '<p></p>';
         const INDENT = '        '; // 8 spaces - must match the old setupIndentableTextarea
@@ -5185,12 +4696,13 @@ class FlowchartViewer {
     // Raw image data has no natural embeddable form here, so it still gets a
     // [[image:ID]] marker; a pasted URL is left as plain, ordinary URL text -
     // readable and copyable, and picked up automatically for a preview by
-    // getNotesMediaMarkers. Called from editorProps.handlePaste (see
-    // renderNotesPanel) - returning true tells Tiptap "handled, don't also run
-    // your own default paste behavior"; returning false/undefined lets a plain
+    // getNotesMediaMarkers. Called from the editor's clipboardInput event (see
+    // renderNotesPanel) with CKEditor's DataTransfer for the paste - returning
+    // true tells that handler to stop() the event (don't also run CKEditor's
+    // own default paste behavior); returning false/undefined lets a plain
     // text/URL paste go through normally.
-    handleNotesPaste(e) {
-        const items = e.clipboardData && e.clipboardData.items;
+    handleNotesPaste(dataTransfer) {
+        const items = dataTransfer && dataTransfer.items;
         if (items) {
             for (const item of items) {
                 if (item.type && item.type.startsWith('image/')) {
@@ -5218,8 +4730,12 @@ class FlowchartViewer {
     insertNotesMediaMarker(type, id) {
         const marker = `[[${type}:${id}]]`;
         if (this.notesEditor) {
-            this.notesEditor.chain().focus().insertContent(`<p>${marker}</p>`).run();
-            this.globalNotes = this.notesEditor.getHTML();
+            const editor = this.notesEditor;
+            editor.editing.view.focus();
+            const viewFragment = editor.data.processor.toView(`<p>${marker}</p>`);
+            const modelFragment = editor.data.toModel(viewFragment);
+            editor.model.insertContent(modelFragment);
+            this.globalNotes = editor.getData();
         }
         this.renderNotesMediaStrip();
         this.autosave();
@@ -6088,7 +5604,7 @@ class FlowchartViewer {
             const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             this.globalNotes = (this.globalNotes || '')
                 .replace(new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`), '');
-            if (this.notesEditor) this.notesEditor.commands.setContent(this.globalNotes, false);
+            if (this.notesEditor) this.notesEditor.setData(this.globalNotes);
             this.renderNotesMediaStrip();
             this.autosave();
         }
@@ -8334,11 +7850,10 @@ class FlowchartViewer {
     }
 }
 
-// Initialize the viewer when the page loads - waits for the Tiptap module
-// loader (see index.html) so Notes never tries to render before its editor
-// library has finished loading.
+// Initialize the viewer when the page loads. CKEditor's UMD build (see
+// index.html) is a plain, non-deferred script tag, so window.CKEDITOR is
+// already available by the time this (deferred) script runs - no async
+// wait needed, unlike the old Tiptap ESM loader this replaced.
 document.addEventListener('DOMContentLoaded', () => {
-    Promise.resolve(window.TiptapNotesReady).then(() => {
-        new FlowchartViewer();
-    });
+    new FlowchartViewer();
 });

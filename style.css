@@ -320,7 +320,8 @@ body {
     flex-shrink: 0;
 }
 
-/* ===== Notes editor (Tiptap/ProseMirror) ===== */
+/* ===== Notes editor (CKEditor 5, DecoupledEditor - no default toolbar; see
+   renderNotesPanel) ===== */
 #notes-editor-wrap {
     flex: 1;
     width: 100%;
@@ -329,120 +330,66 @@ body {
     border-radius: 5px;
     border: 1px solid var(--border);
     background: var(--control-bg);
-    /* Each line wraps after a fixed number of characters (see the p/h4 rule
-       below) rather than at the box's own edge - a real nested <ul>/<li>
-       gives every indent depth its own correct padding, so a wrapped line's
-       continuation always lines up under that SAME line's own text (unlike
-       the old plain-textarea version's single global hanging-indent guess,
-       which could only ever be exactly right for one depth at a time). Deep
-       indentation can still push a line's fixed-width column wider than the
-       visible box, hence the horizontal scroll here as a fallback. */
     overflow: auto;
 }
 
-#notes-editor .ProseMirror {
-    padding: 10px;
-    /* Extra room at the bottom so the last line can still be scrolled up
-       away from the very edge of the box, instead of staying pinned flush
-       against it with nowhere further to scroll. */
-    padding-bottom: 40vh;
+/* CKEditor ships its own light-theme chrome (borders, focus outline, base
+   text color) on .ck-content - overridden here to match the app's dark
+   theme instead. !important is needed for the color/background/border since
+   CKEditor's own theme CSS targets these same properties with a real class
+   selector (equal or higher specificity, and loaded after this stylesheet). */
+#notes-editor-wrap .ck.ck-content {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text) !important;
     font-family: inherit;
     font-size: 13px;
-    color: var(--text);
     line-height: 1.4;
-    outline: none;
+    padding: 10px !important;
+    padding-bottom: 40vh !important;
+    box-shadow: none !important;
     min-height: 100%;
-    box-sizing: border-box;
 }
 
-#notes-editor .ProseMirror p,
-#notes-editor .ProseMirror h4,
-#notes-editor .ProseMirror li {
+#notes-editor-wrap .ck.ck-content p,
+#notes-editor-wrap .ck.ck-content h4,
+#notes-editor-wrap .ck.ck-content li {
     margin: 0;
 }
 
-#notes-editor .ProseMirror p,
-#notes-editor .ProseMirror h4 {
-    white-space: normal;
-    overflow-wrap: break-word;
-    /* A fixed width (not max-width) so a deeply-indented line wraps after the
-       same number of characters as a top-level one, starting from wherever
-       its own indent places it - rather than being squeezed down to wrap at
-       whatever room is left in the box, which is what max-width still did
-       once indentation ate into the available width. Overflowing past the
-       visible box at deep indent levels is expected - #notes-editor-wrap's
-       horizontal scroll (below) is how the rest is reached. */
-    width: 50ch;
-    flex-shrink: 0;
-}
-
-#notes-editor .ProseMirror > * + * {
+#notes-editor-wrap .ck.ck-content > * + * {
     margin-top: 0.35em;
 }
 
-#notes-editor .ProseMirror h4 {
+#notes-editor-wrap .ck.ck-content h4 {
     font-size: 30px;
     font-weight: bold;
 }
 
-#notes-editor .ProseMirror ul,
-#notes-editor .ProseMirror ol {
+#notes-editor-wrap .ck.ck-content ul,
+#notes-editor-wrap .ck.ck-content ol {
     padding-left: 2.8em;
     margin: 0.2em 0;
 }
 
-#notes-editor .ProseMirror li {
+#notes-editor-wrap .ck.ck-content li {
     margin: 0.15em 0;
 }
 
-/* Checklist items - real checkboxes and real strikethrough (via CSS), instead
-   of the old plain-textarea's Unicode glyphs and combining-strikethrough
-   characters. */
-#notes-editor .ProseMirror ul[data-type="taskList"] {
-    /* Same per-level padding as a plain bullet list (see ul,ol above) rather
-       than its own smaller value - the checkbox is pulled back into that
-       space via the label's negative margin below instead of adding extra
-       width on top of it, so a nested/stacked checklist indents at the same
-       rate per level as a nested bullet list instead of much further. */
+/* Checklist items (CKEditor's TodoList plugin). */
+#notes-editor-wrap .ck.ck-content .todo-list {
     list-style: none;
 }
 
-#notes-editor .ProseMirror ul[data-type="taskList"] li {
-    display: flex;
-    align-items: flex-start;
+#notes-editor-wrap .ck.ck-content .todo-list__label__description {
+    color: var(--text);
 }
 
-#notes-editor .ProseMirror ul[data-type="taskList"] li > label {
-    flex-shrink: 0;
-    margin-top: 0.2em;
-    /* Pulls the checkbox back to the left edge of the padding this list
-       already reserves (see above), then re-adds a small visible gap before
-       the text - so the text itself still starts exactly where a plain
-       bullet's text would, at this same nesting depth. */
-    margin-left: -26px;
-    margin-right: 6px;
-    user-select: none;
-}
-
-#notes-editor .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+#notes-editor-wrap .ck.ck-content .todo-list .todo-list__label > input[type="checkbox"] {
     cursor: pointer;
 }
 
-#notes-editor .ProseMirror ul[data-type="taskList"] li > div {
-    /* Not flex:1/min-width:0 (which would let flex shrink this - and the
-       fixed-width <p> inside it - down to fit) - it should size to its
-       content's actual (fixed) width instead, same as a plain bullet's <li>. */
-    flex: 0 0 auto;
-}
-
-/* Reset first, then only a checked item's OWN paragraph (not its nested
-   sub-items - see the ">div>p" scoping) turns strikethrough on, so checking a
-   parent item doesn't visually cross out its still-unchecked children. */
-#notes-editor .ProseMirror ul[data-type="taskList"] li > div > p {
-    text-decoration: none;
-}
-
-#notes-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div > p {
+#notes-editor-wrap .ck.ck-content .todo-list__label_checked .todo-list__label__description {
     text-decoration: line-through;
     opacity: 0.6;
 }
@@ -889,8 +836,8 @@ body {
     /* Desktop only - the leftmost (unindented) line sits one indent level in
        from the box's edge instead of flush against it, matching the same
        per-level width bullets/checklists already use (see ul,ol above). */
-    #notes-editor .ProseMirror {
-        padding-left: 2.8em;
+    #notes-editor-wrap .ck.ck-content {
+        padding-left: 2.8em !important;
     }
 
 }
