@@ -2529,14 +2529,12 @@ class FlowchartViewer {
         siblings.splice(insertAt, 0, newSibling);
         this._pendingEditData = newSibling;
         this.renderFlowchart(this.rootData);
-        let found = null;
-        d3.hierarchy(this.rootData).each(node => {
-            if (node.data === newSibling) found = node;
-        });
-        if (found) {
-            const renderedNode = this.findRenderedNode(newSibling) || found;
-            this.centerNodeOnMobile(renderedNode, () => this.showNodeEditPopup(found));
-        }
+        // Centering and opening the edit popup is the caller's job (see
+        // focusNewNode in refreshRadialButtons) - doing it here too used to
+        // run the whole find-node/center/open sequence twice in a row for
+        // one click, which could leave the popup wired up against a stale
+        // node reference from the first pass instead of the one focusNewNode
+        // actually ends up centered on.
         this.updateUndoRedoButtons();
         this.autosave();
         return newSibling;
@@ -8056,8 +8054,14 @@ class FlowchartViewer {
             const newParentData = self.addParentNode(targetDatum);
             focusNewNode(newParentData);
         };
-        const activateAddSiblingBefore = () => focusNewNode(self.addSiblingNode(targetDatum, -1));
-        const activateAddSiblingAfter = () => focusNewNode(self.addSiblingNode(targetDatum, 1));
+        const openNewSiblingPopup = (found) => {
+            self.showNodeEditPopup(found);
+            self.nodeEditInput.value = '';
+            self.resizeNodeEditInput();
+            self.nodeEditInput.focus();
+        };
+        const activateAddSiblingBefore = () => focusNewNode(self.addSiblingNode(targetDatum, -1), openNewSiblingPopup);
+        const activateAddSiblingAfter = () => focusNewNode(self.addSiblingNode(targetDatum, 1), openNewSiblingPopup);
         const activateMoveLeft = () => self.moveNodeInSiblings(targetDatum, -1);
         const activateMoveRight = () => self.moveNodeInSiblings(targetDatum, 1);
         const activateMove = () => {
