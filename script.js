@@ -4385,7 +4385,7 @@ class FlowchartViewer {
             // single option on/off rather than offering a color picker.
             highlight: {
                 options: [
-                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#fdfd77', type: 'marker' },
+                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#ffee00', type: 'marker' },
                 ],
             },
             initialData: this.globalNotes || '<p></p>',
@@ -4397,6 +4397,25 @@ class FlowchartViewer {
             // outdentNotesLine), so editor.ui.view.toolbar.element is
             // deliberately never inserted into the page.
             this.notesEditor = editor;
+
+            // Tab/Shift+Tab indent/outdent the current line - same commands as
+            // the Indent/Outdent buttons. CKEditor's List plugin doesn't bind
+            // Tab for this on its own the way Tiptap's did, so left alone,
+            // Tab just does the browser's native "move focus to the next
+            // focusable element" - jumping focus (and the caret) out of the
+            // editor entirely and onto whatever toolbar button happens to be
+            // next, which is what "the caret disappears" actually was.
+            editor.editing.view.document.on('keydown', (evt, data) => {
+                if (data.domEvent.key === 'Tab') {
+                    data.preventDefault();
+                    evt.stop();
+                    if (data.domEvent.shiftKey) {
+                        this.outdentNotesLine();
+                    } else {
+                        this.indentNotesLine();
+                    }
+                }
+            }, { priority: 'high' });
 
             // Only image *data* (a screenshot, or an image copied from an image
             // editor) is intercepted here - everything else (plain text, a
@@ -4469,8 +4488,19 @@ class FlowchartViewer {
     // list), including preserving a checklist item's checked state.
     indentNotesLine() {
         if (!this.notesEditor) return;
-        this.notesEditor.execute('indentList');
-        this.notesEditor.editing.view.focus();
+        const editor = this.notesEditor;
+        const inAnyList = editor.commands.get('bulletedList').value
+            || editor.commands.get('numberedList').value
+            || editor.commands.get('todoList').value;
+        if (!inAnyList) {
+            // A plain paragraph (not yet in any list) starts a new bullet
+            // list on Indent, the same way Tab used to promote a plain line
+            // to a bullet in the old Tiptap-based editor.
+            editor.execute('bulletedList');
+        } else if (editor.commands.get('indentList').isEnabled) {
+            editor.execute('indentList');
+        }
+        editor.editing.view.focus();
     }
 
     outdentNotesLine() {

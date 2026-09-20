@@ -357,6 +357,25 @@ body {
     margin: 0;
 }
 
+/* !important throughout this rule: ckeditor5.css loads after this
+   stylesheet (see index.html), so on an equal-specificity tie its own
+   content rules would otherwise win. */
+#notes-editor-wrap .ck.ck-content p,
+#notes-editor-wrap .ck.ck-content h4,
+#notes-editor-wrap .ck.ck-content li {
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    /* A fixed width (not max-width) so a deeply-indented line wraps after the
+       same number of characters as a top-level one, starting from wherever
+       its own indent places it - rather than being squeezed down to wrap at
+       whatever room is left in the box, which is what max-width would do
+       once indentation ate into the available width. Overflowing past the
+       visible box at deep indent levels is expected - #notes-editor-wrap's
+       horizontal scroll is how the rest is reached. */
+    width: 50ch !important;
+    flex-shrink: 0;
+}
+
 #notes-editor-wrap .ck.ck-content > * + * {
     margin-top: 0.35em;
 }
@@ -385,8 +404,19 @@ body {
     color: var(--text);
 }
 
-#notes-editor-wrap .ck.ck-content .todo-list .todo-list__label > input[type="checkbox"] {
+#notes-editor-wrap .ck.ck-content .todo-list .todo-list__label input[type="checkbox"] {
     cursor: pointer;
+}
+
+#notes-editor-wrap .ck.ck-content .todo-list__label input[type="checkbox"]::before {
+    border-width: 2px !important;
+}
+
+/* CKEditor's Highlight plugin config's own "color" option only feeds its UI
+   swatch preview, not the actual applied style - the real background comes
+   from this static class, so the yellow shade is overridden here instead. */
+#notes-editor-wrap .ck.ck-content mark.marker-yellow {
+    background-color: #ffee00 !important;
 }
 
 #notes-editor-wrap .ck.ck-content .todo-list__label_checked .todo-list__label__description {
@@ -823,6 +853,15 @@ body {
 @media (min-width: 601px) {
     .container {
         flex-direction: row;
+    }
+
+    /* Desktop only - Tab/Shift+Tab (see renderNotesPanel's keydown handler)
+       reliably indent/outdent the current line, making these buttons
+       redundant; mobile keeps them since there's no easy physical Tab key
+       there. */
+    #notes-outdent-btn,
+    #notes-indent-btn {
+        display: none;
     }
 
     #reflection-panel {
