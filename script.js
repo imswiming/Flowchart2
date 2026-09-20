@@ -4640,7 +4640,166 @@ class FlowchartViewer {
         const editor = this.notesEditor;
         const itemType = this.getNearestNotesListItemType();
         if (itemType === null) return;
-        editor.chain().focus().liftListItem(itemType).run();
+        if (this.canLiftNotesListItemSafely(itemType)) {
+            editor.chain().focus().liftListItem(itemType).run();
+        } else {
+            this.liftNotesListItemAcrossBoundary(itemType);
+        }
+    }
+
+    // liftListItem's own applicability check (editor.can().liftListItem) only
+    // asks "is there a liftable wrapping here", not "does the schema actually
+    // have somewhere valid to put it" - after a checklist conversion splits a
+    // list (see convertNotesListItemType), an item can be nested two levels
+    // deep with its GRANDPARENT list being the wrong type for it (e.g. a
+    // taskItem sitting inside a taskList that's itself tucked inside a plain
+    // listItem's content, with no taskList among that listItem's own
+    // siblings). liftListItem still reports "yes" and still runs, but with
+    // nowhere valid of the right type to land in, it silently drops the
+    // item's own list-item wrapper instead - the outdented line loses its
+    // checkbox/bullet and becomes a bare paragraph. This checks whether the
+    // list two levels up the item's own list is schema-compatible with it,
+    // which is what actually determines whether the default command is safe.
+    canLiftNotesListItemSafely(itemType) {
+        const { $from } = this.notesEditor.state.selection;
+        let itemDepth = null;
+        for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
+        }
+        if (itemDepth === null) return true;
+        const ownListDepth = itemDepth - 1;
+        const parentItemDepth = ownListDepth - 1;
+        if (parentItemDepth < 1) return true; // own list is already top-level
+        const outerListDepth = parentItemDepth - 1;
+        if (outerListDepth < 1) return true;
+        const outerListType = $from.node(outerListDepth).type.name;
+        if (itemType === 'taskItem') return outerListType === 'taskList';
+        return outerListType === 'bulletList' || outerListType === 'orderedList';
+    }
+
+    // Mirrors sinkNotesListItemAcrossBoundary for the outdent direction: pulls
+    // the item out of its own (wrongly-typed-for-the-outer-list) nesting and
+    // reinserts it as a new sibling list at the outer boundary, right next to
+    // whichever item it was nested under - same schema-safe cross-type jump
+    // sinking used to get it there in the first place, just reversed. Any
+    // later siblings still in the item's own list get dragged along as its
+    // own new nested sub-list, matching how a normal same-type outdent
+    // behaves when the outdented item has siblings after it.
+    liftNotesListItemAcrossBoundary(itemType) {
+        const editor = this.notesEditor;
+        const { state } = editor;
+        const { $from, $to } = state.selection;
+        const origFromPos = $from.pos;
+        const origToPos = $to.pos;
+        const schema = state.schema;
+        const listTypeForItem = schema.nodes[itemType === 'taskItem' ? 'taskList' : 'bulletList'];
+
+        let itemDepth = null;
+        for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name === itemType) { itemDepth = d; break; }
+        }
+        if (itemDepth === null) return;
+
+        const ownListDepth = itemDepth - 1;
+        const parentItemDepth = ownListDepth - 1;
+        if (parentItemDepth < 1) return;
+        const outerListDepth = parentItemDepth - 1;
+        if (outerListDepth < 1) return;
+
+        const ownListNode = $from.node(ownListDepth);
+        const ownListStart = $from.before(ownListDepth);
+        const ownItemStart = $from.before(itemDepth);
+
+        let ownChildIndex = -1;
+        let off = ownListStart + 1;
+        for (let i = 0; i < ownListNode.childCount; i++) {
+            if (off === ownItemStart) { ownChildIndex = i; break; }
+            off += ownListNode.child(i).nodeSize;
+        }
+        if (ownChildIndex === -1) return;
+
+        const thisItem = ownListNode.child(ownChildIndex);
+        const itemsBefore = [];
+        const itemsAfter = [];
+        for (let i = 0; i < ownListNode.childCount; i++) {
+            if (i < ownChildIndex) itemsBefore.push(ownListNode.child(i));
+            else if (i > ownChildIndex) itemsAfter.push(ownListNode.child(i));
+        }
+
+        // Later siblings in the item's own list are dragged along as its own
+        // new trailing sub-list, exactly like a normal same-type outdent.
+        const newThisItemContent = [];
+        thisItem.content.forEach(c => newThisItemContent.push(c));
+        if (itemsAfter.length) {
+            newThisItemContent.push(ownListNode.type.create(ownListNode.attrs, itemsAfter));
+        }
+        const newThisItem = thisItem.type.create(thisItem.attrs, newThisItemContent);
+
+        // The parent item keeps only whichever of its own list's children
+        // came before our item (or loses that nested list entirely if none did).
+        const parentItemNode = $from.node(parentItemDepth);
+        const parentItemStart = $from.before(parentItemDepth);
+        const newParentContent = [];
+        let sawOwnList = false;
+        parentItemNode.forEach((child, offsetInParent) => {
+            const childAbsStart = parentItemStart + 1 + offsetInParent;
+            if (childAbsStart === ownListStart) {
+                sawOwnList = true;
+                if (itemsBefore.length) newParentContent.push(ownListNode.type.create(ownListNode.attrs, itemsBefore));
+            } else {
+                newParentContent.push(child);
+            }
+        });
+        if (!sawOwnList) return;
+        const newParentItem = parentItemNode.type.create(parentItemNode.attrs, newParentContent);
+
+        // Split the outer list around the parent item - the lifted item
+        // becomes a new, separate sibling list sitting right after it,
+        // exactly the same schema-safe insertion point
+        // sinkNotesListItemAcrossBoundary uses (a bare boundary position is
+        // ambiguous between "inside the last child" and "after the list").
+        const outerListNode = $from.node(outerListDepth);
+        const outerListStart = $from.before(outerListDepth);
+        const outerListEnd = $from.after(outerListDepth);
+        let parentIndex = -1;
+        let off2 = outerListStart + 1;
+        for (let i = 0; i < outerListNode.childCount; i++) {
+            if (off2 === parentItemStart) { parentIndex = i; break; }
+            off2 += outerListNode.child(i).nodeSize;
+        }
+        if (parentIndex === -1) return;
+
+        const outerBefore = [];
+        const outerAfter = [];
+        for (let i = 0; i < outerListNode.childCount; i++) {
+            if (i < parentIndex) outerBefore.push(outerListNode.child(i));
+            else if (i === parentIndex) outerBefore.push(newParentItem);
+            else outerAfter.push(outerListNode.child(i));
+        }
+
+        const pieces = [];
+        const beforePiece = outerListNode.type.create(outerListNode.attrs, outerBefore);
+        pieces.push(beforePiece);
+        pieces.push(listTypeForItem.create(null, [newThisItem]));
+        if (outerAfter.length) pieces.push(outerListNode.type.create(outerListNode.attrs, outerAfter));
+
+        // Same reasoning as sinkNotesListItemAcrossBoundary/
+        // convertNotesListItemType: a full-range replace with brand-new nodes
+        // leaves tr.mapping.map() nothing sensible to recover, so the new
+        // position is computed directly from the relative offset within the
+        // item instead.
+        const relFrom = origFromPos - ownItemStart;
+        const relTo = origToPos - ownItemStart;
+        const newListStart = outerListStart + beforePiece.nodeSize;
+        const newItemStart = newListStart + 1;
+        const newFrom = newItemStart + relFrom;
+        const newTo = newItemStart + relTo;
+
+        const tr = state.tr;
+        tr.replaceWith(outerListStart, outerListEnd, pieces);
+        editor.view.dispatch(tr);
+        editor.commands.setTextSelection({ from: newFrom, to: newTo });
+        editor.commands.focus();
     }
 
     // Backspace at the very start of an empty list item's text - with
