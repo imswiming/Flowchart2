@@ -182,12 +182,17 @@ class FlowchartViewer {
         this._pughRankMode = false;
         this._pughActiveCriteriaId = null;
 
-        // Notes: a single free-form text field, global to the whole flowchart (not
-        // tied to any node). Lives in a persistent strip at the bottom of the same
-        // left-hand panel, visible under both the Questions and Pugh Matrix tabs. Its
-        // height is user-resizable (drag the handle above it) and remembered across
-        // sessions, same as the panel's own width.
-        this.globalNotes = '';
+        // Notes: a free-form text field, global to the whole flowchart (not tied to
+        // any node). Lives in a persistent strip at the bottom of the same left-hand
+        // panel, visible under both the Questions and Pugh Matrix tabs. Its height is
+        // user-resizable (drag the handle above it) and remembered across sessions,
+        // same as the panel's own width. Supports multiple independent tabs (like the
+        // Pugh/Morph Matrix tabs) - this.globalNotes is a read/write view of whichever
+        // tab is currently active (see the get/set globalNotes accessors), so the
+        // large majority of existing code reading/writing it keeps working unchanged.
+        this._notesIdCounter = 0;
+        this.notesTabs = this.getDefaultNotesTabs();
+        this.activeNotesTabId = this.notesTabs[0].id;
         // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
         // globalNotes that references them - see renderNotesDrawingsStrip.
         this.notesDrawings = {};
@@ -1247,14 +1252,27 @@ class FlowchartViewer {
                 // (matched by name, same as when a row is first added) so
                 // resyncMorphRows has something live to actually follow.
                 this.relinkMorphNodeRefs();
-                const rawNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
                 // migrate those to HTML once on load; anything already HTML (or
-                // empty) passes through untouched.
-                this.globalNotes = (rawNotes && !/^\s*</.test(rawNotes))
-                    ? this.migrateLegacyNotesToHtml(rawNotes)
-                    : rawNotes;
+                // empty) passes through untouched. Applied per-tab for the current
+                // multi-tab save shape, or to the single older "globalNotes" string
+                // (pre-Notes-tabs) as a fallback, wrapped into one tab.
+                const migrateIfLegacy = (text) => (text && !/^\s*</.test(text)) ? this.migrateLegacyNotesToHtml(text) : (text || '');
+                if (Array.isArray(parsed.notesTabs) && parsed.notesTabs.length > 0) {
+                    const migratedTabs = parsed.notesTabs.map(t => ({
+                        id: t && t.id,
+                        name: t && t.name,
+                        content: migrateIfLegacy((t && typeof t.content === 'string') ? t.content : ''),
+                    }));
+                    this.notesTabs = this.sanitizeNotesTabs(migratedTabs);
+                } else {
+                    const rawNotes = (typeof parsed.globalNotes === 'string') ? parsed.globalNotes : '';
+                    this.notesTabs = this.sanitizeNotesTabs(null, migrateIfLegacy(rawNotes));
+                }
+                this.activeNotesTabId = (typeof parsed.activeNotesTabId === 'string' && this.notesTabs.some(t => t.id === parsed.activeNotesTabId))
+                    ? parsed.activeNotesTabId
+                    : this.notesTabs[0].id;
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
                 this.renderNotesPanel();
@@ -3519,7 +3537,8 @@ class FlowchartViewer {
         this.activePughMatrixId = this.pughMatrices[0].id;
         this.morphMatrices = this.getDefaultMorphMatrices();
         this.activeMorphMatrixId = this.morphMatrices[0].id;
-        this.globalNotes = '';
+        this.notesTabs = this.getDefaultNotesTabs();
+        this.activeNotesTabId = this.notesTabs[0].id;
         this.notesDrawings = {};
         this.notesImages = {};
         this.updateLeftPanelTabs();
@@ -4291,10 +4310,200 @@ class FlowchartViewer {
     // to any node. Lives in a persistent strip at the bottom of the left panel, below
     // whichever of Questions/Pugh Matrix is currently showing above it - always
     // visible whenever the panel itself is open, regardless of tab.
+    nextNotesId(prefix) {
+        this._notesIdCounter = (this._notesIdCounter || 0) + 1;
+        return `${prefix}-${Date.now().toString(36)}-${this._notesIdCounter}`;
+    }
+
+    // this.globalNotes reads/writes whichever Notes tab is currently active -
+    // every existing read/assignment of it (autosave, drawing markers, the
+    // media strip, etc.) keeps working unchanged, since a plain string
+    // getter/setter pair covers both cases with no special in-place-mutation
+    // handling needed (unlike the Pugh/Morph Matrix tabs' object-shaped data).
+    get globalNotes() {
+        if (!Array.isArray(this.notesTabs) || this.notesTabs.length === 0) {
+            this.notesTabs = this.getDefaultNotesTabs();
+            this.activeNotesTabId = this.notesTabs[0].id;
+        }
+        let tab = this.notesTabs.find(t => t.id === this.activeNotesTabId);
+        if (!tab) {
+            tab = this.notesTabs[0];
+            this.activeNotesTabId = tab.id;
+        }
+        return tab.content;
+    }
+
+    set globalNotes(value) {
+        if (!Array.isArray(this.notesTabs) || this.notesTabs.length === 0) {
+            this.notesTabs = this.getDefaultNotesTabs();
+            this.activeNotesTabId = this.notesTabs[0].id;
+        }
+        let tab = this.notesTabs.find(t => t.id === this.activeNotesTabId);
+        if (!tab) {
+            tab = this.notesTabs[0];
+            this.activeNotesTabId = tab.id;
+        }
+        tab.content = value;
+    }
+
+    getDefaultNotesTab(name) {
+        return { id: this.nextNotesId('tab'), name: name || 'Notes 1', content: '' };
+    }
+
+    getDefaultNotesTabs() {
+        return [this.getDefaultNotesTab('Notes 1')];
+    }
+
+    // Accepts the current multi-tab save shape (rawArray) or migrates an
+    // older single-string "globalNotes" save (legacySingle, already run
+    // through migrateLegacyNotesToHtml/HTML-checked by the caller) into a
+    // one-tab array, so existing saved flowcharts still load correctly.
+    sanitizeNotesTabs(rawArray, legacySingle) {
+        if (Array.isArray(rawArray) && rawArray.length > 0) {
+            const seenIds = new Set();
+            return rawArray.map((raw, i) => {
+                let id = (raw && typeof raw.id === 'string' && raw.id) ? raw.id : this.nextNotesId('tab');
+                if (seenIds.has(id)) id = this.nextNotesId('tab');
+                seenIds.add(id);
+                const name = (raw && typeof raw.name === 'string' && raw.name.trim()) ? raw.name : `Notes ${i + 1}`;
+                const content = (raw && typeof raw.content === 'string') ? raw.content : '';
+                return { id, name, content };
+            });
+        }
+        if (typeof legacySingle === 'string') {
+            return [{ id: this.nextNotesId('tab'), name: 'Notes 1', content: legacySingle }];
+        }
+        return this.getDefaultNotesTabs();
+    }
+
+    addNotesTab() {
+        const tab = this.getDefaultNotesTab(`Notes ${this.notesTabs.length + 1}`);
+        this.notesTabs.push(tab);
+        this.activeNotesTabId = tab.id;
+        if (this.notesEditor) this.notesEditor.setData(tab.content || '<p></p>');
+        this.renderNotesTabBar();
+        this.autosave();
+    }
+
+    deleteNotesTab(tabId) {
+        if (this.notesTabs.length <= 1) return;
+        const idx = this.notesTabs.findIndex(t => t.id === tabId);
+        if (idx === -1) return;
+        this.notesTabs.splice(idx, 1);
+        if (this.activeNotesTabId === tabId) {
+            const newTab = this.notesTabs[Math.max(0, idx - 1)];
+            this.activeNotesTabId = newTab.id;
+            if (this.notesEditor) this.notesEditor.setData(newTab.content || '<p></p>');
+        }
+        this.renderNotesTabBar();
+        this.autosave();
+    }
+
+    switchNotesTab(tabId) {
+        if (tabId === this.activeNotesTabId || !this.notesTabs.some(t => t.id === tabId)) return;
+        // Capture whatever's currently in the editor into the tab being left
+        // before switching - the editor's own change:data event normally
+        // does this, but that's debounced through _pendingNotesSave/blur,
+        // so a switch right after typing could otherwise lose it.
+        if (this.notesEditor) this.globalNotes = this.notesEditor.getData();
+        this.activeNotesTabId = tabId;
+        if (this.notesEditor) this.notesEditor.setData(this.globalNotes || '<p></p>');
+        this.renderNotesTabBar();
+        this.autosave();
+    }
+
+    renameNotesTab(tabId, name) {
+        const tab = this.notesTabs.find(t => t.id === tabId);
+        if (!tab) return;
+        tab.name = (name || '').trim() || 'Untitled';
+        this.autosave();
+    }
+
+    // Builds the row of tabs shown above the Notes toolbar - same look and
+    // add/rename/delete pattern as buildMatrixTabBar (Pugh/Morph Matrix),
+    // just wired to the Notes tab list and its own switch/add/delete/rename
+    // methods (which additionally have to sync the live CKEditor instance's
+    // content on every switch, unlike the matrices).
+    buildNotesTabBar() {
+        const bar = document.createElement('div');
+        bar.className = 'matrix-tab-bar';
+        bar.id = 'notes-tab-bar';
+
+        this.notesTabs.forEach(tab => {
+            const tabEl = document.createElement('div');
+            tabEl.className = 'matrix-tab' + (tab.id === this.activeNotesTabId ? ' active' : '');
+            tabEl.addEventListener('click', (e) => {
+                if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                this.switchNotesTab(tab.id);
+            });
+
+            const label = document.createElement('span');
+            label.className = 'matrix-tab-label';
+            label.textContent = tab.name || 'Untitled';
+            label.title = 'Double-click to rename';
+            label.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'matrix-tab-name-input';
+                input.value = tab.name || '';
+                label.replaceWith(input);
+                input.focus();
+                input.select();
+                const commit = () => {
+                    this.renameNotesTab(tab.id, input.value);
+                    this.renderNotesTabBar();
+                };
+                input.addEventListener('click', (e2) => e2.stopPropagation());
+                input.addEventListener('keydown', (e2) => {
+                    if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
+                    else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
+                });
+                input.addEventListener('blur', commit);
+            });
+            tabEl.appendChild(label);
+
+            if (this.notesTabs.length > 1) {
+                const delBtn = document.createElement('button');
+                delBtn.className = 'matrix-tab-delete-btn';
+                delBtn.title = 'Delete this tab';
+                delBtn.textContent = '×';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
+                    this.deleteNotesTab(tab.id);
+                });
+                tabEl.appendChild(delBtn);
+            }
+
+            bar.appendChild(tabEl);
+        });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'matrix-tab-add-btn';
+        addBtn.title = 'Add a new Notes tab';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', () => this.addNotesTab());
+        bar.appendChild(addBtn);
+
+        return bar;
+    }
+
+    // Lightweight refresh of just the tab bar - switching/adding/deleting/
+    // renaming a Notes tab never needs to tear down and recreate the whole
+    // CKEditor instance the way a full renderNotesPanel() would.
+    renderNotesTabBar() {
+        const old = document.getElementById('notes-tab-bar');
+        if (!old || !old.parentNode) return;
+        old.replaceWith(this.buildNotesTabBar());
+    }
+
     renderNotesPanel() {
         if (!this.notesPanelBody) return;
         this.notesPanelBody.innerHTML = '';
         this.notesPanelBody.style.height = this._notesPanelHeight + 'px';
+
+        this.notesPanelBody.appendChild(this.buildNotesTabBar());
 
         const header = document.createElement('div');
         header.id = 'notes-panel-header-row';
@@ -6586,7 +6795,8 @@ class FlowchartViewer {
             activePughMatrixId: this.activePughMatrixId,
             morphMatrices: this.morphMatrices,
             activeMorphMatrixId: this.activeMorphMatrixId,
-            globalNotes: this.globalNotes,
+            notesTabs: this.notesTabs,
+            activeNotesTabId: this.activeNotesTabId,
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages
         }, null, 2);
