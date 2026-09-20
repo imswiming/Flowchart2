@@ -142,12 +142,10 @@ body {
     border-color: var(--accent);
 }
 
-/* Notes only exists as a tab on mobile - on desktop it's already always
-   visible below the other tabs' content (see #notes-panel-body), so a
-   separate "Notes" tab there would be redundant. */
-#left-panel-tab-notes {
-    display: none;
-}
+/* Notes tab: clicking it swaps the whole left-panel content area over to
+   just Notes (see updateLeftPanelTabs), on both mobile and desktop - full
+   height instead of the always-visible-below strip the other three tabs
+   share it with. */
 
 /* The node edit menu's fold/unfold toggle is mobile-only - on desktop
    there's already enough room to show every row at once. */
@@ -408,7 +406,9 @@ body {
     cursor: pointer;
 }
 
-#notes-editor-wrap .ck.ck-content .todo-list__label input[type="checkbox"]::before {
+/* Thicker white outline for an unchecked box only - a ticked box keeps
+   CKEditor's own default look (solid green fill with a matching border). */
+#notes-editor-wrap .ck.ck-content .todo-list__label input[type="checkbox"]:not(:checked)::before {
     border-width: 2px !important;
     border-color: #ffffff !important;
 }
@@ -420,9 +420,15 @@ body {
     background-color: #ffee00 !important;
 }
 
-#notes-editor-wrap .ck.ck-content .todo-list__label_checked .todo-list__label__description {
+/* CKEditor's editing view never adds a "checked" modifier class to the
+   label/description the way its saved HTML output does (that <label
+   checked="checked">... shape only exists in getData()'s output, not the
+   live DOM) - the only actual signal in the editing view is the checkbox's
+   own :checked state, so :has() is used to reach the sibling description
+   text from it. */
+#notes-editor-wrap .ck.ck-content .todo-list__label:has(input:checked) .todo-list__label__description {
     text-decoration: line-through;
-    opacity: 0.6;
+    color: var(--muted);
 }
 
 /* ===== Pugh Matrix ===== */

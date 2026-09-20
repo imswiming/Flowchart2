@@ -4267,19 +4267,22 @@ class FlowchartViewer {
         if (this.morphPanelBody) {
             this.morphPanelBody.style.display = this._leftPanelMode === 'morph' ? 'flex' : 'none';
         }
-        // The "Notes" tab only exists on mobile (see #left-panel-tab-notes'
-        // CSS) - on mobile it swaps the whole content area over to Notes,
-        // taking over from the always-visible-below strip desktop uses;
-        // on desktop, Notes stays visible below regardless of which tab is
-        // active, same as before this tab existed.
-        const isMobileNotesTab = this._leftPanelMode === 'notes' && window.matchMedia('(max-width: 600px)').matches;
+        // The "Notes" tab swaps the whole content area over to Notes (full
+        // height), taking over from the always-visible-below strip the other
+        // three tabs share it with - same behavior on mobile and desktop.
+        const isNotesTab = this._leftPanelMode === 'notes';
         if (this.leftPanelMain) {
-            this.leftPanelMain.style.display = isMobileNotesTab ? 'none' : '';
+            this.leftPanelMain.style.display = isNotesTab ? 'none' : '';
         }
         if (this.notesPanelBody) {
-            this.notesPanelBody.style.display = isMobileNotesTab
+            this.notesPanelBody.style.display = isNotesTab
                 ? 'flex'
-                : (window.matchMedia('(max-width: 600px)').matches && this._leftPanelMode !== 'notes' ? 'none' : '');
+                : (window.matchMedia('(max-width: 600px)').matches ? 'none' : '');
+        }
+        // No divider needed once Notes has taken over the whole panel -
+        // there's nothing above it left to resize against.
+        if (this.notesResizeHandle) {
+            this.notesResizeHandle.style.display = isNotesTab ? 'none' : '';
         }
     }
 
