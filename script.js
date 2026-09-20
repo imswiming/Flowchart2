@@ -4724,7 +4724,9 @@ class FlowchartViewer {
     sinkNotesListItemAcrossBoundary(itemType) {
         const editor = this.notesEditor;
         const { state } = editor;
-        const { $from } = state.selection;
+        const { $from, $to } = state.selection;
+        const origFromPos = $from.pos;
+        const origToPos = $to.pos;
         const LIST_TYPES = ['bulletList', 'orderedList', 'taskList'];
         const schema = state.schema;
         const listTypeForItem = schema.nodes[itemType === 'taskItem' ? 'taskList' : 'bulletList'];
@@ -4783,6 +4785,21 @@ class FlowchartViewer {
             newLastChildContent.push(wrapper);
             const newLastChildNode = lastChildNode.type.create(lastChildNode.attrs, newLastChildContent);
 
+            // tr.mapping.map() can't recover a sensible position here either
+            // (same reasoning as convertNotesListItemType above) - ownItemNode
+            // gets moved wholesale into a brand-new wrapper replacing
+            // [lastChildStart, lastChildEnd), so the cursor's offset relative
+            // to ownItemNode's own start is computed up front and re-applied
+            // to its new location, instead of letting the default mapping
+            // snap it to wherever the edit happens to land (in practice, the
+            // very next sibling list - reported as "the cursor jumped away
+            // after indenting").
+            const relFrom = origFromPos - ownItemStart;
+            const relTo = origToPos - ownItemStart;
+            const newOwnItemStart = lastChildStart + 1 + lastChildNode.content.size + 1;
+            const newFrom = newOwnItemStart + relFrom;
+            const newTo = newOwnItemStart + relTo;
+
             const tr = state.tr;
             if (remaining.length) {
                 tr.replaceWith(ownListStart, ownListEnd, ownListNode.type.create(ownListNode.attrs, remaining));
@@ -4794,6 +4811,7 @@ class FlowchartViewer {
             // they're unaffected by the edit above and don't need remapping.
             tr.replaceWith(lastChildStart, lastChildEnd, newLastChildNode);
             editor.view.dispatch(tr);
+            editor.commands.setTextSelection({ from: newFrom, to: newTo });
             editor.commands.focus();
             return;
         }
