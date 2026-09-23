@@ -918,11 +918,39 @@ class FlowchartViewer {
                         });
                     }
 
+                    // A flowchart made on this device that was never pushed yet (e.g.
+                    // right after connecting cloud sync for the first time, before the
+                    // very first push has had a chance to run) would otherwise just
+                    // vanish here, silently overwritten by the incoming remote list -
+                    // titles are the only identity flowchartList items have, so a local
+                    // title missing from the remote list is treated as "not yet synced"
+                    // and the person is asked what to do with it, rather than the app
+                    // guessing on their behalf.
+                    const localOnlyItems = this.flowchartList.filter(local =>
+                        !remoteList.some(r => r.title === local.title)
+                    );
+                    let mergedList = remoteList;
+                    if (localOnlyItems.length > 0) {
+                        const plural = localOnlyItems.length > 1;
+                        const names = localOnlyItems.map(i => `"${i.title}"`).join(', ');
+                        const addThem = confirm(
+                            `${localOnlyItems.length} flowchart${plural ? 's' : ''} on this device ` +
+                            `${plural ? "aren't" : "isn't"} in the cloud list yet: ${names}.\n\n` +
+                            `Click OK to add ${plural ? 'them' : 'it'} to the cloud, or Cancel to discard ` +
+                            `${plural ? 'them' : 'it'} and use the cloud's list instead.`
+                        );
+                        if (addThem) mergedList = remoteList.concat(localOnlyItems);
+                    }
+
                     this._applyingRemote = true;
-                    this.flowchartList = remoteList;
-                    this._lastPushedDataJson = JSON.stringify({ flowchartList: remoteList });
+                    this.flowchartList = mergedList;
+                    this._lastPushedDataJson = JSON.stringify({ flowchartList: mergedList });
                     this.saveFlowchartList();
                     localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
+                    // If anything local-only was kept, the cloud row doesn't have it yet -
+                    // push right away so it isn't at risk of being "lost" again by the
+                    // very next poll before a routine autosave would otherwise push it.
+                    if (mergedList !== remoteList) this.scheduleCloudPush();
                     if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
                         this.currentSlotIndex = 0;
                     }
