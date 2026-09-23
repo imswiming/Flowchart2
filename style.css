@@ -886,6 +886,22 @@ body {
         padding-left: 2.8em !important;
     }
 
+    /* These eight bottom-row buttons duplicate the top-right icon row
+       (.zoom-controls) one-for-one - hidden here instead of the other way
+       around, since the icons stay up top on desktop now. Mobile keeps
+       these (the icons are compact there and .desktop-controls itself is
+       already hidden entirely - see the mobile media query). */
+    #undo-btn,
+    #redo-btn,
+    #open-btn,
+    #toggle-placeholders-btn,
+    #cloud-sync-btn,
+    #pugh-matrix-btn,
+    #notes-btn,
+    #help-btn {
+        display: none;
+    }
+
 }
 
 /* Mobile: the reflection panel becomes a full-screen overlay (there's no room for a
@@ -1046,17 +1062,10 @@ body {
     background: var(--control-hover) !important;
 }
 
-/* The top-right icon row (.zoom-controls) is the mobile equivalent of the
-   bottom-right .desktop-controls toolbar - every action it offers (Undo,
-   Redo, Open, Hide Placeholders, Cloud Sync, Pugh Matrix, Notes, Help)
-   already has its own labeled button down there, so on desktop it was just
-   a duplicate set of the same buttons. Mobile keeps it (that's where
-   .desktop-controls itself is hidden instead - see the mobile media query). */
-@media (min-width: 601px) {
-    .zoom-controls {
-        display: none;
-    }
-}
+/* The top-right icon row (.zoom-controls) stays visible on desktop too -
+   the bottom-right .desktop-controls toolbar hides its own duplicates of
+   these same eight actions instead (see the desktop media query below),
+   rather than the other way around. */
 
 .reset-view-btn {
     height: 34px;
