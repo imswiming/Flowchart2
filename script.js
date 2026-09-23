@@ -4,6 +4,12 @@ class FlowchartViewer {
         // there's one source of truth for the node box's width in local (pre-zoom)
         // units, rather than three separately hardcoded copies of the same number.
         this.NODE_WIDTH = 120;
+        // A node with no name of its own and a photo attached fills its whole
+        // box with the photo at this fixed height instead of a small
+        // thumbnail-under-text layout - shared so renderFlowchart's node
+        // rendering, its photo-fill clip path, quickPatchNodeText, and the
+        // radial add-button positioning all agree on the same box size.
+        this.PHOTO_FILL_HEIGHT = 80;
         this.flowchartContainer = document.getElementById('flowchart');
         this.flowchartPanel = document.getElementById('flowchart-panel');
         // Top-right controls: previously zoom in/out/reset, now undo/redo/open.
@@ -7480,6 +7486,22 @@ class FlowchartViewer {
             .attr('height', height)
             .attr('viewBox', `0 0 ${width} ${height}`);
 
+        // Shared clip path for a photo-fill node's image (see isPhotoFillNode
+        // below) - SVG <image> has no rx/ry of its own for rounded corners the
+        // way <rect> does, so this rounded rect is used to clip it instead.
+        // One definition works for every such node since they're all the same
+        // fixed size (NODE_WIDTH x PHOTO_FILL_HEIGHT).
+        svg.append('defs')
+            .append('clipPath')
+            .attr('id', 'node-photo-fill-clip')
+            .append('rect')
+            .attr('x', -this.NODE_WIDTH / 2)
+            .attr('y', -this.PHOTO_FILL_HEIGHT / 2)
+            .attr('width', this.NODE_WIDTH)
+            .attr('height', this.PHOTO_FILL_HEIGHT)
+            .attr('rx', 5)
+            .attr('ry', 5);
+
         const g = svg.append('g');
         this._flowchartG = g;
 
@@ -7759,7 +7781,7 @@ class FlowchartViewer {
         // A node with no name of its own and a photo attached has nothing else
         // to show, so the photo fills the whole box at a fixed height instead
         // of sitting as a small thumbnail below empty text space.
-        const PHOTO_FILL_HEIGHT = 80;
+        const PHOTO_FILL_HEIGHT = this.PHOTO_FILL_HEIGHT;
         const isPhotoFillNode = d => Boolean(d.data._nodePhotoUrl) && !(d.data.name || '').trim();
         const textBoxHeight = d => d._lines.length * LINE_HEIGHT + PADDING_Y;
         const photoExtra = d => (d.data._nodePhotoUrl && !isPhotoFillNode(d) ? (PHOTO_H + PHOTO_GAP) : 0);
@@ -7855,6 +7877,10 @@ class FlowchartViewer {
             .attr('height', d => isPhotoFillNode(d) ? PHOTO_FILL_HEIGHT : PHOTO_H)
             .attr('x', d => isPhotoFillNode(d) ? -NODE_WIDTH / 2 : -PHOTO_W / 2)
             .attr('y', d => isPhotoFillNode(d) ? boxTop(d) : (totalBoxHeight(d) / 2) - PHOTO_H - 3 + centerOffset(d))
+            // Rounds the corners to match the node box's own rounded shape -
+            // SVG <image> has no rx/ry of its own the way <rect> does (see the
+            // shared clip path set up alongside the SVG itself).
+            .attr('clip-path', d => isPhotoFillNode(d) ? 'url(#node-photo-fill-clip)' : null)
             .attr('preserveAspectRatio', 'xMidYMid slice')
             .style('cursor', 'zoom-in')
             .on('click', (event, d) => {
@@ -7951,7 +7977,7 @@ class FlowchartViewer {
         // downward-only growth), so the radial buttons stay clear of the
         // node's actual box shape instead of assuming a plain centered one.
         const isPhotoFillNode = Boolean(targetDatum.data._nodePhotoUrl) && !(targetDatum.data.name || '').trim();
-        const PHOTO_FILL_HEIGHT = 80;
+        const PHOTO_FILL_HEIGHT = this.PHOTO_FILL_HEIGHT;
         const photoExtraHeight = (targetDatum.data._nodePhotoUrl && !isPhotoFillNode) ? (30 + 6) : 0;
         const MAX_CENTERED_LINES = 5;
         const totalHeight = isPhotoFillNode ? PHOTO_FILL_HEIGHT : (lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight);
