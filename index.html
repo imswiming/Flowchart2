@@ -603,6 +603,11 @@ create policy "allow all" on flowchart_sync
         <div id="drawing-size-indicator"></div>
       </div>
       <button id="drawing-toggle-btn" title="Hold down to draw, release to stop">✎</button>
+      <!-- Desktop only - follows the mouse to preview the current brush/eraser
+           size before you click (see setupDrawingOverlay in script.js); the
+           touch-oriented handle/toggle button above are hidden on desktop
+           instead, since a mouse cursor never covers what it's drawing. -->
+      <div id="drawing-brush-preview"></div>
     </div>
   </div>
 

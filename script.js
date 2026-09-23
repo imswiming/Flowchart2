@@ -5189,6 +5189,7 @@ class FlowchartViewer {
         this.drawingCanvasWrap = document.getElementById('drawing-canvas-wrap');
         this.drawingHandle = document.getElementById('drawing-handle');
         this.drawingToggleBtn = document.getElementById('drawing-toggle-btn');
+        this.drawingBrushPreview = document.getElementById('drawing-brush-preview');
         if (!this.drawingOverlay || !this.drawingCanvas) return;
 
         const ctx = this.drawingCanvas.getContext('2d');
@@ -5256,6 +5257,37 @@ class FlowchartViewer {
             indicator.style.top = offset + 'px';
         };
 
+        // Desktop draws directly under the mouse with no handle/toggle
+        // indirection (see the pointerdown handler on drawingCanvasWrap below) -
+        // this preview circle takes the size-indicator's place, following the
+        // cursor and sized to match the active tool's width exactly the same way
+        // updateSizeIndicator does for the handle.
+        const isDesktopWidth = () => !window.matchMedia('(max-width: 600px)').matches;
+        let lastDesktopMouseClient = null;
+        const updateBrushPreview = (clientX, clientY) => {
+            if (!this.drawingBrushPreview) return;
+            if (clientX === undefined) {
+                if (!lastDesktopMouseClient) return;
+                ({ x: clientX, y: clientY } = lastDesktopMouseClient);
+            } else {
+                lastDesktopMouseClient = { x: clientX, y: clientY };
+            }
+            if (!isDesktopWidth()) {
+                this.drawingBrushPreview.style.display = 'none';
+                return;
+            }
+            const diameter = Math.max(4, activeWidth() * state.scale * (state.fitScale || 1));
+            this.drawingBrushPreview.style.width = diameter + 'px';
+            this.drawingBrushPreview.style.height = diameter + 'px';
+            this.drawingBrushPreview.style.left = clientX + 'px';
+            this.drawingBrushPreview.style.top = clientY + 'px';
+            this.drawingBrushPreview.style.display = 'block';
+        };
+        const hideBrushPreview = () => {
+            lastDesktopMouseClient = null;
+            if (this.drawingBrushPreview) this.drawingBrushPreview.style.display = 'none';
+        };
+
         const applyPanZoom = () => {
             this.drawingCanvasWrap.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
             updateSizeIndicator();
@@ -5316,6 +5348,7 @@ class FlowchartViewer {
                 btn.classList.toggle('active', btn.dataset.tool === tool);
             });
             updateSizeIndicator();
+            updateBrushPreview();
         };
 
         // Assigned as early as possible (before any of the listener wiring below,
@@ -5380,10 +5413,12 @@ class FlowchartViewer {
         if (widthInput) widthInput.addEventListener('input', () => {
             state.width = parseInt(widthInput.value, 10) || 1;
             updateSizeIndicator();
+            updateBrushPreview();
         });
         if (eraserWidthInput) eraserWidthInput.addEventListener('input', () => {
             state.eraserWidth = parseInt(eraserWidthInput.value, 10) || 1;
             updateSizeIndicator();
+            updateBrushPreview();
         });
 
         const restoreSnapshot = (imgData) => {
@@ -5577,12 +5612,24 @@ class FlowchartViewer {
         this.drawingHandle.addEventListener('pointerup', finishHandlePointer);
         this.drawingHandle.addEventListener('pointercancel', finishHandlePointer);
 
-        // ---- Tapping elsewhere on the canvas teleports the handle group there,
-        // and keeps following the same finger/pointer if it keeps moving instead of
-        // just teleporting once and going static ----
+        // ---- Desktop: draw directly under the mouse with a plain click-drag,
+        // no handle/toggle indirection needed - the whole point of that dance
+        // (see the file comment above) is compensating for a covering finger,
+        // which a mouse cursor never does. Below 601px width, tapping the
+        // canvas instead teleports the handle there, same as always. ----
+        let mouseDrawPointerId = null;
         this.drawingCanvasWrap.addEventListener('pointerdown', (e) => {
             if (e.target !== this.drawingCanvas && e.target !== this.drawingCanvasWrap) return;
             e.preventDefault();
+
+            if (isDesktopWidth()) {
+                mouseDrawPointerId = e.pointerId;
+                this.drawingCanvasWrap.setPointerCapture(mouseDrawPointerId);
+                beginDrawAction(toCanvasPoint(e.clientX, e.clientY));
+                updateBrushPreview(e.clientX, e.clientY);
+                return;
+            }
+
             const overlayRect = this.drawingOverlay.getBoundingClientRect();
             positionHandleGroup(e.clientX - overlayRect.left, e.clientY - overlayRect.top);
             // Hand this pointer off to the same tracking the handle's own drag uses -
@@ -5601,6 +5648,24 @@ class FlowchartViewer {
                 beginDrawAction(toCrosshairCanvasPoint(handlePt.x, handlePt.y));
             }
         });
+        this.drawingCanvasWrap.addEventListener('pointermove', (e) => {
+            if (!isDesktopWidth()) return;
+            if (e.pointerId === mouseDrawPointerId) {
+                continueDrawAction(toCanvasPoint(e.clientX, e.clientY));
+            }
+            // Keep the size-preview circle following the cursor regardless of
+            // whether a stroke is actively in progress, same as any paint app's
+            // brush cursor.
+            updateBrushPreview(e.clientX, e.clientY);
+        });
+        const finishMouseDraw = (e) => {
+            if (e.pointerId !== mouseDrawPointerId) return;
+            mouseDrawPointerId = null;
+            endDrawAction(toCanvasPoint(e.clientX, e.clientY));
+        };
+        this.drawingCanvasWrap.addEventListener('pointerup', finishMouseDraw);
+        this.drawingCanvasWrap.addEventListener('pointercancel', finishMouseDraw);
+        this.drawingCanvasWrap.addEventListener('pointerleave', hideBrushPreview);
 
         // Safari fires its own proprietary gesture events (gesturestart/change/end)
         // to drive native pinch-to-zoom, and doesn't reliably respect touch-action:
