@@ -3133,21 +3133,30 @@ class FlowchartViewer {
         const PHOTO_GAP = 6;
         const photoExtra = selectedData._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0;
 
-        const g = d3.select(targetEl);
+        // Mirrors the same MAX_CENTERED_LINES box-growth handling as the main
+        // renderFlowchart rendering (see there for the full explanation) - kept
+        // in sync so a text edit patched in place mid-gesture doesn't jump to a
+        // differently-shaped box once the real renderFlowchart runs at gesture end.
+        const MAX_CENTERED_LINES = 5;
         const rectHeight = finalLines.length * LINE_HEIGHT + PADDING_Y + photoExtra;
+        const cappedHalfHeight = (Math.min(finalLines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra) / 2;
+        const boxTop = -cappedHalfHeight;
+        const centerOffset = boxTop + rectHeight / 2;
+
+        const g = d3.select(targetEl);
         g.select('rect')
             .attr('height', rectHeight)
-            .attr('y', -(rectHeight / 2));
+            .attr('y', boxTop);
 
         const text = g.select('text');
         text.selectAll('tspan').remove();
         finalLines.forEach((line, i, arr) => {
             text.append('tspan')
                 .attr('x', 0)
-                .attr('y', (i - (arr.length - 1) / 2) * LINE_HEIGHT + 4 - photoExtra / 2)
+                .attr('y', (i - (arr.length - 1) / 2) * LINE_HEIGHT + 4 - photoExtra / 2 + centerOffset)
                 .text(line);
         });
-        g.select('image').attr('y', (rectHeight / 2) - PHOTO_H - 3);
+        g.select('image').attr('y', (rectHeight / 2) - PHOTO_H - 3 + centerOffset);
         if (selectedData._collapsed) {
             if (this.orientation === 'LR') {
                 text.append('tspan')
@@ -3159,7 +3168,7 @@ class FlowchartViewer {
             } else {
                 text.append('tspan')
                     .attr('x', 0)
-                    .attr('y', finalLines.length * LINE_HEIGHT / 2 + 25 + photoExtra)
+                    .attr('y', finalLines.length * LINE_HEIGHT / 2 + 25 + photoExtra + centerOffset)
                     .attr('fill', '#ffffff')
                     .attr('font-size', FONT_SIZE + 3)
                     .text('▼');
@@ -4307,6 +4316,13 @@ class FlowchartViewer {
             this.notesPanelBody.style.display = isNotesTab
                 ? 'flex'
                 : (window.matchMedia('(max-width: 600px)').matches ? 'none' : '');
+            // Once Notes has taken over the whole panel, let it fill the
+            // available height instead of staying pinned to whatever fixed
+            // height the resize handle left it at (that height only makes
+            // sense for the strip-below-another-tab layout) - restored once
+            // back to sharing the panel with another tab.
+            this.notesPanelBody.style.flex = isNotesTab ? '1 1 auto' : '0 0 auto';
+            this.notesPanelBody.style.height = isNotesTab ? 'auto' : (this._notesPanelHeight + 'px');
         }
         // No divider needed once Notes has taken over the whole panel -
         // there's nothing above it left to resize against.
@@ -7743,12 +7759,23 @@ class FlowchartViewer {
         const textBoxHeight = d => d._lines.length * LINE_HEIGHT + PADDING_Y;
         const photoExtra = d => (d.data._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0);
         const totalBoxHeight = d => textBoxHeight(d) + photoExtra(d);
+        // Beyond MAX_CENTERED_LINES, the box keeps growing taller downward only
+        // instead of staying vertically centered on the tree layout's anchor
+        // point - otherwise a long node's top edge crept upward far enough to
+        // cover the connector line feeding into it from the row above. The top
+        // edge is pinned at the height a MAX_CENTERED_LINES-line box would
+        // have; centerOffset shifts the text/photo down to match the box's new
+        // (lower) actual center, and is 0 - a no-op - at or under the cap.
+        const MAX_CENTERED_LINES = 5;
+        const cappedHalfHeight = d => (Math.min(d._lines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra(d)) / 2;
+        const boxTop = d => -cappedHalfHeight(d);
+        const centerOffset = d => boxTop(d) + totalBoxHeight(d) / 2;
 
         node.append('rect')
         .attr('width', NODE_WIDTH)
         .attr('height', d => totalBoxHeight(d))
         .attr('x', -NODE_WIDTH/2)
-        .attr('y', d => -(totalBoxHeight(d) / 2))
+        .attr('y', d => boxTop(d))
         .attr('fill', d => {
             if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
@@ -7798,7 +7825,7 @@ class FlowchartViewer {
         .selectAll('tspan')
         .data(d => d._lines.map((line, i, arr) => ({
             line,
-            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4 - photoExtra(d) / 2,
+            y: (i - (arr.length-1)/2) * LINE_HEIGHT + 4 - photoExtra(d) / 2 + centerOffset(d),
             isLast: i === arr.length - 1,
             collapsed: d.data._collapsed
         })))
@@ -7816,7 +7843,7 @@ class FlowchartViewer {
             .attr('width', PHOTO_W)
             .attr('height', PHOTO_H)
             .attr('x', -PHOTO_W / 2)
-            .attr('y', d => (totalBoxHeight(d) / 2) - PHOTO_H - 3)
+            .attr('y', d => (totalBoxHeight(d) / 2) - PHOTO_H - 3 + centerOffset(d))
             .attr('preserveAspectRatio', 'xMidYMid slice')
             .style('cursor', 'zoom-in')
             .on('click', (event, d) => {
@@ -7841,7 +7868,7 @@ class FlowchartViewer {
                 } else {
                     text.append('tspan')
                         .attr('x', 0)
-                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d))
+                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d) + centerOffset(d))
                         .attr('fill', '#ffffff')
                         .attr('font-size', FONT_SIZE + 3)
                         .text('▼');
@@ -7912,7 +7939,16 @@ class FlowchartViewer {
         // main node rendering above, so the radial buttons stay clear of a node with
         // a photo attached instead of floating too close to (or overlapping) it.
         const photoExtraHeight = targetDatum.data._nodePhotoUrl ? (30 + 6) : 0;
-        const halfHeight = (lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight) / 2;
+        // Mirrors the MAX_CENTERED_LINES box-growth handling in the main
+        // renderFlowchart rendering (see there for the full explanation) - a
+        // node past that many lines grows taller downward only, so its top
+        // and bottom edges are no longer equidistant from the anchor point
+        // the way a single shared halfHeight assumes.
+        const MAX_CENTERED_LINES = 5;
+        const totalHeight = lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight;
+        const cappedHalfHeight = (Math.min(lineCount, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtraHeight) / 2;
+        const topHalf = cappedHalfHeight;
+        const bottomHalf = totalHeight - cappedHalfHeight;
 
         // Appended last, to the same container that holds every node - not nested inside
         // the selected node's own <g> - so this layer always paints on top of neighboring
@@ -8023,7 +8059,7 @@ class FlowchartViewer {
 
         // The "top" +button sits at the same offset in both orientations (see below), so
         // the delete-row above it can be positioned once, independent of orientation.
-        const topPlusDy = -(halfHeight + vertGap);
+        const topPlusDy = -(topHalf + vertGap);
         const deleteRowDy = topPlusDy - (btnHeight + btnSpacing);
 
         const activateAddPhoto = () => self.captureNodePhotoFromClipboard(targetDatum);
@@ -8059,9 +8095,9 @@ class FlowchartViewer {
             makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddChild);
             if (targetDatum.parent) {
                 makeRadialBtn(0, topPlusDy, '+', activateAddSiblingBefore);
-                makeRadialBtn(0, halfHeight + vertGap, '+', activateAddSiblingAfter);
+                makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddSiblingAfter);
                 makeRadialBtn(-(btnWidth + btnSpacing), topPlusDy, '◀', activateMoveLeft);
-                makeRadialBtn(btnWidth + btnSpacing, halfHeight + vertGap, '▶', activateMoveRight);
+                makeRadialBtn(btnWidth + btnSpacing, bottomHalf + vertGap, '▶', activateMoveRight);
             }
         } else {
             if (targetDatum.parent) {
@@ -8070,7 +8106,7 @@ class FlowchartViewer {
                 makeRadialBtn(-(NODE_WIDTH / 2 + horizGap) - (btnWidth + btnSpacing), 0, '◀', activateMoveLeft);
                 makeRadialBtn(NODE_WIDTH / 2 + horizGap + (btnWidth + btnSpacing), 0, '▶', activateMoveRight);
             }
-            makeRadialBtn(0, halfHeight + vertGap, '+', activateAddChild);
+            makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddChild);
             makeRadialBtn(0, topPlusDy, '+', activateAddParent);
         }
     }
