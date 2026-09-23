@@ -2645,6 +2645,16 @@ class FlowchartViewer {
     showNodeEditPopup(d) {
         if (!d || !d.data) return;
 
+        // Clicking straight from one node to another (rather than clicking
+        // empty canvas first, which is the only other path that calls
+        // saveNodeEdit) used to silently discard whatever had just been
+        // typed into the node being left - this is the only other point
+        // every "start editing a node" path passes through, so it's the
+        // one place that can catch that switch regardless of how it happened.
+        if (this.nodeBeingEdited && this.nodeBeingEdited.data !== d.data) {
+            this.saveNodeEdit();
+        }
+
         this.nodeBeingEdited = d;
         // nodeBeingEdited now covers keeping this node visible (see childrenAccessor);
         // the pending-data flag was only needed to bridge the gap between creating the
