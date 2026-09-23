@@ -4,8 +4,8 @@
     {
       "name": "flowchart-static",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8455"],
-      "port": 8455
+      "runtimeArgs": ["-m", "http.server", "8456"],
+      "port": 8456
     }
   ]
 }

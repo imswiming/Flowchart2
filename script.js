@@ -7756,18 +7756,26 @@ class FlowchartViewer {
         const PHOTO_W = 46;
         const PHOTO_H = 30;
         const PHOTO_GAP = 6;
+        // A node with no name of its own and a photo attached has nothing else
+        // to show, so the photo fills the whole box at a fixed height instead
+        // of sitting as a small thumbnail below empty text space.
+        const PHOTO_FILL_HEIGHT = 80;
+        const isPhotoFillNode = d => Boolean(d.data._nodePhotoUrl) && !(d.data.name || '').trim();
         const textBoxHeight = d => d._lines.length * LINE_HEIGHT + PADDING_Y;
-        const photoExtra = d => (d.data._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0);
-        const totalBoxHeight = d => textBoxHeight(d) + photoExtra(d);
+        const photoExtra = d => (d.data._nodePhotoUrl && !isPhotoFillNode(d) ? (PHOTO_H + PHOTO_GAP) : 0);
+        const totalBoxHeight = d => isPhotoFillNode(d) ? PHOTO_FILL_HEIGHT : (textBoxHeight(d) + photoExtra(d));
         // Beyond MAX_CENTERED_LINES, the box keeps growing taller downward only
         // instead of staying vertically centered on the tree layout's anchor
         // point - otherwise a long node's top edge crept upward far enough to
         // cover the connector line feeding into it from the row above. The top
         // edge is pinned at the height a MAX_CENTERED_LINES-line box would
         // have; centerOffset shifts the text/photo down to match the box's new
-        // (lower) actual center, and is 0 - a no-op - at or under the cap.
+        // (lower) actual center, and is 0 - a no-op - at or under the cap (and
+        // for a fixed-height photo-fill node, which never grows past it).
         const MAX_CENTERED_LINES = 5;
-        const cappedHalfHeight = d => (Math.min(d._lines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra(d)) / 2;
+        const cappedHalfHeight = d => isPhotoFillNode(d)
+            ? PHOTO_FILL_HEIGHT / 2
+            : (Math.min(d._lines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra(d)) / 2;
         const boxTop = d => -cappedHalfHeight(d);
         const centerOffset = d => boxTop(d) + totalBoxHeight(d) / 2;
 
@@ -7835,15 +7843,18 @@ class FlowchartViewer {
         .attr('y', d => d.y)
         .text(d => d.line);
 
-        // Small photo preview under the text, for nodes with one attached (see
-        // captureNodePhotoFromClipboard) - clicking it opens the full-size lightbox.
+        // Photo preview for nodes with one attached (see
+        // captureNodePhotoFromClipboard) - a small thumbnail under the text
+        // normally, or filling the whole box for a node with no name of its
+        // own (see isPhotoFillNode above). Clicking it opens the full-size
+        // lightbox either way.
         node.filter(d => Boolean(d.data._nodePhotoUrl))
             .append('image')
             .attr('href', d => d.data._nodePhotoUrl)
-            .attr('width', PHOTO_W)
-            .attr('height', PHOTO_H)
-            .attr('x', -PHOTO_W / 2)
-            .attr('y', d => (totalBoxHeight(d) / 2) - PHOTO_H - 3 + centerOffset(d))
+            .attr('width', d => isPhotoFillNode(d) ? NODE_WIDTH : PHOTO_W)
+            .attr('height', d => isPhotoFillNode(d) ? PHOTO_FILL_HEIGHT : PHOTO_H)
+            .attr('x', d => isPhotoFillNode(d) ? -NODE_WIDTH / 2 : -PHOTO_W / 2)
+            .attr('y', d => isPhotoFillNode(d) ? boxTop(d) : (totalBoxHeight(d) / 2) - PHOTO_H - 3 + centerOffset(d))
             .attr('preserveAspectRatio', 'xMidYMid slice')
             .style('cursor', 'zoom-in')
             .on('click', (event, d) => {
@@ -7935,18 +7946,18 @@ class FlowchartViewer {
         const baseX = snap10(targetDatum.x);
         const baseY = targetDatum.y;
         const lineCount = (targetDatum._lines && targetDatum._lines.length) || 1;
-        // Matches the extra height added for a photo preview under the text in the
-        // main node rendering above, so the radial buttons stay clear of a node with
-        // a photo attached instead of floating too close to (or overlapping) it.
-        const photoExtraHeight = targetDatum.data._nodePhotoUrl ? (30 + 6) : 0;
-        // Mirrors the MAX_CENTERED_LINES box-growth handling in the main
-        // renderFlowchart rendering (see there for the full explanation) - a
-        // node past that many lines grows taller downward only, so its top
-        // and bottom edges are no longer equidistant from the anchor point
-        // the way a single shared halfHeight assumes.
+        // Matches the main node rendering above (see there for the full
+        // explanation of both isPhotoFillNode and the MAX_CENTERED_LINES
+        // downward-only growth), so the radial buttons stay clear of the
+        // node's actual box shape instead of assuming a plain centered one.
+        const isPhotoFillNode = Boolean(targetDatum.data._nodePhotoUrl) && !(targetDatum.data.name || '').trim();
+        const PHOTO_FILL_HEIGHT = 80;
+        const photoExtraHeight = (targetDatum.data._nodePhotoUrl && !isPhotoFillNode) ? (30 + 6) : 0;
         const MAX_CENTERED_LINES = 5;
-        const totalHeight = lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight;
-        const cappedHalfHeight = (Math.min(lineCount, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtraHeight) / 2;
+        const totalHeight = isPhotoFillNode ? PHOTO_FILL_HEIGHT : (lineCount * LINE_HEIGHT + PADDING_Y + photoExtraHeight);
+        const cappedHalfHeight = isPhotoFillNode
+            ? PHOTO_FILL_HEIGHT / 2
+            : (Math.min(lineCount, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtraHeight) / 2;
         const topHalf = cappedHalfHeight;
         const bottomHalf = totalHeight - cappedHalfHeight;
 
