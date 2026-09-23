@@ -628,6 +628,22 @@ body {
     font-size: 12px;
     font-family: inherit;
     text-align: center;
+    /* A number input's native up/down spinner sits inside the input's own
+       box on the right, so text-align:center centers the number relative to
+       the space left over after it - visually a bit left of true-center,
+       unlike the Total Score row below (plain text, no input) which centers
+       correctly. Hiding the spinner (still fully usable via the keyboard's
+       own up/down arrows) makes the two rows line up. */
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.pugh-weight-input::-webkit-outer-spin-button,
+.pugh-weight-input::-webkit-inner-spin-button,
+.pugh-score-input::-webkit-outer-spin-button,
+.pugh-score-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .pugh-weight-input:focus,
