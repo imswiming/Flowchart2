@@ -504,7 +504,6 @@ body {
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
-    gap: 8px;
 }
 
 .notes-split-container.notes-split-column {
@@ -513,6 +512,48 @@ body {
 
 .notes-split-container.notes-split-row {
     flex-direction: row;
+}
+
+/* Draggable divider between two split panes (see setupNotesSplitDividerDrag) -
+   a thin visible line with a wider invisible hit area so it's actually easy to
+   grab, same idea as a resize handle in a desktop app. */
+.notes-split-divider {
+    flex: 0 0 auto;
+    position: relative;
+    background: var(--border);
+}
+
+.notes-split-divider:hover,
+.notes-split-divider.notes-split-divider-active {
+    background: #00a67e;
+}
+
+.notes-split-divider-row {
+    width: 2px;
+    cursor: col-resize;
+}
+
+.notes-split-divider-row::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    right: -4px;
+}
+
+.notes-split-divider-column {
+    height: 2px;
+    cursor: row-resize;
+}
+
+.notes-split-divider-column::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -4px;
+    bottom: -4px;
 }
 
 .notes-pane {

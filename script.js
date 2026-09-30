@@ -5226,22 +5226,25 @@ class FlowchartViewer {
     // own default paste behavior); returning false/undefined lets a plain
     // text/URL paste go through normally.
     handleNotesPaste(dataTransfer) {
-        const items = dataTransfer && dataTransfer.items;
-        if (items) {
-            for (const item of items) {
-                if (item.type && item.type.startsWith('image/')) {
-                    const blob = item.getAsFile();
-                    if (!blob) continue;
-                    const reader = new FileReader();
-                    reader.onload = async () => {
-                        const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-                        const dataUrl = await this.compressImageDataUrl(reader.result);
-                        this.notesImages[id] = { dataUrl };
-                        this.insertNotesMediaMarker('image', id);
-                    };
-                    reader.readAsDataURL(blob);
-                    return true;
-                }
+        // `dataTransfer` here is CKEditor's own DataTransfer wrapper (see
+        // renderNotesPanel's clipboardInput listener), not the native browser one -
+        // it exposes `.files` (an array of File objects), not `.items` (a native
+        // DataTransferItemList with no CKEditor equivalent) - reading `.items` on
+        // it was always undefined, which is why pasting an image silently did
+        // nothing at all.
+        const files = dataTransfer && dataTransfer.files;
+        if (files && files.length) {
+            const blob = Array.from(files).find(f => f.type && f.type.startsWith('image/'));
+            if (blob) {
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+                    const dataUrl = await this.compressImageDataUrl(reader.result);
+                    this.notesImages[id] = { dataUrl };
+                    this.insertNotesMediaMarker('image', id);
+                };
+                reader.readAsDataURL(blob);
+                return true;
             }
         }
         // Otherwise, a pasted image URL (or any other text) just pastes normally -
@@ -5525,25 +5528,32 @@ class FlowchartViewer {
         if (!found || !found.parent) return;
         const { parent, indexInParent } = found;
         const sibling = parent.children[1 - indexInParent];
-        // The parent split node has no paneId of its own to search by, so find its
-        // position the same way - by identity - walking from the root and replacing
-        // whichever slot holds it (the root itself, or a child slot) with `sibling`.
-        const replaceInTree = (node) => {
-            if (node === this._notesPaneTree) {
-                this._notesPaneTree = sibling;
-                return true;
-            }
-            if (node.type !== 'split') return false;
-            for (let i = 0; i < node.children.length; i++) {
-                if (node.children[i] === parent) {
-                    node.children[i] = sibling;
-                    return true;
+        // The parent split node has no paneId of its own to search by, so find
+        // whichever slot actually holds it - by reference - and replace just that
+        // slot with `sibling`. Checking `parent === this._notesPaneTree` up front
+        // handles the root case directly (nothing holds the root itself in a
+        // children array to search for); walking `node === this._notesPaneTree` on
+        // every recursive call instead (an earlier bug) tested the wrong thing -
+        // it happened to give the right answer for a single, unnested split, but
+        // collapsed the whole tree to `sibling` for any split found further down
+        // (e.g. closing a pane from a second split nested inside the first one
+        // discarded the *first* split's other pane too, not just that segment).
+        if (parent === this._notesPaneTree) {
+            this._notesPaneTree = sibling;
+        } else {
+            const replaceInTree = (node) => {
+                if (node.type !== 'split') return false;
+                for (let i = 0; i < node.children.length; i++) {
+                    if (node.children[i] === parent) {
+                        node.children[i] = sibling;
+                        return true;
+                    }
+                    if (replaceInTree(node.children[i])) return true;
                 }
-                if (replaceInTree(node.children[i])) return true;
-            }
-            return false;
-        };
-        replaceInTree(this._notesPaneTree);
+                return false;
+            };
+            replaceInTree(this._notesPaneTree);
+        }
         if (this._activeFullscreenPaneId === paneId) {
             this._activeFullscreenPaneId = this.findFirstNotesLeafPaneId(this._notesPaneTree);
         }
@@ -5579,7 +5589,23 @@ class FlowchartViewer {
         if (node.type === 'split') {
             const container = document.createElement('div');
             container.className = 'notes-split-container ' + (node.direction === 'row' ? 'notes-split-row' : 'notes-split-column');
-            node.children.forEach(child => container.appendChild(this.buildNotesPaneNode(child, false)));
+            if (typeof node.ratio !== 'number') node.ratio = 0.5;
+
+            const childA = this.buildNotesPaneNode(node.children[0], false);
+            const divider = document.createElement('div');
+            divider.className = 'notes-split-divider ' + (node.direction === 'row' ? 'notes-split-divider-row' : 'notes-split-divider-column');
+            const childB = this.buildNotesPaneNode(node.children[1], false);
+
+            const applyRatio = () => {
+                childA.style.flex = `${node.ratio} 1 0%`;
+                childB.style.flex = `${1 - node.ratio} 1 0%`;
+            };
+            applyRatio();
+            this.setupNotesSplitDividerDrag(divider, container, node, applyRatio);
+
+            container.appendChild(childA);
+            container.appendChild(divider);
+            container.appendChild(childB);
             return container;
         }
 
@@ -5647,6 +5673,39 @@ class FlowchartViewer {
         return pane;
     }
 
+    // Lets the person drag the divider between two split panes to resize them -
+    // updates node.ratio (persisted on the pane tree, same as its scope/tabId) and
+    // applies it straight to the two panes' flex-basis live, without going through
+    // a full renderNotesFullscreen - that would tear down and recreate both panes'
+    // CKEditor instances on every mousemove, which is both wasteful and would keep
+    // stealing focus away from whichever pane you're mid-drag over.
+    setupNotesSplitDividerDrag(divider, container, node, applyRatio) {
+        let dragging = false;
+        const onMouseMove = (e) => {
+            if (!dragging) return;
+            const rect = container.getBoundingClientRect();
+            const raw = node.direction === 'row'
+                ? (e.clientX - rect.left) / rect.width
+                : (e.clientY - rect.top) / rect.height;
+            node.ratio = Math.min(0.85, Math.max(0.15, raw));
+            applyRatio();
+        };
+        const onMouseUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            divider.classList.remove('notes-split-divider-active');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+        divider.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            dragging = true;
+            divider.classList.add('notes-split-divider-active');
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
     // One CKEditor instance per pane, bound to whichever tab that pane's selector
     // picked - independent of the single embedded editor and of every other pane,
     // including another pane left open on the very same tab (each keeps its own
@@ -5655,15 +5714,16 @@ class FlowchartViewer {
     // full screen).
     //
     // Deliberately plainer than the embedded editor: no image/drawing paste
-    // handling and no Insert Drawing button, since handleNotesPaste and
-    // insertNotesMediaMarker both write through the *active* tab's
-    // notesImages/notesEditor, not whichever tab this particular pane happens to
-    // be showing - wiring them in here would silently paste an image into the
-    // wrong tab (or the wrong flowchart entirely, for a global tab) whenever a
-    // pane's tab differs from the active one. A tab's existing
-    // [[image:id]]/[[drawing:id]] markers (added via the embedded view) still
-    // display as plain text in a pane, just not as the clickable media strip the
-    // embedded view renders below itself.
+    // handling of its own, since handleNotesPaste writes through whichever tab is
+    // active *globally*, not necessarily this pane's - wiring it in here would
+    // silently paste an image into the wrong tab (or the wrong flowchart
+    // entirely, for a global tab) whenever a pane's tab differs from the active
+    // one. Insert Drawing itself still works from a pane via the relocated
+    // toolbar (see buildNotesToolbar/getActiveNotesTarget), since that already
+    // resolves the correct focused-pane target rather than assuming the embedded
+    // editor. A tab's existing [[image:id]]/[[drawing:id]] markers still display
+    // as plain text in a pane, just not as the clickable media strip the embedded
+    // view renders below itself.
     createNotesPaneEditor(node, editorEl) {
         if (!window.CKEDITOR) {
             editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
