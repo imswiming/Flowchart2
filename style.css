@@ -520,17 +520,44 @@ body {
 .notes-split-divider {
     flex: 0 0 auto;
     position: relative;
-    background: var(--border);
+    /* A flat border-color line reads as scenery, easy to mistake for a stray
+       border or (right next to a scrollable pane) an actual scrollbar - a
+       visible grip color plus a centered dot pattern makes it unmistakably a
+       drag handle instead. */
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    z-index: 1;
+}
+
+.notes-split-divider::before {
+    content: '\22EE\22EE';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: -1px;
 }
 
 .notes-split-divider:hover,
 .notes-split-divider.notes-split-divider-active {
     background: #00a67e;
+    border-color: #00a67e;
+}
+
+.notes-split-divider:hover::before,
+.notes-split-divider.notes-split-divider-active::before {
+    color: #fff;
 }
 
 .notes-split-divider-row {
-    width: 2px;
+    width: 6px;
     cursor: col-resize;
+}
+
+.notes-split-divider-row::before {
+    transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .notes-split-divider-row::after {
@@ -543,8 +570,12 @@ body {
 }
 
 .notes-split-divider-column {
-    height: 2px;
+    height: 6px;
     cursor: row-resize;
+}
+
+.notes-split-divider-column::before {
+    transform: translate(-50%, -50%);
 }
 
 .notes-split-divider-column::after {

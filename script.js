@@ -5485,6 +5485,7 @@ class FlowchartViewer {
     }
 
     destroyAllNotesPaneEditors() {
+        clearTimeout(this._notesPaneSyncTimer);
         this._notesPaneEditors.forEach(editor => {
             try { editor.destroy(); } catch (err) { /* ignore */ }
         });
@@ -5790,20 +5791,30 @@ class FlowchartViewer {
     // would otherwise only reconcile the next time each got torn down and rebuilt
     // (switching a pane's own tab, or reopening full screen), which reads as the
     // other pane silently ignoring what you just typed.
+    // Debounced rather than run straight off every keystroke - editor.setData() on
+    // a sibling pane fully re-parses and re-renders its whole document, and doing
+    // that after every single character while actively typing (with several panes
+    // open on the same tab, several times over) is what was making typing feel
+    // laggy the more panes were open. Waiting for a short pause in typing keeps
+    // the sync still near-instant in practice while keeping it off the hot path
+    // of every individual keystroke.
     syncNotesPanesShowingTab(scope, tabId, content, exceptPaneId) {
-        if (!this._notesPaneEditors || !this._notesPaneTree) return;
-        this._notesPaneEditors.forEach((editor, paneId) => {
-            if (paneId === exceptPaneId) return;
-            const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
-            if (!found || found.node.scope !== scope || found.node.tabId !== tabId) return;
-            if (editor.getData() === content) return;
-            this._notesPaneSyncGuard = true;
-            try {
-                editor.setData(content);
-            } finally {
-                this._notesPaneSyncGuard = false;
-            }
-        });
+        clearTimeout(this._notesPaneSyncTimer);
+        this._notesPaneSyncTimer = setTimeout(() => {
+            if (!this._notesPaneEditors || !this._notesPaneTree) return;
+            this._notesPaneEditors.forEach((editor, paneId) => {
+                if (paneId === exceptPaneId) return;
+                const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
+                if (!found || found.node.scope !== scope || found.node.tabId !== tabId) return;
+                if (editor.getData() === content) return;
+                this._notesPaneSyncGuard = true;
+                try {
+                    editor.setData(content);
+                } finally {
+                    this._notesPaneSyncGuard = false;
+                }
+            });
+        }, 300);
     }
 
     // ===================== Drawing overlay (Notes drawings) =====================
