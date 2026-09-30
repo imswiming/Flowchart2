@@ -4420,6 +4420,35 @@ class FlowchartViewer {
         else this.activeNotesTabId = id;
     }
 
+    getNotesTab(scope, tabId) {
+        return this.getNotesTabsList(scope).find(t => t.id === tabId);
+    }
+
+    // What the Notes toolbar (Checklist/Title/Highlight/Indent/Outdent/Insert
+    // Drawing) should act on - the currently focused full-screen pane (its editor,
+    // and which tab it's bound to) while Full Screen is open and a pane has been
+    // focused, or the single embedded editor/tab otherwise. Centralizes the
+    // embedded-vs-pane distinction so neither the toggle functions nor the
+    // drawing-insertion flow need to duplicate it.
+    getActiveNotesTarget() {
+        if (this.notesFullscreenOverlay && this.notesFullscreenOverlay.style.display !== 'none' && this._activeFullscreenPaneId) {
+            const found = this._notesPaneTree && this.findNotesPaneNode(this._notesPaneTree, this._activeFullscreenPaneId);
+            if (found) {
+                // scope/tabId come from the pane tree, not the editor map - CKEditor's
+                // DecoupledEditor.create() is async, so right after a pane's tab
+                // switches (which tears down and recreates its editor) there's a brief
+                // window where _notesPaneEditors has no entry for it yet. Reporting
+                // the pane's real scope/tabId regardless keeps things like the Insert
+                // Drawing enabled/disabled state correct through that window; editor
+                // itself may legitimately be null for a moment; callers that need one
+                // (the toggle functions) already no-op when it's missing.
+                const editor = this._notesPaneEditors ? this._notesPaneEditors.get(this._activeFullscreenPaneId) : null;
+                return { editor: editor || null, scope: found.node.scope, tabId: found.node.tabId };
+            }
+        }
+        return { editor: this.notesEditor, scope: this._activeNotesScope, tabId: this.getActiveNotesTabId(this._activeNotesScope) };
+    }
+
     // The tab currently feeding the single embedded editor - self-heals (same
     // pattern as get pughMatrix()) if the active id or the whole list is ever
     // missing/empty, e.g. the tab it pointed at was just deleted.
@@ -4646,16 +4675,91 @@ class FlowchartViewer {
     // - switching tabs/scope goes through the lightweight renderNotesTabBar rather
     // than a full renderNotesPanel, so this has to be refreshed there too, not just
     // baked into the button once at full-render time.
+    // There can be two Insert Drawing buttons in the DOM at once - the embedded
+    // header's and the full-screen toolbar's (see buildNotesToolbar) - so this
+    // updates every one of them rather than a single by-id lookup. Scope is
+    // getActiveNotesTarget()'s, not always _activeNotesScope, so a focused
+    // full-screen pane showing a global tab disables it even if the embedded
+    // view (in the background) is on a chart tab, and vice versa.
     updateNotesInsertDrawingBtnState() {
-        const btn = document.getElementById('notes-insert-drawing-btn');
-        if (!btn) return;
-        if (this._activeNotesScope === 'global') {
-            btn.disabled = true;
-            btn.title = 'Not available on a global tab (drawings live with a single flowchart)';
-        } else {
-            btn.disabled = false;
-            btn.title = 'Insert a drawing at the cursor';
-        }
+        const isGlobal = this.getActiveNotesTarget().scope === 'global';
+        document.querySelectorAll('.notes-insert-drawing-btn').forEach(btn => {
+            if (isGlobal) {
+                btn.disabled = true;
+                btn.title = 'Not available on a global tab (drawings live with a single flowchart)';
+            } else {
+                btn.disabled = false;
+                btn.title = 'Insert a drawing at the cursor';
+            }
+        });
+    }
+
+    // The Insert Drawing/Checklist/Title/Highlight/Outdent/Indent toolbar row -
+    // built fresh each time it's needed (the embedded header, and once for the
+    // full-screen header - see setupNotesFullscreen) rather than a single shared
+    // instance, so each copy can live in its own place in the DOM; every copy's
+    // buttons act on getActiveNotesTarget() (see the toggle functions), so it
+    // doesn't matter which copy the person actually clicked.
+    buildNotesToolbar() {
+        const row = document.createElement('div');
+        row.className = 'notes-toolbar-row';
+
+        const insertDrawingBtn = document.createElement('button');
+        insertDrawingBtn.className = 'notes-toolbar-btn notes-insert-drawing-btn';
+        insertDrawingBtn.type = 'button';
+        insertDrawingBtn.textContent = '🎨 Insert Drawing';
+        // Drawings/pasted images are stored per-flowchart (notesDrawings/
+        // notesImages), not per-tab - there's nowhere for one to live if the
+        // active tab/pane is a global tab not tied to any single flowchart,
+        // hence disabled on the global scope (see the clipboardInput handler in
+        // renderNotesPanel for the same restriction on image paste). The
+        // listener is always attached; only .disabled (kept current by
+        // updateNotesInsertDrawingBtnState, called from everywhere the active
+        // tab/pane can change) gates whether it actually does anything.
+        insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
+        row.appendChild(insertDrawingBtn);
+
+        const checklistBtn = document.createElement('button');
+        checklistBtn.className = 'notes-toolbar-btn';
+        checklistBtn.type = 'button';
+        checklistBtn.textContent = '☑ Checklist';
+        checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
+        checklistBtn.addEventListener('click', () => this.toggleNotesChecklist());
+        row.appendChild(checklistBtn);
+
+        const titleBtn = document.createElement('button');
+        titleBtn.className = 'notes-toolbar-btn';
+        titleBtn.type = 'button';
+        titleBtn.textContent = 'T• Title';
+        titleBtn.title = 'Make the selected (or current) lines a bold title';
+        titleBtn.addEventListener('click', () => this.toggleNotesTitle());
+        row.appendChild(titleBtn);
+
+        const highlightBtn = document.createElement('button');
+        highlightBtn.className = 'notes-toolbar-btn';
+        highlightBtn.type = 'button';
+        highlightBtn.textContent = '✏️ Highlight';
+        highlightBtn.title = 'Highlight the selected text in yellow';
+        highlightBtn.addEventListener('click', () => this.toggleNotesHighlight());
+        row.appendChild(highlightBtn);
+
+        const outdentBtn = document.createElement('button');
+        outdentBtn.className = 'notes-toolbar-btn notes-outdent-btn';
+        outdentBtn.type = 'button';
+        outdentBtn.textContent = '⇤ Outdent';
+        outdentBtn.title = 'Decrease indent';
+        outdentBtn.addEventListener('click', () => this.outdentNotesLine());
+        row.appendChild(outdentBtn);
+
+        const indentBtn = document.createElement('button');
+        indentBtn.className = 'notes-toolbar-btn notes-indent-btn';
+        indentBtn.type = 'button';
+        indentBtn.textContent = '⇥ Indent';
+        indentBtn.title = 'Increase indent';
+        indentBtn.addEventListener('click', () => this.indentNotesLine());
+        row.appendChild(indentBtn);
+
+        return row;
     }
 
     renderNotesPanel() {
@@ -4672,66 +4776,7 @@ class FlowchartViewer {
         label.textContent = 'Notes';
         header.appendChild(label);
 
-        const insertDrawingBtn = document.createElement('button');
-        insertDrawingBtn.id = 'notes-insert-drawing-btn';
-        insertDrawingBtn.type = 'button';
-        insertDrawingBtn.textContent = '\uD83C\uDFA8 Insert Drawing';
-        // The listener is always attached - only .disabled (toggled reactively by
-        // updateNotesInsertDrawingBtnState, since switching tabs/scope goes through
-        // the lightweight renderNotesTabBar rather than a full re-render here) gates
-        // whether it actually does anything. Drawings/pasted images are stored
-        // per-flowchart (notesDrawings/notesImages), not per-tab - there's nowhere
-        // for one to live if the active tab is a global tab not tied to any single
-        // flowchart, hence disabled while on the global scope (see the
-        // clipboardInput handler below for the same restriction on image paste).
-        insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
-        if (this._activeNotesScope === 'global') {
-            insertDrawingBtn.disabled = true;
-            insertDrawingBtn.title = 'Not available on a global tab (drawings live with a single flowchart)';
-        } else {
-            insertDrawingBtn.title = 'Insert a drawing at the cursor';
-        }
-        header.appendChild(insertDrawingBtn);
-
-        const checklistBtn = document.createElement('button');
-        checklistBtn.id = 'notes-checklist-btn';
-        checklistBtn.type = 'button';
-        checklistBtn.textContent = '\u2611 Checklist';
-        checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
-        checklistBtn.addEventListener('click', () => this.toggleNotesChecklist());
-        header.appendChild(checklistBtn);
-
-        const titleBtn = document.createElement('button');
-        titleBtn.id = 'notes-title-btn';
-        titleBtn.type = 'button';
-        titleBtn.textContent = 'T\u2022 Title';
-        titleBtn.title = 'Make the selected (or current) lines a bold title';
-        titleBtn.addEventListener('click', () => this.toggleNotesTitle());
-        header.appendChild(titleBtn);
-
-        const highlightBtn = document.createElement('button');
-        highlightBtn.id = 'notes-highlight-btn';
-        highlightBtn.type = 'button';
-        highlightBtn.textContent = '\u270f\ufe0f Highlight';
-        highlightBtn.title = 'Highlight the selected text in yellow';
-        highlightBtn.addEventListener('click', () => this.toggleNotesHighlight());
-        header.appendChild(highlightBtn);
-
-        const outdentBtn = document.createElement('button');
-        outdentBtn.id = 'notes-outdent-btn';
-        outdentBtn.type = 'button';
-        outdentBtn.textContent = '\u21E4 Outdent';
-        outdentBtn.title = 'Decrease indent';
-        outdentBtn.addEventListener('click', () => this.outdentNotesLine());
-        header.appendChild(outdentBtn);
-
-        const indentBtn = document.createElement('button');
-        indentBtn.id = 'notes-indent-btn';
-        indentBtn.type = 'button';
-        indentBtn.textContent = '\u21E5 Indent';
-        indentBtn.title = 'Increase indent';
-        indentBtn.addEventListener('click', () => this.indentNotesLine());
-        header.appendChild(indentBtn);
+        header.appendChild(this.buildNotesToolbar());
 
         // Full-screen + split-pane editing is desktop-only - there's no room on a
         // phone-sized screen to usefully split the view at all. Always created (not
@@ -4856,18 +4901,23 @@ class FlowchartViewer {
     // this converts the WHOLE enclosing list, not just the current line;
     // preserving only the current line's nesting (the way the old Tiptap
     // version's custom convertNotesListItemType worked) is a follow-up.
+    // Each of these acts on getActiveNotesTarget()'s editor rather than always
+    // this.notesEditor - the embedded one normally, or whichever full-screen pane
+    // is currently focused, so the one relocated toolbar (see buildNotesToolbar)
+    // can serve either view.
     toggleNotesChecklist() {
-        if (!this.notesEditor) return;
-        this.notesEditor.execute('todoList');
-        this.notesEditor.editing.view.focus();
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        editor.execute('todoList');
+        editor.editing.view.focus();
     }
 
     // Toggles the current line between a plain paragraph and a bold,
     // slightly-larger "Title" line (heading4 - see the heading.options
     // config in renderNotesPanel, and its size/weight in style.css).
     toggleNotesTitle() {
-        if (!this.notesEditor) return;
-        const editor = this.notesEditor;
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
         const isTitle = editor.commands.get('heading').value === 'heading4';
         editor.execute(isTitle ? 'paragraph' : 'heading', isTitle ? undefined : { value: 'heading4' });
         editor.editing.view.focus();
@@ -4877,8 +4927,8 @@ class FlowchartViewer {
     // nothing is selected, same as the other formatting buttons only acting
     // on an actual selection/current line.
     toggleNotesHighlight() {
-        if (!this.notesEditor) return;
-        const editor = this.notesEditor;
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
         const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
         editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
         editor.editing.view.focus();
@@ -4888,8 +4938,8 @@ class FlowchartViewer {
     // directly (also bound to Tab/Shift+Tab by default while inside a
     // list), including preserving a checklist item's checked state.
     indentNotesLine() {
-        if (!this.notesEditor) return;
-        const editor = this.notesEditor;
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
         const inAnyList = editor.commands.get('bulletedList').value
             || editor.commands.get('numberedList').value
             || editor.commands.get('todoList').value;
@@ -4905,9 +4955,10 @@ class FlowchartViewer {
     }
 
     outdentNotesLine() {
-        if (!this.notesEditor) return;
-        this.notesEditor.execute('outdentList');
-        this.notesEditor.editing.view.focus();
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        editor.execute('outdentList');
+        editor.editing.view.focus();
     }
 
 
@@ -5200,18 +5251,28 @@ class FlowchartViewer {
     }
 
     // Shared by the drawing tool - drops a [[type:id]] marker on its own line at
-    // wherever the cursor last was, then re-renders so the preview strip picks it up.
+    // wherever the cursor last was, then re-renders so the preview strip picks it
+    // up. Targets whichever editor/tab was captured by startNewNotesDrawing (the
+    // embedded one, or a full-screen pane's) rather than always the embedded one,
+    // so Insert Drawing lands in the tab it was actually triggered from.
     insertNotesMediaMarker(type, id) {
         const marker = `[[${type}:${id}]]`;
-        if (this.notesEditor) {
-            const editor = this.notesEditor;
+        const target = this._notesDrawingInsertTarget || this.getActiveNotesTarget();
+        const editor = target.editor;
+        if (editor) {
             editor.editing.view.focus();
             const viewFragment = editor.data.processor.toView(`<p>${marker}</p>`);
             const modelFragment = editor.data.toModel(viewFragment);
             editor.model.insertContent(modelFragment);
-            this.globalNotes = editor.getData();
+            const newContent = editor.getData();
+            const tab = this.getNotesTab(target.scope, target.tabId);
+            if (tab) tab.content = newContent;
+            if (this._notesPaneEditors && this._notesPaneEditors.size) {
+                this.syncNotesPanesShowingTab(target.scope, target.tabId, newContent);
+            }
         }
         this.renderNotesMediaStrip();
+        this._notesDrawingInsertTarget = null;
         this.autosave();
     }
 
@@ -5269,8 +5330,12 @@ class FlowchartViewer {
     }
 
     // Opens the full-screen drawing overlay for a brand new drawing, to be inserted
-    // at wherever the cursor last was in the notes textarea.
+    // at wherever the cursor last was in the notes textarea. Captured now (not
+    // re-derived at save time, once the drawing overlay - and, on desktop, its own
+    // focus - has taken over the screen) so it still lands in the editor/tab this
+    // was actually triggered from.
     startNewNotesDrawing() {
+        this._notesDrawingInsertTarget = this.getActiveNotesTarget();
         this.openDrawingOverlay(null);
     }
 
@@ -5366,6 +5431,14 @@ class FlowchartViewer {
                 this.closeNotesFullscreen();
             }
         });
+        // One toolbar, built once and left in place for the lifetime of the page -
+        // unlike the pane tree itself, it doesn't need rebuilding on every
+        // split/merge, since every button already resolves what to act on fresh via
+        // getActiveNotesTarget() at click time.
+        const header = document.getElementById('notes-fullscreen-header');
+        if (header && closeBtn) {
+            header.insertBefore(this.buildNotesToolbar(), closeBtn);
+        }
         this._notesPaneEditors = new Map(); // paneId -> CKEditor instance
         // Guards against the setData() call in syncNotesPanesShowingTab re-triggering
         // its own change:data listener, which would otherwise try to re-propagate the
@@ -5387,8 +5460,13 @@ class FlowchartViewer {
             scope: this._activeNotesScope,
             tabId: this.getActiveNotesTabId(this._activeNotesScope)
         };
+        // The only pane there is starts out "focused" as far as the toolbar's
+        // concerned, so it works immediately without requiring an explicit click
+        // into a pane first.
+        this._activeFullscreenPaneId = this._notesPaneTree.paneId;
         this.notesFullscreenOverlay.style.display = 'flex';
         this.renderNotesFullscreen();
+        this.updateNotesInsertDrawingBtnState();
     }
 
     closeNotesFullscreen() {
@@ -5466,7 +5544,15 @@ class FlowchartViewer {
             return false;
         };
         replaceInTree(this._notesPaneTree);
+        if (this._activeFullscreenPaneId === paneId) {
+            this._activeFullscreenPaneId = this.findFirstNotesLeafPaneId(this._notesPaneTree);
+        }
         this.renderNotesFullscreen();
+        this.updateNotesInsertDrawingBtnState();
+    }
+
+    findFirstNotesLeafPaneId(tree) {
+        return tree.type === 'leaf' ? tree.paneId : this.findFirstNotesLeafPaneId(tree.children[0]);
     }
 
     switchNotesPaneTab(paneId, scope, tabId) {
@@ -5475,6 +5561,7 @@ class FlowchartViewer {
         found.node.scope = scope;
         found.node.tabId = tabId;
         this.renderNotesFullscreen();
+        this.updateNotesInsertDrawingBtnState();
     }
 
     renderNotesFullscreen() {
@@ -5622,7 +5709,12 @@ class FlowchartViewer {
                 this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
             });
             editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
-                if (!isFocused && this._pendingNotesSave) {
+                if (isFocused) {
+                    // The relocated toolbar (see buildNotesToolbar) acts on whichever
+                    // pane was last focused - this is the only place that changes.
+                    this._activeFullscreenPaneId = node.paneId;
+                    this.updateNotesInsertDrawingBtnState();
+                } else if (this._pendingNotesSave) {
                     this._pendingNotesSave = false;
                     this.autosave();
                 }
@@ -6353,8 +6445,11 @@ class FlowchartViewer {
             }
             this.notesDrawings[id] = { dataUrl };
 
-            if (!state.editingId && this.notesEditor) {
-                // Brand new drawing - insert its marker at wherever the cursor last was.
+            if (!state.editingId && this._notesDrawingInsertTarget && this._notesDrawingInsertTarget.editor) {
+                // Brand new drawing - insert its marker at wherever the cursor last
+                // was, in whichever editor was active when Insert Drawing was
+                // clicked (see startNewNotesDrawing) - the embedded one, or a
+                // full-screen pane's.
                 this.insertNotesMediaMarker('drawing', id);
                 this.drawingOverlay.style.display = 'none';
                 state.nodeTarget = null;

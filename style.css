@@ -454,10 +454,20 @@ body {
 #notes-fullscreen-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 10px;
     padding: 8px 14px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+/* Pushes the toolbar + Exit button together to the right, leaving the title
+   pinned left - the toolbar acts on whichever pane is currently focused (see
+   get activeNotesEditor), so it reads as "top right" the same as the
+   screenshot of the embedded view's own header. */
+#notes-fullscreen-header .notes-toolbar-row {
+    margin-left: auto;
+    margin-bottom: 0;
+    flex-wrap: nowrap;
 }
 
 #notes-fullscreen-title {
@@ -1009,8 +1019,8 @@ body {
        reliably indent/outdent the current line, making these buttons
        redundant; mobile keeps them since there's no easy physical Tab key
        there. */
-    #notes-outdent-btn,
-    #notes-indent-btn {
+    .notes-outdent-btn,
+    .notes-indent-btn {
         display: none;
     }
 
@@ -1689,7 +1699,8 @@ body {
 }
 
 /* ===== Notes header row + insert-drawing button + drawing thumbnail strip ===== */
-#notes-panel-header-row {
+#notes-panel-header-row,
+.notes-toolbar-row {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -1699,8 +1710,10 @@ body {
     flex-shrink: 0;
 }
 
-#notes-outdent-btn,
-#notes-indent-btn {
+/* Shared by every Notes toolbar button (Insert Drawing/Checklist/Title/
+   Highlight/Outdent/Indent) - identical look whether it's in the embedded
+   panel's header or the full-screen view's toolbar (see buildNotesToolbar). */
+.notes-toolbar-btn {
     background: var(--control-bg);
     color: var(--text);
     border: 1px solid var(--border);
@@ -1710,51 +1723,17 @@ body {
     cursor: pointer;
 }
 
-#notes-outdent-btn:hover,
-#notes-indent-btn:hover {
+.notes-toolbar-btn:hover {
     background: var(--control-hover);
 }
 
-#notes-insert-drawing-btn {
+.notes-toolbar-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.notes-toolbar-btn:disabled:hover {
     background: var(--control-bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-}
-
-#notes-insert-drawing-btn:hover {
-    background: var(--control-hover);
-}
-
-#notes-title-btn {
-    background: var(--control-bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-}
-
-#notes-title-btn:hover {
-    background: var(--control-hover);
-}
-
-#notes-checklist-btn {
-    background: var(--control-bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-}
-
-#notes-checklist-btn:hover {
-    background: var(--control-hover);
 }
 
 #notes-drawings-strip {
