@@ -336,7 +336,7 @@ body {
    theme instead. !important is needed for the color/background/border since
    CKEditor's own theme CSS targets these same properties with a real class
    selector (equal or higher specificity, and loaded after this stylesheet). */
-#notes-editor-wrap .ck.ck-content {
+#notes-editor-wrap .ck.ck-content , .notes-editor-wrap-el .ck.ck-content {
     background: transparent !important;
     border: none !important;
     color: var(--text) !important;
@@ -349,18 +349,18 @@ body {
     min-height: 100%;
 }
 
-#notes-editor-wrap .ck.ck-content p,
-#notes-editor-wrap .ck.ck-content h4,
-#notes-editor-wrap .ck.ck-content li {
+#notes-editor-wrap .ck.ck-content p, .notes-editor-wrap-el .ck.ck-content p,
+#notes-editor-wrap .ck.ck-content h4, .notes-editor-wrap-el .ck.ck-content h4,
+#notes-editor-wrap .ck.ck-content li , .notes-editor-wrap-el .ck.ck-content li {
     margin: 0;
 }
 
 /* !important throughout this rule: ckeditor5.css loads after this
    stylesheet (see index.html), so on an equal-specificity tie its own
    content rules would otherwise win. */
-#notes-editor-wrap .ck.ck-content p,
-#notes-editor-wrap .ck.ck-content h4,
-#notes-editor-wrap .ck.ck-content li {
+#notes-editor-wrap .ck.ck-content p, .notes-editor-wrap-el .ck.ck-content p,
+#notes-editor-wrap .ck.ck-content h4, .notes-editor-wrap-el .ck.ck-content h4,
+#notes-editor-wrap .ck.ck-content li , .notes-editor-wrap-el .ck.ck-content li {
     white-space: normal !important;
     overflow-wrap: break-word !important;
     /* A fixed width (not max-width) so a deeply-indented line wraps after the
@@ -374,41 +374,41 @@ body {
     flex-shrink: 0;
 }
 
-#notes-editor-wrap .ck.ck-content > * + * {
+#notes-editor-wrap .ck.ck-content > * + * , .notes-editor-wrap-el .ck.ck-content > * + * {
     margin-top: 0.35em;
 }
 
-#notes-editor-wrap .ck.ck-content h4 {
+#notes-editor-wrap .ck.ck-content h4 , .notes-editor-wrap-el .ck.ck-content h4 {
     font-size: 30px;
     font-weight: bold;
 }
 
-#notes-editor-wrap .ck.ck-content ul,
-#notes-editor-wrap .ck.ck-content ol {
+#notes-editor-wrap .ck.ck-content ul, .notes-editor-wrap-el .ck.ck-content ul,
+#notes-editor-wrap .ck.ck-content ol , .notes-editor-wrap-el .ck.ck-content ol {
     padding-left: 2.8em;
     margin: 0.2em 0;
 }
 
-#notes-editor-wrap .ck.ck-content li {
+#notes-editor-wrap .ck.ck-content li , .notes-editor-wrap-el .ck.ck-content li {
     margin: 0.15em 0;
 }
 
 /* Checklist items (CKEditor's TodoList plugin). */
-#notes-editor-wrap .ck.ck-content .todo-list {
+#notes-editor-wrap .ck.ck-content .todo-list , .notes-editor-wrap-el .ck.ck-content .todo-list {
     list-style: none;
 }
 
-#notes-editor-wrap .ck.ck-content .todo-list__label__description {
+#notes-editor-wrap .ck.ck-content .todo-list__label__description , .notes-editor-wrap-el .ck.ck-content .todo-list__label__description {
     color: var(--text);
 }
 
-#notes-editor-wrap .ck.ck-content .todo-list .todo-list__label input[type="checkbox"] {
+#notes-editor-wrap .ck.ck-content .todo-list .todo-list__label input[type="checkbox"] , .notes-editor-wrap-el .ck.ck-content .todo-list .todo-list__label input[type="checkbox"] {
     cursor: pointer;
 }
 
 /* Thicker white outline for an unchecked box only - a ticked box keeps
    CKEditor's own default look (solid green fill with a matching border). */
-#notes-editor-wrap .ck.ck-content .todo-list__label input[type="checkbox"]:not(:checked)::before {
+#notes-editor-wrap .ck.ck-content .todo-list__label input[type="checkbox"]:not(:checked)::before , .notes-editor-wrap-el .ck.ck-content .todo-list__label input[type="checkbox"]:not(:checked)::before {
     border-width: 2px !important;
     border-color: #ffffff !important;
 }
@@ -416,7 +416,7 @@ body {
 /* CKEditor's Highlight plugin config's own "color" option only feeds its UI
    swatch preview, not the actual applied style - the real background comes
    from this static class, so the yellow shade is overridden here instead. */
-#notes-editor-wrap .ck.ck-content mark.marker-yellow {
+#notes-editor-wrap .ck.ck-content mark.marker-yellow , .notes-editor-wrap-el .ck.ck-content mark.marker-yellow {
     background-color: #ffee00 !important;
 }
 
@@ -426,9 +426,136 @@ body {
    live DOM) - the only actual signal in the editing view is the checkbox's
    own :checked state, so :has() is used to reach the sibling description
    text from it. */
-#notes-editor-wrap .ck.ck-content .todo-list__label:has(input:checked) .todo-list__label__description {
+#notes-editor-wrap .ck.ck-content .todo-list__label:has(input:checked) .todo-list__label__description , .notes-editor-wrap-el .ck.ck-content .todo-list__label:has(input:checked) .todo-list__label__description {
     text-decoration: line-through;
     color: var(--muted);
+}
+
+/* ===== Notes tab bar (global tabs, then this flowchart's own) ===== */
+#notes-tab-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.notes-tab-group {
+    margin-bottom: 0;
+}
+
+.notes-tab-group-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border);
+    margin: 0 2px;
+}
+
+/* ===== Notes full-screen overlay + split panes ===== */
+#notes-fullscreen-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+#notes-fullscreen-title {
+    font-weight: bold;
+    color: var(--text);
+}
+
+#notes-fullscreen-close-btn {
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    cursor: pointer;
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+#notes-fullscreen-close-btn:hover {
+    background: rgba(0, 166, 126, 0.15);
+}
+
+#notes-fullscreen-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+    padding: 8px;
+    gap: 8px;
+    box-sizing: border-box;
+}
+
+.notes-split-container {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    gap: 8px;
+}
+
+.notes-split-container.notes-split-column {
+    flex-direction: column;
+}
+
+.notes-split-container.notes-split-row {
+    flex-direction: row;
+}
+
+.notes-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.notes-pane-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--control-bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.notes-pane-tab-select {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 4px;
+}
+
+.notes-pane-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 3px 7px;
+    flex-shrink: 0;
+}
+
+.notes-pane-btn:hover {
+    background: rgba(0, 166, 126, 0.15);
+}
+
+.notes-pane-editor-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
 }
 
 /* ===== Pugh Matrix ===== */
@@ -909,7 +1036,7 @@ body {
     /* Desktop only - the leftmost (unindented) line sits one indent level in
        from the box's edge instead of flush against it, matching the same
        per-level width bullets/checklists already use (see ul,ol above). */
-    #notes-editor-wrap .ck.ck-content {
+    #notes-editor-wrap .ck.ck-content , .notes-editor-wrap-el .ck.ck-content {
         padding-left: 2.8em !important;
     }
 
@@ -957,6 +1084,13 @@ body {
 
     #left-panel-tab-notes {
         display: inline-block;
+    }
+
+    /* Full screen + split panes needs room no phone screen has - hidden here
+       rather than skipped at render time so it responds live to an actual resize,
+       not just whatever width was current the last time the panel was rebuilt. */
+    #notes-fullscreen-btn {
+        display: none;
     }
 
     /* No divider needed on mobile - Notes is a full tab there (see

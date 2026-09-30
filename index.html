@@ -609,6 +609,18 @@ create policy "allow all" on flowchart_sync
            instead, since a mouse cursor never covers what it's drawing. -->
       <div id="drawing-brush-preview"></div>
     </div>
+
+    <!-- Full-screen Notes overlay, opened from the Notes panel's Full Screen button
+         (desktop only). Panes are built entirely by JS (see setupNotesFullscreen /
+         renderNotesFullscreen) - each pane is its own CKEditor instance bound to
+         whichever notes tab its selector picks, arbitrarily splittable/mergeable. -->
+    <div id="notes-fullscreen-overlay" style="display:none; position:fixed; inset:0; z-index:4900; background:var(--bg); flex-direction:column;">
+      <div id="notes-fullscreen-header">
+        <div id="notes-fullscreen-title">📝 Notes — Full Screen</div>
+        <button id="notes-fullscreen-close-btn" title="Exit Full Screen (Esc)">✕ Exit Full Screen</button>
+      </div>
+      <div id="notes-fullscreen-body"></div>
+    </div>
   </div>
 
   <script>

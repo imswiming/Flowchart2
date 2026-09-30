@@ -196,9 +196,24 @@ class FlowchartViewer {
         // Pugh/Morph Matrix tabs) - this.globalNotes is a read/write view of whichever
         // tab is currently active (see the get/set globalNotes accessors), so the
         // large majority of existing code reading/writing it keeps working unchanged.
+        //
+        // Two separate tab collections feed that one active tab: notesTabs, private to
+        // whichever flowchart is open (saved/loaded alongside its tree, as before), and
+        // globalNotesTabs, shared across every flowchart instead - persisted straight to
+        // localStorage rather than any one flowchart's own save data, so switching
+        // flowcharts never touches it. _activeNotesScope ('chart'|'global') plus
+        // activeNotesTabId/activeGlobalNotesTabId together say which single tab, from
+        // either collection, is the one currently live in the editor - see
+        // getActiveNotesTab/buildNotesTabBar.
         this._notesIdCounter = 0;
         this.notesTabs = this.getDefaultNotesTabs();
         this.activeNotesTabId = this.notesTabs[0].id;
+        this.globalNotesTabs = this.loadGlobalNotesTabs();
+        this.activeGlobalNotesTabId = (() => {
+            const saved = localStorage.getItem('flowchart-active-global-notes-tab');
+            return (saved && this.globalNotesTabs.some(t => t.id === saved)) ? saved : this.globalNotesTabs[0].id;
+        })();
+        this._activeNotesScope = localStorage.getItem('flowchart-active-notes-scope') === 'global' ? 'global' : 'chart';
         // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
         // globalNotes that references them - see renderNotesDrawingsStrip.
         this.notesDrawings = {};
@@ -216,6 +231,7 @@ class FlowchartViewer {
         this.renderNotesPanel();
         this.setupNotesResizeHandle();
         this.setupDrawingOverlay();
+        this.setupNotesFullscreen();
 
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
@@ -527,6 +543,7 @@ class FlowchartViewer {
     // Autosave wrapper - call after any edit
     autosave() {
         this.saveCurrentFlowchart();
+        this.saveGlobalNotesTabs();
         if (!this._applyingRemote) this.scheduleCloudPush();
     }
 
@@ -4380,30 +4397,46 @@ class FlowchartViewer {
     // media strip, etc.) keeps working unchanged, since a plain string
     // getter/setter pair covers both cases with no special in-place-mutation
     // handling needed (unlike the Pugh/Morph Matrix tabs' object-shaped data).
+    // Routed through getActiveNotesTab, which resolves _activeNotesScope to
+    // either notesTabs (this flowchart) or globalNotesTabs (shared) first.
     get globalNotes() {
-        if (!Array.isArray(this.notesTabs) || this.notesTabs.length === 0) {
-            this.notesTabs = this.getDefaultNotesTabs();
-            this.activeNotesTabId = this.notesTabs[0].id;
-        }
-        let tab = this.notesTabs.find(t => t.id === this.activeNotesTabId);
-        if (!tab) {
-            tab = this.notesTabs[0];
-            this.activeNotesTabId = tab.id;
-        }
-        return tab.content;
+        return this.getActiveNotesTab().content;
     }
 
     set globalNotes(value) {
-        if (!Array.isArray(this.notesTabs) || this.notesTabs.length === 0) {
-            this.notesTabs = this.getDefaultNotesTabs();
-            this.activeNotesTabId = this.notesTabs[0].id;
+        this.getActiveNotesTab().content = value;
+    }
+
+    getNotesTabsList(scope) {
+        return scope === 'global' ? this.globalNotesTabs : this.notesTabs;
+    }
+
+    getActiveNotesTabId(scope) {
+        return scope === 'global' ? this.activeGlobalNotesTabId : this.activeNotesTabId;
+    }
+
+    setActiveNotesTabId(scope, id) {
+        if (scope === 'global') this.activeGlobalNotesTabId = id;
+        else this.activeNotesTabId = id;
+    }
+
+    // The tab currently feeding the single embedded editor - self-heals (same
+    // pattern as get pughMatrix()) if the active id or the whole list is ever
+    // missing/empty, e.g. the tab it pointed at was just deleted.
+    getActiveNotesTab() {
+        const scope = this._activeNotesScope;
+        let list = this.getNotesTabsList(scope);
+        if (!Array.isArray(list) || list.length === 0) {
+            list = this.getDefaultNotesTabs();
+            if (scope === 'global') this.globalNotesTabs = list;
+            else this.notesTabs = list;
         }
-        let tab = this.notesTabs.find(t => t.id === this.activeNotesTabId);
+        let tab = list.find(t => t.id === this.getActiveNotesTabId(scope));
         if (!tab) {
-            tab = this.notesTabs[0];
-            this.activeNotesTabId = tab.id;
+            tab = list[0];
+            this.setActiveNotesTabId(scope, tab.id);
         }
-        tab.content = value;
+        return tab;
     }
 
     getDefaultNotesTab(name) {
@@ -4436,115 +4469,164 @@ class FlowchartViewer {
         return this.getDefaultNotesTabs();
     }
 
-    addNotesTab() {
-        const tab = this.getDefaultNotesTab(`Notes ${this.notesTabs.length + 1}`);
-        this.notesTabs.push(tab);
-        this.activeNotesTabId = tab.id;
+    loadJSONFromStorage(key, fallback) {
+        try {
+            const v = JSON.parse(localStorage.getItem(key) || 'null');
+            return (v && typeof v === 'object') ? v : fallback;
+        } catch (err) {
+            return fallback;
+        }
+    }
+
+    loadGlobalNotesTabs() {
+        const saved = this.loadJSONFromStorage('flowchart-global-notes-tabs', null);
+        if (Array.isArray(saved) && saved.length > 0) {
+            return this.sanitizeNotesTabs(saved);
+        }
+        return [this.getDefaultNotesTab('Global Notes')];
+    }
+
+    // Persists everything about global notes - called from autosave() so any
+    // edit (content, tab add/rename/delete, switching which tab/scope is
+    // active) sticks around across reloads, the same way per-flowchart data
+    // does via saveCurrentFlowchart. Never goes through Cloud Sync's
+    // flowchartList payload, so it currently stays local to this browser
+    // rather than following you to another computer.
+    saveGlobalNotesTabs() {
+        localStorage.setItem('flowchart-global-notes-tabs', JSON.stringify(this.globalNotesTabs));
+        localStorage.setItem('flowchart-active-global-notes-tab', this.activeGlobalNotesTabId || '');
+        localStorage.setItem('flowchart-active-notes-scope', this._activeNotesScope || 'chart');
+    }
+
+    addNotesTab(scope) {
+        const list = this.getNotesTabsList(scope);
+        const tab = this.getDefaultNotesTab(`${scope === 'global' ? 'Global' : 'Notes'} ${list.length + 1}`);
+        list.push(tab);
+        this._activeNotesScope = scope;
+        this.setActiveNotesTabId(scope, tab.id);
         if (this.notesEditor) this.notesEditor.setData(tab.content || '<p></p>');
         this.renderNotesTabBar();
         this.autosave();
     }
 
-    deleteNotesTab(tabId) {
-        if (this.notesTabs.length <= 1) return;
-        const idx = this.notesTabs.findIndex(t => t.id === tabId);
+    deleteNotesTab(scope, tabId) {
+        const list = this.getNotesTabsList(scope);
+        if (list.length <= 1) return;
+        const idx = list.findIndex(t => t.id === tabId);
         if (idx === -1) return;
-        this.notesTabs.splice(idx, 1);
-        if (this.activeNotesTabId === tabId) {
-            const newTab = this.notesTabs[Math.max(0, idx - 1)];
-            this.activeNotesTabId = newTab.id;
-            if (this.notesEditor) this.notesEditor.setData(newTab.content || '<p></p>');
+        list.splice(idx, 1);
+        if (this.getActiveNotesTabId(scope) === tabId) {
+            const newTab = list[Math.max(0, idx - 1)];
+            this.setActiveNotesTabId(scope, newTab.id);
+            if (scope === this._activeNotesScope && this.notesEditor) {
+                this.notesEditor.setData(newTab.content || '<p></p>');
+            }
         }
         this.renderNotesTabBar();
         this.autosave();
     }
 
-    switchNotesTab(tabId) {
-        if (tabId === this.activeNotesTabId || !this.notesTabs.some(t => t.id === tabId)) return;
+    switchNotesTab(scope, tabId) {
+        if (scope === this._activeNotesScope && tabId === this.getActiveNotesTabId(scope)) return;
         // Capture whatever's currently in the editor into the tab being left
         // before switching - the editor's own change:data event normally
         // does this, but that's debounced through _pendingNotesSave/blur,
         // so a switch right after typing could otherwise lose it.
-        if (this.notesEditor) this.globalNotes = this.notesEditor.getData();
-        this.activeNotesTabId = tabId;
+        if (this.notesEditor) this.getActiveNotesTab().content = this.notesEditor.getData();
+        this._activeNotesScope = scope;
+        this.setActiveNotesTabId(scope, tabId);
         if (this.notesEditor) this.notesEditor.setData(this.globalNotes || '<p></p>');
         this.renderNotesTabBar();
         this.autosave();
     }
 
-    renameNotesTab(tabId, name) {
-        const tab = this.notesTabs.find(t => t.id === tabId);
+    renameNotesTab(scope, tabId, name) {
+        const tab = this.getNotesTabsList(scope).find(t => t.id === tabId);
         if (!tab) return;
         tab.name = (name || '').trim() || 'Untitled';
         this.autosave();
     }
 
-    // Builds the row of tabs shown above the Notes toolbar - same look and
-    // add/rename/delete pattern as buildMatrixTabBar (Pugh/Morph Matrix),
-    // just wired to the Notes tab list and its own switch/add/delete/rename
+    // Builds the row of tabs shown above the Notes toolbar - global tabs first
+    // (shared across every flowchart), then this flowchart's own, each in its
+    // own same-look-as-buildMatrixTabBar (Pugh/Morph Matrix) group with its own
+    // "+". Wired to the Notes tab list and its own switch/add/delete/rename
     // methods (which additionally have to sync the live CKEditor instance's
     // content on every switch, unlike the matrices).
     buildNotesTabBar() {
         const bar = document.createElement('div');
-        bar.className = 'matrix-tab-bar';
         bar.id = 'notes-tab-bar';
 
-        this.notesTabs.forEach(tab => {
-            const tabEl = document.createElement('div');
-            tabEl.className = 'matrix-tab' + (tab.id === this.activeNotesTabId ? ' active' : '');
-            tabEl.addEventListener('click', (e) => {
-                if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
-                this.switchNotesTab(tab.id);
-            });
+        const buildGroup = (scope, tabs) => {
+            const group = document.createElement('div');
+            group.className = 'matrix-tab-bar notes-tab-group';
+            const activeId = this.getActiveNotesTabId(scope);
 
-            const label = document.createElement('span');
-            label.className = 'matrix-tab-label';
-            label.textContent = tab.name || 'Untitled';
-            label.title = 'Double-click to rename';
-            label.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'matrix-tab-name-input';
-                input.value = tab.name || '';
-                label.replaceWith(input);
-                input.focus();
-                input.select();
-                const commit = () => {
-                    this.renameNotesTab(tab.id, input.value);
-                    this.renderNotesTabBar();
-                };
-                input.addEventListener('click', (e2) => e2.stopPropagation());
-                input.addEventListener('keydown', (e2) => {
-                    if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
-                    else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
+            tabs.forEach(tab => {
+                const tabEl = document.createElement('div');
+                tabEl.className = 'matrix-tab' + (scope === this._activeNotesScope && tab.id === activeId ? ' active' : '');
+                tabEl.addEventListener('click', (e) => {
+                    if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                    this.switchNotesTab(scope, tab.id);
                 });
-                input.addEventListener('blur', commit);
-            });
-            tabEl.appendChild(label);
 
-            if (this.notesTabs.length > 1) {
-                const delBtn = document.createElement('button');
-                delBtn.className = 'matrix-tab-delete-btn';
-                delBtn.title = 'Delete this tab';
-                delBtn.textContent = '×';
-                delBtn.addEventListener('click', (e) => {
+                const label = document.createElement('span');
+                label.className = 'matrix-tab-label';
+                label.textContent = tab.name || 'Untitled';
+                label.title = 'Double-click to rename';
+                label.addEventListener('dblclick', (e) => {
                     e.stopPropagation();
-                    if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
-                    this.deleteNotesTab(tab.id);
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'matrix-tab-name-input';
+                    input.value = tab.name || '';
+                    label.replaceWith(input);
+                    input.focus();
+                    input.select();
+                    const commit = () => {
+                        this.renameNotesTab(scope, tab.id, input.value);
+                        this.renderNotesTabBar();
+                    };
+                    input.addEventListener('click', (e2) => e2.stopPropagation());
+                    input.addEventListener('keydown', (e2) => {
+                        if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
+                        else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
+                    });
+                    input.addEventListener('blur', commit);
                 });
-                tabEl.appendChild(delBtn);
-            }
+                tabEl.appendChild(label);
 
-            bar.appendChild(tabEl);
-        });
+                if (tabs.length > 1) {
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'matrix-tab-delete-btn';
+                    delBtn.title = 'Delete this tab';
+                    delBtn.textContent = '×';
+                    delBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
+                        this.deleteNotesTab(scope, tab.id);
+                    });
+                    tabEl.appendChild(delBtn);
+                }
 
-        const addBtn = document.createElement('button');
-        addBtn.className = 'matrix-tab-add-btn';
-        addBtn.title = 'Add a new Notes tab';
-        addBtn.textContent = '+';
-        addBtn.addEventListener('click', () => this.addNotesTab());
-        bar.appendChild(addBtn);
+                group.appendChild(tabEl);
+            });
+
+            const addBtn = document.createElement('button');
+            addBtn.className = 'matrix-tab-add-btn';
+            addBtn.title = scope === 'global' ? 'Add a new global tab (shared across all flowcharts)' : 'Add a new tab for this flowchart';
+            addBtn.textContent = '+';
+            addBtn.addEventListener('click', () => this.addNotesTab(scope));
+            group.appendChild(addBtn);
+
+            return group;
+        };
+
+        bar.appendChild(buildGroup('global', this.globalNotesTabs));
+        const divider = document.createElement('div');
+        divider.className = 'notes-tab-group-divider';
+        bar.appendChild(divider);
+        bar.appendChild(buildGroup('chart', this.notesTabs));
 
         return bar;
     }
@@ -4556,6 +4638,23 @@ class FlowchartViewer {
         const old = document.getElementById('notes-tab-bar');
         if (!old || !old.parentNode) return;
         old.replaceWith(this.buildNotesTabBar());
+        this.updateNotesInsertDrawingBtnState();
+    }
+
+    // Insert Drawing is disabled while a global tab is active (see renderNotesPanel)
+    // - switching tabs/scope goes through the lightweight renderNotesTabBar rather
+    // than a full renderNotesPanel, so this has to be refreshed there too, not just
+    // baked into the button once at full-render time.
+    updateNotesInsertDrawingBtnState() {
+        const btn = document.getElementById('notes-insert-drawing-btn');
+        if (!btn) return;
+        if (this._activeNotesScope === 'global') {
+            btn.disabled = true;
+            btn.title = 'Not available on a global tab (drawings live with a single flowchart)';
+        } else {
+            btn.disabled = false;
+            btn.title = 'Insert a drawing at the cursor';
+        }
     }
 
     renderNotesPanel() {
@@ -4576,8 +4675,21 @@ class FlowchartViewer {
         insertDrawingBtn.id = 'notes-insert-drawing-btn';
         insertDrawingBtn.type = 'button';
         insertDrawingBtn.textContent = '\uD83C\uDFA8 Insert Drawing';
-        insertDrawingBtn.title = 'Insert a drawing at the cursor';
+        // The listener is always attached - only .disabled (toggled reactively by
+        // updateNotesInsertDrawingBtnState, since switching tabs/scope goes through
+        // the lightweight renderNotesTabBar rather than a full re-render here) gates
+        // whether it actually does anything. Drawings/pasted images are stored
+        // per-flowchart (notesDrawings/notesImages), not per-tab - there's nowhere
+        // for one to live if the active tab is a global tab not tied to any single
+        // flowchart, hence disabled while on the global scope (see the
+        // clipboardInput handler below for the same restriction on image paste).
         insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
+        if (this._activeNotesScope === 'global') {
+            insertDrawingBtn.disabled = true;
+            insertDrawingBtn.title = 'Not available on a global tab (drawings live with a single flowchart)';
+        } else {
+            insertDrawingBtn.title = 'Insert a drawing at the cursor';
+        }
         header.appendChild(insertDrawingBtn);
 
         const checklistBtn = document.createElement('button');
@@ -4619,6 +4731,19 @@ class FlowchartViewer {
         indentBtn.title = 'Increase indent';
         indentBtn.addEventListener('click', () => this.indentNotesLine());
         header.appendChild(indentBtn);
+
+        // Full-screen + split-pane editing is desktop-only - there's no room on a
+        // phone-sized screen to usefully split the view at all. Always created (not
+        // gated on matchMedia here) and hidden by CSS instead, so it responds live
+        // to the window actually being resized rather than only to whatever width
+        // happened to be current the last time this panel was rebuilt.
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.id = 'notes-fullscreen-btn';
+        fullscreenBtn.type = 'button';
+        fullscreenBtn.textContent = '⛶ Full Screen';
+        fullscreenBtn.title = 'Open Notes full screen (and split into multiple panes)';
+        fullscreenBtn.addEventListener('click', () => this.openNotesFullscreen());
+        header.appendChild(fullscreenBtn);
 
         this.notesPanelBody.appendChild(header);
 
@@ -4692,9 +4817,12 @@ class FlowchartViewer {
             // Only image *data* (a screenshot, or an image copied from an image
             // editor) is intercepted here - everything else (plain text, a
             // pasted URL) leaves the event alone so CKEditor's own default
-            // paste handling still runs normally.
+            // paste handling still runs normally. Skipped entirely on the global
+            // scope (see insertDrawingBtn above for why) - a pasted image there
+            // just falls through to CKEditor's own default handling, which quietly
+            // drops it since no Image plugin is loaded.
             editor.editing.view.document.on('clipboardInput', (evt, data) => {
-                if (this.handleNotesPaste(data.dataTransfer)) {
+                if (this._activeNotesScope !== 'global' && this.handleNotesPaste(data.dataTransfer)) {
                     evt.stop();
                 }
             });
@@ -5172,6 +5300,280 @@ class FlowchartViewer {
             onMove(e.touches[0].clientY);
         }, { passive: false });
         window.addEventListener('touchend', onEnd);
+    }
+
+    // ===================== Notes full screen + split panes =====================
+    // Desktop-only distraction-free view of Notes: the same tab bar's worth of
+    // documents (global + this flowchart's own), but each pane is independently
+    // splittable (row or column) into more panes, each with its own tab selector and
+    // its own CKEditor instance - a small binary tree (this._notesPaneTree) of
+    // {type:'split', direction, children:[...]} / {type:'leaf', paneId, scope, tabId}
+    // nodes, rebuilt into nested flex containers on every change. The tree starts
+    // fresh (a single pane showing whatever the embedded editor was showing) each
+    // time full screen opens; it isn't persisted across sessions.
+    setupNotesFullscreen() {
+        this.notesFullscreenOverlay = document.getElementById('notes-fullscreen-overlay');
+        this.notesFullscreenBody = document.getElementById('notes-fullscreen-body');
+        const closeBtn = document.getElementById('notes-fullscreen-close-btn');
+        if (closeBtn) closeBtn.addEventListener('click', () => this.closeNotesFullscreen());
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.notesFullscreenOverlay && this.notesFullscreenOverlay.style.display !== 'none') {
+                this.closeNotesFullscreen();
+            }
+        });
+        this._notesPaneEditors = new Map(); // paneId -> CKEditor instance
+    }
+
+    nextNotesPaneId() {
+        this._notesPaneIdCounter = (this._notesPaneIdCounter || 0) + 1;
+        return `pane-${this._notesPaneIdCounter}`;
+    }
+
+    openNotesFullscreen() {
+        if (!this.notesFullscreenOverlay) return;
+        this._notesPaneTree = {
+            type: 'leaf',
+            paneId: this.nextNotesPaneId(),
+            scope: this._activeNotesScope,
+            tabId: this.getActiveNotesTabId(this._activeNotesScope)
+        };
+        this.notesFullscreenOverlay.style.display = 'flex';
+        this.renderNotesFullscreen();
+    }
+
+    closeNotesFullscreen() {
+        if (!this.notesFullscreenOverlay) return;
+        this.destroyAllNotesPaneEditors();
+        this.notesFullscreenOverlay.style.display = 'none';
+        // Whatever was edited in any pane already wrote straight back into the
+        // underlying tabs (see createNotesPaneEditor's change:data listener) -
+        // re-render the embedded strip so it picks up any change to whichever tab
+        // it's showing (via a fresh CKEditor instance, so it reflects the latest
+        // content rather than whatever the old instance had cached).
+        this.renderNotesPanel();
+    }
+
+    destroyAllNotesPaneEditors() {
+        this._notesPaneEditors.forEach(editor => {
+            try { editor.destroy(); } catch (err) { /* ignore */ }
+        });
+        this._notesPaneEditors.clear();
+    }
+
+    // Finds a node in the pane tree by id, along with its parent split node and
+    // which child index it occupies there (null parent/index for the root).
+    findNotesPaneNode(tree, paneId, parent = null, indexInParent = null) {
+        if (tree.type === 'leaf') {
+            return tree.paneId === paneId ? { node: tree, parent, indexInParent } : null;
+        }
+        for (let i = 0; i < tree.children.length; i++) {
+            const found = this.findNotesPaneNode(tree.children[i], paneId, tree, i);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    splitNotesPane(paneId, direction) {
+        const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
+        if (!found) return;
+        const { node, parent, indexInParent } = found;
+        const newLeaf = { type: 'leaf', paneId: this.nextNotesPaneId(), scope: node.scope, tabId: node.tabId };
+        const splitNode = { type: 'split', direction, children: [node, newLeaf] };
+        if (parent) {
+            parent.children[indexInParent] = splitNode;
+        } else {
+            this._notesPaneTree = splitNode;
+        }
+        this.renderNotesFullscreen();
+    }
+
+    // Closing a pane merges its space back into its sibling: the parent split node
+    // (which only ever has two children) collapses up into whichever sibling is left,
+    // recursively, same as removing a node from a binary tree. Disabled (see
+    // renderNotesFullscreen) when this pane is the whole tree, since there'd be
+    // nothing left to show.
+    closeNotesPane(paneId) {
+        const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
+        if (!found || !found.parent) return;
+        const { parent, indexInParent } = found;
+        const sibling = parent.children[1 - indexInParent];
+        // The parent split node has no paneId of its own to search by, so find its
+        // position the same way - by identity - walking from the root and replacing
+        // whichever slot holds it (the root itself, or a child slot) with `sibling`.
+        const replaceInTree = (node) => {
+            if (node === this._notesPaneTree) {
+                this._notesPaneTree = sibling;
+                return true;
+            }
+            if (node.type !== 'split') return false;
+            for (let i = 0; i < node.children.length; i++) {
+                if (node.children[i] === parent) {
+                    node.children[i] = sibling;
+                    return true;
+                }
+                if (replaceInTree(node.children[i])) return true;
+            }
+            return false;
+        };
+        replaceInTree(this._notesPaneTree);
+        this.renderNotesFullscreen();
+    }
+
+    switchNotesPaneTab(paneId, scope, tabId) {
+        const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
+        if (!found) return;
+        found.node.scope = scope;
+        found.node.tabId = tabId;
+        this.renderNotesFullscreen();
+    }
+
+    renderNotesFullscreen() {
+        if (!this.notesFullscreenBody) return;
+        this.destroyAllNotesPaneEditors();
+        this.notesFullscreenBody.innerHTML = '';
+        const isRootLeaf = this._notesPaneTree.type === 'leaf';
+        this.notesFullscreenBody.appendChild(this.buildNotesPaneNode(this._notesPaneTree, isRootLeaf));
+    }
+
+    // Recursively builds either a single pane (leaf) or a nested flex container
+    // holding two panes/sub-splits (split). `isOnlyPane` disables the close/merge
+    // button on the one remaining pane once everything else has been merged away.
+    buildNotesPaneNode(node, isOnlyPane) {
+        if (node.type === 'split') {
+            const container = document.createElement('div');
+            container.className = 'notes-split-container ' + (node.direction === 'row' ? 'notes-split-row' : 'notes-split-column');
+            node.children.forEach(child => container.appendChild(this.buildNotesPaneNode(child, false)));
+            return container;
+        }
+
+        const pane = document.createElement('div');
+        pane.className = 'notes-pane';
+
+        const header = document.createElement('div');
+        header.className = 'notes-pane-header';
+
+        const select = document.createElement('select');
+        select.className = 'notes-pane-tab-select';
+        const buildOptGroup = (label, scope, tabs) => {
+            const group = document.createElement('optgroup');
+            group.label = label;
+            tabs.forEach(tab => {
+                const opt = document.createElement('option');
+                opt.value = `${scope}:${tab.id}`;
+                opt.textContent = tab.name || 'Untitled';
+                opt.selected = scope === node.scope && tab.id === node.tabId;
+                group.appendChild(opt);
+            });
+            return group;
+        };
+        select.appendChild(buildOptGroup('Global', 'global', this.globalNotesTabs));
+        select.appendChild(buildOptGroup('This Flowchart', 'chart', this.notesTabs));
+        select.addEventListener('change', () => {
+            const [scope, tabId] = select.value.split(/:(.+)/);
+            this.switchNotesPaneTab(node.paneId, scope, tabId);
+        });
+        header.appendChild(select);
+
+        const splitRightBtn = document.createElement('button');
+        splitRightBtn.className = 'notes-pane-btn';
+        splitRightBtn.title = 'Split this pane vertically (side by side)';
+        splitRightBtn.textContent = '⥐ Split →';
+        splitRightBtn.addEventListener('click', () => this.splitNotesPane(node.paneId, 'row'));
+        header.appendChild(splitRightBtn);
+
+        const splitDownBtn = document.createElement('button');
+        splitDownBtn.className = 'notes-pane-btn';
+        splitDownBtn.title = 'Split this pane horizontally (stacked)';
+        splitDownBtn.textContent = '⥒ Split ↓';
+        splitDownBtn.addEventListener('click', () => this.splitNotesPane(node.paneId, 'column'));
+        header.appendChild(splitDownBtn);
+
+        if (!isOnlyPane) {
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'notes-pane-btn';
+            closeBtn.title = 'Close this pane (merge back into the other one)';
+            closeBtn.textContent = '✕';
+            closeBtn.addEventListener('click', () => this.closeNotesPane(node.paneId));
+            header.appendChild(closeBtn);
+        }
+
+        pane.appendChild(header);
+
+        const editorWrap = document.createElement('div');
+        editorWrap.className = 'notes-pane-editor-wrap notes-editor-wrap-el';
+        const editorEl = document.createElement('div');
+        editorWrap.appendChild(editorEl);
+        pane.appendChild(editorWrap);
+
+        this.createNotesPaneEditor(node, editorEl);
+
+        return pane;
+    }
+
+    // One CKEditor instance per pane, bound to whichever tab that pane's selector
+    // picked - independent of the single embedded editor and of every other pane,
+    // including another pane left open on the very same tab (each keeps its own
+    // in-editor state; the underlying tab content only actually reconciles the next
+    // time each is rendered fresh, e.g. after switching a pane's tab or reopening
+    // full screen).
+    //
+    // Deliberately plainer than the embedded editor: no image/drawing paste
+    // handling and no Insert Drawing button, since handleNotesPaste and
+    // insertNotesMediaMarker both write through the *active* tab's
+    // notesImages/notesEditor, not whichever tab this particular pane happens to
+    // be showing - wiring them in here would silently paste an image into the
+    // wrong tab (or the wrong flowchart entirely, for a global tab) whenever a
+    // pane's tab differs from the active one. A tab's existing
+    // [[image:id]]/[[drawing:id]] markers (added via the embedded view) still
+    // display as plain text in a pane, just not as the clickable media strip the
+    // embedded view renders below itself.
+    createNotesPaneEditor(node, editorEl) {
+        if (!window.CKEDITOR) {
+            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+            return;
+        }
+        const tab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
+        if (!tab) return;
+        const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
+        DecoupledEditor.create(editorEl, {
+            licenseKey: 'GPL',
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight],
+            heading: {
+                options: [
+                    { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
+                    { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
+                ],
+            },
+            highlight: {
+                options: [
+                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#ffee00', type: 'marker' },
+                ],
+            },
+            initialData: tab.content || '<p></p>',
+        }).then((editor) => {
+            // The pane could have been closed/rebuilt (e.g. the whole tree re-rendered
+            // from another pane's action) before this promise resolved - don't hang
+            // onto or mutate anything if so.
+            if (!this._notesPaneEditors || !this.findNotesPaneNode(this._notesPaneTree, node.paneId)) {
+                try { editor.destroy(); } catch (err) { /* ignore */ }
+                return;
+            }
+            this._notesPaneEditors.set(node.paneId, editor);
+            editor.model.document.on('change:data', () => {
+                const liveTab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
+                if (liveTab) liveTab.content = editor.getData();
+                this._pendingNotesSave = true;
+            });
+            editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
+                if (!isFocused && this._pendingNotesSave) {
+                    this._pendingNotesSave = false;
+                    this.autosave();
+                }
+            });
+        }).catch((err) => {
+            console.error('Failed to create a Notes pane editor:', err);
+            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+        });
     }
 
     // ===================== Drawing overlay (Notes drawings) =====================
