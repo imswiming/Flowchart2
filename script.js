@@ -4601,9 +4601,10 @@ class FlowchartViewer {
                     delBtn.className = 'matrix-tab-delete-btn';
                     delBtn.title = 'Delete this tab';
                     delBtn.textContent = '×';
-                    delBtn.addEventListener('click', (e) => {
+                    delBtn.addEventListener('click', async (e) => {
                         e.stopPropagation();
-                        if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
+                        const ok = await this.showConfirmDialog(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`);
+                        if (!ok) return;
                         this.deleteNotesTab(scope, tab.id);
                     });
                     tabEl.appendChild(delBtn);
@@ -5121,6 +5122,48 @@ class FlowchartViewer {
         this.notesPanelBody.appendChild(strip);
     }
 
+    // Downscales and re-encodes an image data URL before it's ever stored - a
+    // pasted phone photo or screenshot can run several MB at full resolution,
+    // and every embedded image here ends up in localStorage and (unless it's a
+    // global-notes tab, which isn't cloud-synced at all - see saveGlobalNotesTabs)
+    // in the Cloud Sync payload too (see stripImagesFromDataString/cloudPush),
+    // so keeping these small matters for both. Used at every point raw image data
+    // is captured: handleNotesPaste, captureNodePhotoFromClipboard, and
+    // closeDrawingOverlay.
+    //
+    // Flattens onto white first since the JPEG output has no alpha channel (a
+    // transparent PNG would otherwise turn black), then only actually uses the
+    // re-encoded result if it's smaller - a small or already-compressed source
+    // image can come out larger after a fresh JPEG encode, especially simple
+    // line art (a drawing) on mostly-flat color, which PNG already handles well.
+    compressImageDataUrl(dataUrl, { maxDim = 1600, quality = 0.82 } = {}) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                let compressed;
+                try {
+                    compressed = canvas.toDataURL('image/jpeg', quality);
+                } catch (err) {
+                    resolve(dataUrl);
+                    return;
+                }
+                resolve(compressed.length < dataUrl.length ? compressed : dataUrl);
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        });
+    }
+
     // Handles pasting either actual image *data* (e.g. a screenshot, or copied from
     // an image editor) or a plain text URL that looks like it points at an image.
     // Raw image data has no natural embeddable form here, so it still gets a
@@ -5139,9 +5182,10 @@ class FlowchartViewer {
                     const blob = item.getAsFile();
                     if (!blob) continue;
                     const reader = new FileReader();
-                    reader.onload = () => {
+                    reader.onload = async () => {
                         const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-                        this.notesImages[id] = { dataUrl: reader.result };
+                        const dataUrl = await this.compressImageDataUrl(reader.result);
+                        this.notesImages[id] = { dataUrl };
                         this.insertNotesMediaMarker('image', id);
                     };
                     reader.readAsDataURL(blob);
@@ -5203,12 +5247,13 @@ class FlowchartViewer {
                 const imageType = item.types.find(t => t.startsWith('image/'));
                 if (!imageType) continue;
                 const blob = await item.getType(imageType);
-                const dataUrl = await new Promise((resolve, reject) => {
+                const rawDataUrl = await new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve(reader.result);
                     reader.onerror = reject;
                     reader.readAsDataURL(blob);
                 });
+                const dataUrl = await this.compressImageDataUrl(rawDataUrl);
                 this.pushUndo();
                 d.data._nodePhotoUrl = dataUrl;
                 this.renderFlowchart(this.rootData);
@@ -5322,6 +5367,11 @@ class FlowchartViewer {
             }
         });
         this._notesPaneEditors = new Map(); // paneId -> CKEditor instance
+        // Guards against the setData() call in syncNotesPanesShowingTab re-triggering
+        // its own change:data listener, which would otherwise try to re-propagate the
+        // same content back out to every pane again (and, since setData fires
+        // change:data asynchronously-ish per CKEditor's batching, potentially loop).
+        this._notesPaneSyncGuard = false;
     }
 
     nextNotesPaneId() {
@@ -5560,9 +5610,16 @@ class FlowchartViewer {
             }
             this._notesPaneEditors.set(node.paneId, editor);
             editor.model.document.on('change:data', () => {
+                // A setData() call from syncNotesPanesShowingTab below (propagating
+                // some OTHER pane's edit into this one) fires this same event -
+                // bail out rather than writing our own already-current content back
+                // and re-propagating it to every pane all over again.
+                if (this._notesPaneSyncGuard) return;
+                const newContent = editor.getData();
                 const liveTab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
-                if (liveTab) liveTab.content = editor.getData();
+                if (liveTab) liveTab.content = newContent;
                 this._pendingNotesSave = true;
+                this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
             });
             editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
                 if (!isFocused && this._pendingNotesSave) {
@@ -5573,6 +5630,27 @@ class FlowchartViewer {
         }).catch((err) => {
             console.error('Failed to create a Notes pane editor:', err);
             editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+        });
+    }
+
+    // Pushes one pane's just-typed content live into every OTHER open pane showing
+    // the same (scope, tabId) - two panes split side by side on the very same tab
+    // would otherwise only reconcile the next time each got torn down and rebuilt
+    // (switching a pane's own tab, or reopening full screen), which reads as the
+    // other pane silently ignoring what you just typed.
+    syncNotesPanesShowingTab(scope, tabId, content, exceptPaneId) {
+        if (!this._notesPaneEditors || !this._notesPaneTree) return;
+        this._notesPaneEditors.forEach((editor, paneId) => {
+            if (paneId === exceptPaneId) return;
+            const found = this.findNotesPaneNode(this._notesPaneTree, paneId);
+            if (!found || found.node.scope !== scope || found.node.tabId !== tabId) return;
+            if (editor.getData() === content) return;
+            this._notesPaneSyncGuard = true;
+            try {
+                editor.setData(content);
+            } finally {
+                this._notesPaneSyncGuard = false;
+            }
         });
     }
 
@@ -6252,12 +6330,12 @@ class FlowchartViewer {
         }
     }
 
-    closeDrawingOverlay(save) {
+    async closeDrawingOverlay(save) {
         if (!this.drawingOverlay) return;
         const state = this._drawingState;
 
         if (save) {
-            const dataUrl = this.drawingCanvas.toDataURL('image/png');
+            const dataUrl = await this.compressImageDataUrl(this.drawingCanvas.toDataURL('image/png'));
 
             if (state.nodeTarget) {
                 this.pushUndo();
@@ -6822,9 +6900,10 @@ class FlowchartViewer {
                 delBtn.className = 'matrix-tab-delete-btn';
                 delBtn.title = 'Delete this tab';
                 delBtn.textContent = '×';
-                delBtn.addEventListener('click', (e) => {
+                delBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    if (!confirm(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`)) return;
+                    const ok = await this.showConfirmDialog(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`);
+                    if (!ok) return;
                     if (isPugh) this.deletePughMatrixTab(tab.id); else this.deleteMorphMatrixTab(tab.id);
                 });
                 tabEl.appendChild(delBtn);
@@ -8641,6 +8720,78 @@ class FlowchartViewer {
             makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddChild);
             makeRadialBtn(0, topPlusDy, '+', activateAddParent);
         }
+    }
+
+    // A blocking native confirm() turns out to be unreliable in real usage - many
+    // browsers auto-suppress repeated dialogs from the same page (Chrome's own
+    // "Prevent this page from creating additional dialogs" after a few in a row),
+    // and some embedded/kiosk contexts disable them outright - either way it just
+    // silently returns false, so a delete button wired straight to confirm() can
+    // look like it's doing nothing at all with no error and no visible dialog.
+    // This is a real in-page substitute: a small modal built the same
+    // dynamically-created/inline-styled way as showNotification below, resolving
+    // true/false by which button (or Escape/clicking the backdrop) closed it.
+    showConfirmDialog(message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            Object.assign(overlay.style, {
+                position: 'fixed', inset: '0', zIndex: 10000,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+            });
+
+            const box = document.createElement('div');
+            Object.assign(box.style, {
+                background: 'var(--panel-bg, #222833)', color: 'var(--text, #fff)',
+                borderRadius: '8px', padding: '20px', maxWidth: '360px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+            });
+
+            const text = document.createElement('div');
+            text.textContent = message;
+            text.style.marginBottom = '16px';
+            box.appendChild(text);
+
+            const btnRow = document.createElement('div');
+            Object.assign(btnRow.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px' });
+
+            const finish = (result) => {
+                document.removeEventListener('keydown', onKeydown);
+                overlay.remove();
+                resolve(result);
+            };
+            const onKeydown = (e) => {
+                if (e.key === 'Escape') finish(false);
+                if (e.key === 'Enter') finish(true);
+            };
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'Cancel';
+            Object.assign(cancelBtn.style, {
+                background: 'var(--control-bg, #333)', color: 'var(--text, #fff)',
+                border: '1px solid var(--border, #555)', borderRadius: '5px',
+                padding: '6px 14px', cursor: 'pointer',
+            });
+            cancelBtn.addEventListener('click', () => finish(false));
+
+            const okBtn = document.createElement('button');
+            okBtn.textContent = 'Delete';
+            Object.assign(okBtn.style, {
+                background: '#c0392b', color: '#fff', border: 'none',
+                borderRadius: '5px', padding: '6px 14px', cursor: 'pointer',
+            });
+            okBtn.addEventListener('click', () => finish(true));
+
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+            document.addEventListener('keydown', onKeydown);
+
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            box.appendChild(btnRow);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            okBtn.focus();
+        });
     }
 
     showNotification(message, duration = 3000) {
