@@ -449,6 +449,20 @@ body {
     object-fit: contain;
 }
 
+/* CKEditor's default Widget behavior overlays a pair of "insert paragraph
+   before/after" arrow buttons (plus a fake caret) on a selected block widget -
+   intended for things like images sitting mid-document where there's no easy
+   way to click before/after them. For this marker it just clutters a small
+   thumbnail with controls doing nothing visually useful, so hidden entirely;
+   clicking the thumbnail itself still opens the image/drawing as normal (see
+   getNoteMediaMarkerPlugin's editingDowncast), and a new paragraph can still be
+   added the normal way by clicking just outside the widget. !important since
+   ckeditor5.css (which defines these) loads after this stylesheet. */
+#notes-editor-wrap .ck.ck-content .note-media-widget .ck-widget__type-around,
+.notes-editor-wrap-el .ck.ck-content .note-media-widget .ck-widget__type-around {
+    display: none !important;
+}
+
 /* ===== Notes tab bar (global tabs, then this flowchart's own) ===== */
 #notes-tab-bar {
     display: flex;
