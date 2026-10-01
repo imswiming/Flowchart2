@@ -656,6 +656,21 @@ body {
     background: rgba(0, 166, 126, 0.15);
 }
 
+.notes-pane-drag-handle {
+    cursor: grab;
+}
+
+.notes-pane-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Shown on whichever pane a drag is currently over (see buildNotesPaneNode's
+   dragover/drop handlers) - a visible cue for "drop here to swap". */
+.notes-pane-drop-target {
+    outline: 2px solid #00a67e;
+    outline-offset: -2px;
+}
+
 .notes-pane-editor-wrap {
     flex: 1;
     min-height: 0;

@@ -5710,6 +5710,24 @@ class FlowchartViewer {
         this.updateNotesInsertDrawingBtnState();
     }
 
+    // Dragging one pane's handle onto another (see buildNotesPaneNode) trades
+    // which tab/scope each shows - the two regions themselves (their position and
+    // size in the split tree) are untouched, only what's currently displayed in
+    // each one swaps, same idea as swapping two open documents between two
+    // side-by-side windows.
+    swapNotesPanes(paneIdA, paneIdB) {
+        const a = this.findNotesPaneNode(this._notesPaneTree, paneIdA);
+        const b = this.findNotesPaneNode(this._notesPaneTree, paneIdB);
+        if (!a || !b) return;
+        const { scope, tabId } = a.node;
+        a.node.scope = b.node.scope;
+        a.node.tabId = b.node.tabId;
+        b.node.scope = scope;
+        b.node.tabId = tabId;
+        this.renderNotesFullscreen();
+        this.updateNotesInsertDrawingBtnState();
+    }
+
     renderNotesFullscreen() {
         if (!this.notesFullscreenBody) return;
         this.destroyAllNotesPaneEditors();
@@ -5747,9 +5765,40 @@ class FlowchartViewer {
 
         const pane = document.createElement('div');
         pane.className = 'notes-pane';
+        pane.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            pane.classList.add('notes-pane-drop-target');
+        });
+        pane.addEventListener('dragleave', () => {
+            pane.classList.remove('notes-pane-drop-target');
+        });
+        pane.addEventListener('drop', (e) => {
+            e.preventDefault();
+            pane.classList.remove('notes-pane-drop-target');
+            const sourcePaneId = e.dataTransfer.getData('text/plain');
+            if (sourcePaneId && sourcePaneId !== node.paneId) {
+                this.swapNotesPanes(sourcePaneId, node.paneId);
+            }
+        });
 
         const header = document.createElement('div');
         header.className = 'notes-pane-header';
+
+        // Dragging this handle onto another pane swaps the two panes' content
+        // (which tab/editor each shows) - the two regions themselves (position,
+        // size) stay put; only what's currently inside each one trades places.
+        // See swapNotesPanes and the pane's own dragover/drop handlers below.
+        const dragHandle = document.createElement('button');
+        dragHandle.className = 'notes-pane-btn notes-pane-drag-handle';
+        dragHandle.title = 'Drag onto another pane to swap them';
+        dragHandle.textContent = '✥';
+        dragHandle.draggable = true;
+        dragHandle.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', node.paneId);
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        header.appendChild(dragHandle);
 
         const select = document.createElement('select');
         select.className = 'notes-pane-tab-select';
