@@ -616,6 +616,11 @@ create policy "allow all" on flowchart_sync
          whichever notes tab its selector picks, arbitrarily splittable/mergeable. -->
     <div id="notes-fullscreen-overlay" style="display:none; position:fixed; inset:0; z-index:4900; background:var(--bg); flex-direction:column;">
       <div id="notes-fullscreen-header">
+        <div class="notes-fullscreen-zoom-controls">
+          <button id="notes-fullscreen-zoom-out" title="Zoom out">&minus;</button>
+          <span id="notes-fullscreen-zoom-level">100%</span>
+          <button id="notes-fullscreen-zoom-in" title="Zoom in">&plus;</button>
+        </div>
         <div id="notes-fullscreen-title">📝 Notes — Full Screen</div>
         <button id="notes-fullscreen-close-btn" title="Exit Full Screen (Esc)">✕ Exit Full Screen</button>
       </div>

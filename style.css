@@ -181,7 +181,7 @@ body {
     background: var(--control-hover);
 }
 
-#left-panel-zoom-controls {
+#left-panel-zoom-controls, .notes-fullscreen-zoom-controls {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -189,7 +189,7 @@ body {
     font-weight: normal;
 }
 
-#left-panel-zoom-controls button {
+#left-panel-zoom-controls button, .notes-fullscreen-zoom-controls button {
     background: var(--control-bg);
     border: 1px solid var(--border);
     color: var(--text);
@@ -206,11 +206,11 @@ body {
     padding: 0;
 }
 
-#left-panel-zoom-controls button:hover {
+#left-panel-zoom-controls button:hover, .notes-fullscreen-zoom-controls button:hover {
     background: var(--control-hover);
 }
 
-#left-panel-zoom-level {
+#left-panel-zoom-level, #notes-fullscreen-zoom-level {
     font-size: 11px;
     color: var(--muted);
     min-width: 34px;
@@ -431,6 +431,24 @@ body {
     color: var(--muted);
 }
 
+/* An inline [[image:id]]/[[drawing:id]] marker (see getNoteMediaMarkerPlugin) -
+   shown as a small clickable thumbnail in place of the literal bracket text,
+   without changing what's actually saved underneath. */
+#notes-editor-wrap .ck.ck-content .note-media-widget , .notes-editor-wrap-el .ck.ck-content .note-media-widget {
+    display: inline-block;
+    margin: 4px 0;
+}
+
+#notes-editor-wrap .ck.ck-content .note-media-widget-img , .notes-editor-wrap-el .ck.ck-content .note-media-widget-img {
+    display: block;
+    max-width: 220px;
+    max-height: 160px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    object-fit: contain;
+}
+
 /* ===== Notes tab bar (global tabs, then this flowchart's own) ===== */
 #notes-tab-bar {
     display: flex;
@@ -497,6 +515,10 @@ body {
     padding: 8px;
     gap: 8px;
     box-sizing: border-box;
+    /* Same --panel-zoom the embedded view's #notes-panel-body already uses (see
+       setupLeftPanelZoom) - the new top-left zoom control here adjusts the same
+       shared value, so zooming in Full Screen also sticks once you exit it. */
+    zoom: var(--panel-zoom, 1);
 }
 
 .notes-split-container {

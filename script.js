@@ -4243,27 +4243,36 @@ class FlowchartViewer {
         const stored = parseFloat(localStorage.getItem('flowchart-panel-zoom'));
         this.panelZoom = (!isNaN(stored) && stored >= MIN_ZOOM && stored <= MAX_ZOOM) ? stored : 1;
 
+        // Full Screen Notes has its own copy of this same zoom control, top-left in
+        // its header (see index.html) - its button/readout references are looked
+        // up here too so one applyPanelZoom keeps both displays in sync off the
+        // same shared --panel-zoom value, rather than each view tracking its own.
+        const fullscreenZoomOutBtn = document.getElementById('notes-fullscreen-zoom-out');
+        const fullscreenZoomInBtn = document.getElementById('notes-fullscreen-zoom-in');
+        const fullscreenZoomLevel = document.getElementById('notes-fullscreen-zoom-level');
+
         const applyPanelZoom = () => {
             document.documentElement.style.setProperty('--panel-zoom', this.panelZoom);
-            if (this.leftPanelZoomLevel) {
-                this.leftPanelZoomLevel.textContent = Math.round(this.panelZoom * 100) + '%';
-            }
+            const pct = Math.round(this.panelZoom * 100) + '%';
+            if (this.leftPanelZoomLevel) this.leftPanelZoomLevel.textContent = pct;
+            if (fullscreenZoomLevel) fullscreenZoomLevel.textContent = pct;
             localStorage.setItem('flowchart-panel-zoom', String(this.panelZoom));
         };
         applyPanelZoom();
 
-        if (this.leftPanelZoomInBtn) {
-            this.leftPanelZoomInBtn.addEventListener('click', () => {
-                this.panelZoom = Math.min(MAX_ZOOM, Math.round((this.panelZoom + STEP) * 100) / 100);
-                applyPanelZoom();
-            });
-        }
-        if (this.leftPanelZoomOutBtn) {
-            this.leftPanelZoomOutBtn.addEventListener('click', () => {
-                this.panelZoom = Math.max(MIN_ZOOM, Math.round((this.panelZoom - STEP) * 100) / 100);
-                applyPanelZoom();
-            });
-        }
+        const zoomIn = () => {
+            this.panelZoom = Math.min(MAX_ZOOM, Math.round((this.panelZoom + STEP) * 100) / 100);
+            applyPanelZoom();
+        };
+        const zoomOut = () => {
+            this.panelZoom = Math.max(MIN_ZOOM, Math.round((this.panelZoom - STEP) * 100) / 100);
+            applyPanelZoom();
+        };
+
+        if (this.leftPanelZoomInBtn) this.leftPanelZoomInBtn.addEventListener('click', zoomIn);
+        if (this.leftPanelZoomOutBtn) this.leftPanelZoomOutBtn.addEventListener('click', zoomOut);
+        if (fullscreenZoomInBtn) fullscreenZoomInBtn.addEventListener('click', zoomIn);
+        if (fullscreenZoomOutBtn) fullscreenZoomOutBtn.addEventListener('click', zoomOut);
     }
 
     // Wires up the left-panel tab switcher. Called once from the constructor.
@@ -4815,7 +4824,8 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin()],
+            noteMediaMarkerApp: this,
             // Only paragraph/heading4 ("Title") are offered - matches the old
             // Tiptap config (StarterKit's heading restricted to level 4 only).
             heading: {
@@ -5253,6 +5263,115 @@ class FlowchartViewer {
         return false;
     }
 
+    // The actual pixels for a [[type:id]] marker - shared by the media strip and
+    // by the inline widget plugin below.
+    getNotesMediaSrc(type, id) {
+        if (type === 'drawing') {
+            const d = this.notesDrawings && this.notesDrawings[id];
+            return d ? d.dataUrl : '';
+        }
+        const img = this.notesImages && this.notesImages[id];
+        return img ? (img.dataUrl || img.url) : '';
+    }
+
+    // A custom CKEditor plugin, built once per page load and reused by every
+    // editor instance (embedded and every full-screen pane - see renderNotesPanel
+    // and createNotesPaneEditor), that makes a [[image:id]]/[[drawing:id]] marker
+    // show as an actual inline thumbnail while editing instead of literal bracket
+    // text - without changing what's actually stored. The three conversion
+    // directions do different jobs:
+    //  - upcast: loading saved HTML - recognizes a <p> whose entire text is one
+    //    marker and turns it into a real model element instead of a plain
+    //    paragraph of text (a non-matching <p> returns null, falling through to
+    //    the default paragraph converter).
+    //  - dataDowncast: model -> the HTML string that gets saved/synced - turns
+    //    that model element right back into the exact same "<p>[[type:id]]</p>"
+    //    text, so the saved format (and everything that already text-scans it -
+    //    getNotesMediaMarkers/renderNotesMediaStrip - as well as Cloud Sync's
+    //    payload size) is completely unchanged.
+    //  - editingDowncast: model -> what's actually shown on screen - a small
+    //    non-editable widget with an <img> thumbnail, clickable to open the
+    //    lightbox (or the drawing editor), which is the part that's actually new.
+    getNoteMediaMarkerPlugin() {
+        if (this._NoteMediaMarkerPlugin) return this._NoteMediaMarkerPlugin;
+        const { Plugin, Widget, toWidget } = window.CKEDITOR;
+
+        class NoteMediaMarkerPlugin extends Plugin {
+            static get pluginName() { return 'NoteMediaMarker'; }
+            static get requires() { return [Widget]; }
+
+            init() {
+                const editor = this.editor;
+                const app = editor.config.get('noteMediaMarkerApp');
+
+                editor.model.schema.register('noteMediaMarker', {
+                    isObject: true,
+                    allowWhere: '$block',
+                    allowAttributes: ['mediaType', 'mediaId'],
+                });
+
+                editor.conversion.for('upcast').elementToElement({
+                    view: { name: 'p' },
+                    model: (viewElement, { writer }) => {
+                        const text = Array.from(viewElement.getChildren())
+                            .map(c => (c.is && c.is('$text')) ? c.data : '')
+                            .join('');
+                        const m = text.trim().match(/^\[\[(image|drawing):([a-zA-Z0-9_-]+)\]\]$/);
+                        if (!m) return null;
+                        return writer.createElement('noteMediaMarker', { mediaType: m[1], mediaId: m[2] });
+                    },
+                    converterPriority: 'high',
+                });
+
+                editor.conversion.for('dataDowncast').elementToElement({
+                    model: 'noteMediaMarker',
+                    view: (modelElement, { writer }) => {
+                        const type = modelElement.getAttribute('mediaType');
+                        const id = modelElement.getAttribute('mediaId');
+                        const p = writer.createContainerElement('p');
+                        writer.insert(writer.createPositionAt(p, 0), writer.createText(`[[${type}:${id}]]`));
+                        return p;
+                    },
+                });
+
+                editor.conversion.for('editingDowncast').elementToElement({
+                    model: 'noteMediaMarker',
+                    view: (modelElement, { writer }) => {
+                        const type = modelElement.getAttribute('mediaType');
+                        const id = modelElement.getAttribute('mediaId');
+                        const src = app ? app.getNotesMediaSrc(type, id) : '';
+                        const container = writer.createContainerElement('div', {
+                            class: 'note-media-widget',
+                            title: type === 'drawing' ? 'Click to edit drawing' : 'Click to view image',
+                        });
+                        // createRawElement's own `attributes` param is only read for
+                        // view-level diffing, not actually applied to the real DOM node -
+                        // a raw element is "raw" precisely because nothing but this
+                        // render callback ever touches its DOM, so src has to be set
+                        // here explicitly or the <img> stays attribute-less.
+                        const img = writer.createRawElement('img', {
+                            class: 'note-media-widget-img',
+                        }, (domElement) => {
+                            domElement.setAttribute('src', src || '');
+                            domElement.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (!app) return;
+                                if (type === 'drawing') app.editNotesDrawing(id);
+                                else app.openNotesImageLightbox(src);
+                            });
+                        });
+                        writer.insert(writer.createPositionAt(container, 0), img);
+                        return toWidget(container, writer, { label: type === 'drawing' ? 'drawing' : 'image' });
+                    },
+                });
+            }
+        }
+
+        this._NoteMediaMarkerPlugin = NoteMediaMarkerPlugin;
+        return this._NoteMediaMarkerPlugin;
+    }
+
     // Shared by the drawing tool - drops a [[type:id]] marker on its own line at
     // wherever the cursor last was, then re-renders so the preview strip picks it
     // up. Targets whichever editor/tab was captured by startNewNotesDrawing (the
@@ -5267,6 +5386,22 @@ class FlowchartViewer {
             const viewFragment = editor.data.processor.toView(`<p>${marker}</p>`);
             const modelFragment = editor.data.toModel(viewFragment);
             editor.model.insertContent(modelFragment);
+            // The editingDowncast conversion that runs as *part of* insertContent
+            // (see getNoteMediaMarkerPlugin) is unreliable about actually seeing
+            // this.notesImages[id] (set a line above, in every caller, before this
+            // runs) and can leave the widget's <img> with an empty src - and
+            // editor.editing.reconvertItem() on the freshly-inserted element,
+            // tried first, didn't reliably force a real re-render either. This
+            // reaches past the conversion pipeline entirely and sets the actual
+            // DOM attribute directly, using the same src this function already
+            // has in scope - a blunter fix, but a deterministic one.
+            const insertedElement = editor.model.document.selection.getSelectedElement();
+            if (insertedElement && insertedElement.is('element', 'noteMediaMarker')) {
+                const viewElement = editor.editing.mapper.toViewElement(insertedElement);
+                const domElement = viewElement && editor.editing.view.domConverter.mapViewToDom(viewElement);
+                const imgEl = domElement && domElement.querySelector('img');
+                if (imgEl) imgEl.setAttribute('src', this.getNotesMediaSrc(type, id) || '');
+            }
             const newContent = editor.getData();
             const tab = this.getNotesTab(target.scope, target.tabId);
             if (tab) tab.content = newContent;
@@ -5735,7 +5870,8 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin()],
+            noteMediaMarkerApp: this,
             heading: {
                 options: [
                     { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
