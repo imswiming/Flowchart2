@@ -2002,6 +2002,13 @@ class FlowchartViewer {
     // child's top edge stays constant everywhere - including under a node whose
     // own box grew, whose entire subtree needs to shift down by that same growth
     // to preserve every gap below it, not just the immediate parent-child one.
+    // Every node at the same depth shares one row position, computed from
+    // whichever node in that row (or the row above) actually needs the most
+    // room - not each node positioned independently from its own parent, which
+    // let two siblings at the same depth land at different heights whenever one
+    // had a taller box than the other (sibling A's row depending only on A's own
+    // height, sibling B's only on B's), breaking the rule that same-hierarchy
+    // nodes always line up in the same row.
     applyPrimaryAxisSpacing(root, primarySpacing) {
         const orientation = this.orientation;
         // In LR mode the depth axis runs through each box's fixed width, not its
@@ -2013,11 +2020,19 @@ class FlowchartViewer {
         const bottomExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._bottomExtent != null ? d._bottomExtent : DEFAULT_EXTENT);
         const topExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._topExtent != null ? d._topExtent : DEFAULT_EXTENT);
 
-        root.y = 0;
+        const byDepth = [];
         root.each(d => {
-            if (!d.parent) return;
-            d.y = d.parent.y + bottomExtent(d.parent) + gap + topExtent(d);
+            (byDepth[d.depth] || (byDepth[d.depth] = [])).push(d);
         });
+
+        const rowY = [0];
+        for (let depth = 1; depth < byDepth.length; depth++) {
+            const prevMaxBottom = Math.max(...byDepth[depth - 1].map(bottomExtent));
+            const curMaxTop = Math.max(...byDepth[depth].map(topExtent));
+            rowY[depth] = rowY[depth - 1] + prevMaxBottom + gap + curMaxTop;
+        }
+
+        root.each(d => { d.y = rowY[d.depth]; });
     }
 
     togglePlaceholders() {
