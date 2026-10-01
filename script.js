@@ -233,6 +233,17 @@ class FlowchartViewer {
         this.setupDrawingOverlay();
         this.setupNotesFullscreen();
 
+        // Persisting a Notes edit normally waits for a blur (see autosave() call
+        // sites in the editor setup) - reloading, closing the tab, or navigating
+        // away while a Notes editor still has focus can beat that blur, silently
+        // dropping whatever was just typed. in-memory tab .content is always
+        // current (every editor's change:data listener updates it on every
+        // keystroke, not just on blur), so this just has to persist it one more
+        // time on the way out, regardless of whether a blur got there first.
+        window.addEventListener('beforeunload', () => {
+            if (this._pendingNotesSave) this.autosave();
+        });
+
         this.orientation = 'TB';
         this.lrNodeSpacing = 150;
         this.tbNodeSpacing = 150;
@@ -1915,6 +1926,98 @@ class FlowchartViewer {
     applyIndentedLayout(root, secondarySpacing, primarySpacing) {
         this.computeIndentedContour(root, secondarySpacing);
         this.assignIndentedPositions(root, 0, 0, primarySpacing);
+    }
+
+    // Measures each node's wrapped text (and photo, if any) to get its real
+    // on-screen box extents, stashed as d._topExtent/d._bottomExtent - the same
+    // quantities the main render computes later (as cappedHalfHeight/boxTop+
+    // totalBoxHeight there), just available earlier, before layout runs, so
+    // applyPrimaryAxisSpacing can space rows by actual box size instead of
+    // assuming every node is one line tall. Mirrors the "top edge pinned past 5
+    // lines, only the bottom keeps growing" rule from the main render exactly,
+    // so a tall node's extra height pushes its children down by however much its
+    // own bottom edge actually grew, not by the much smaller amount its capped
+    // top edge did.
+    measureNodeBoxHeights(root) {
+        const NODE_WIDTH = this.NODE_WIDTH;
+        const LINE_HEIGHT = 18;
+        const PADDING_Y = 12;
+        const FONT_SIZE = 13;
+        const FONT_FAMILY = 'Arial, sans-serif';
+        const PHOTO_H = 30;
+        const PHOTO_GAP = 6;
+        const PHOTO_FILL_HEIGHT = this.PHOTO_FILL_HEIGHT;
+        const MAX_CENTERED_LINES = 5;
+
+        const tempSvg = d3.select('body').append('svg')
+            .attr('style', 'position:absolute;left:-9999px;top:-9999px');
+        const tempText = tempSvg.append('text')
+            .attr('font-size', FONT_SIZE)
+            .attr('font-family', FONT_FAMILY);
+        const measureTextWidth = (text) => {
+            tempText.text(text);
+            return tempText.node().getComputedTextLength();
+        };
+
+        root.each(d => {
+            const rawName = d.data.name || '';
+            // Matches the main render's own capitalize-first-letter mutation
+            // (harmless to run twice - idempotent) so this wraps against the
+            // exact same text the main render will.
+            if (rawName) {
+                d.data.name = rawName.replace(/^\s*\S/, ch => ch.toUpperCase());
+            }
+            const words = (d.data.name || '').split(/(\s+)/);
+            let lines = [];
+            let current = '';
+            words.forEach(word => {
+                const testLine = (current + word).trim();
+                if (testLine && measureTextWidth(testLine) > NODE_WIDTH - 16) {
+                    if (current) lines.push(current.trim());
+                    current = word.trim();
+                } else {
+                    current += word;
+                }
+            });
+            if (current.trim()) lines.push(current.trim());
+            const finalLines = lines.length ? lines : [d.data.name || ''];
+
+            const isPhotoFillNode = Boolean(d.data._nodePhotoUrl) && !(d.data.name || '').trim();
+            const photoExtra = (d.data._nodePhotoUrl && !isPhotoFillNode) ? (PHOTO_H + PHOTO_GAP) : 0;
+            const totalBoxHeight = isPhotoFillNode ? PHOTO_FILL_HEIGHT : (finalLines.length * LINE_HEIGHT + PADDING_Y + photoExtra);
+            const cappedHalfHeight = isPhotoFillNode
+                ? PHOTO_FILL_HEIGHT / 2
+                : (Math.min(finalLines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra) / 2;
+
+            d._topExtent = cappedHalfHeight;
+            d._bottomExtent = -cappedHalfHeight + totalBoxHeight;
+        });
+
+        tempSvg.remove();
+    }
+
+    // Overrides the depth-axis position d3 (or the indented layout) assigned each
+    // node, recomputing it parent-first from real box sizes (see
+    // measureNodeBoxHeights) so the gap between a parent's bottom edge and its
+    // child's top edge stays constant everywhere - including under a node whose
+    // own box grew, whose entire subtree needs to shift down by that same growth
+    // to preserve every gap below it, not just the immediate parent-child one.
+    applyPrimaryAxisSpacing(root, primarySpacing) {
+        const orientation = this.orientation;
+        // In LR mode the depth axis runs through each box's fixed width, not its
+        // (variable) height, so this collapses back to the old constant
+        // per-depth spacing - only TB, where the depth axis runs through the
+        // variable height, actually changes behavior.
+        const DEFAULT_EXTENT = orientation === 'LR' ? (this.NODE_WIDTH / 2) : ((18 + 12) / 2);
+        const gap = primarySpacing - DEFAULT_EXTENT * 2;
+        const bottomExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._bottomExtent != null ? d._bottomExtent : DEFAULT_EXTENT);
+        const topExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._topExtent != null ? d._topExtent : DEFAULT_EXTENT);
+
+        root.y = 0;
+        root.each(d => {
+            if (!d.parent) return;
+            d.y = d.parent.y + bottomExtent(d.parent) + gap + topExtent(d);
+        });
     }
 
     togglePlaceholders() {
@@ -5665,6 +5768,16 @@ class FlowchartViewer {
 
     closeNotesFullscreen() {
         if (!this.notesFullscreenOverlay) return;
+        // Every pane's change:data listener already keeps its tab's .content
+        // current on every keystroke (not debounced), but actually *persisting*
+        // that to localStorage only happens via autosave(), gated behind
+        // CKEditor's FocusTracker noticing a blur - which it debounces, so
+        // clicking Exit Full Screen can call editor.destroy() on a pane before
+        // that debounced blur callback (and so autosave()) ever runs, silently
+        // dropping whatever was typed right before closing. Flushing explicitly
+        // here, before any editor is destroyed, closes that gap regardless of
+        // the exact blur timing.
+        this.autosave();
         this.destroyAllNotesPaneEditors();
         this.notesFullscreenOverlay.style.display = 'none';
         // Whatever was edited in any pane already wrote straight back into the
@@ -8511,9 +8624,11 @@ class FlowchartViewer {
         const root = d3.hierarchy(this.rootData, childrenAccessor);
         this._lastRenderedRoot = root;
 
+        this.measureNodeBoxHeights(root);
+        const primarySpacing = this.orientation === 'LR' ? 160 : this.tbVerticalSpacing;
+
         if (this.arrangement === 'indented') {
             const secondarySpacing = this.orientation === 'LR' ? this.lrNodeSpacing : this.tbHorizontalSpacing;
-            const primarySpacing = this.orientation === 'LR' ? 160 : this.tbVerticalSpacing;
             this.applyIndentedLayout(root, secondarySpacing, primarySpacing);
         } else {
             const treeLayout = d3.tree()
@@ -8526,6 +8641,8 @@ class FlowchartViewer {
                 .separation(() => 1);
             treeLayout(root);
         }
+
+        this.applyPrimaryAxisSpacing(root, primarySpacing);
 
         if (this.orientation === 'LR') {
             root.each(node => {
