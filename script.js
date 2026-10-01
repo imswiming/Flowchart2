@@ -5590,18 +5590,74 @@ class FlowchartViewer {
         return `pane-${this._notesPaneIdCounter}`;
     }
 
+    saveNotesPaneLayout() {
+        try {
+            localStorage.setItem('flowchart-notes-pane-layout', JSON.stringify(this._notesPaneTree));
+        } catch (err) { /* ignore (e.g. storage quota) */ }
+    }
+
+    // Checks a saved pane tree still makes sense to restore - every leaf's
+    // (scope, tabId) has to resolve to a tab that still actually exists (a
+    // per-flowchart tab from whichever flowchart was open last time stops
+    // existing the moment you've switched to a different one), and every split
+    // needs exactly two children. Returns null (don't restore anything) rather
+    // than a best-effort partial tree if anything about the saved shape is off.
+    validateNotesPaneTree(node) {
+        if (!node || typeof node !== 'object') return null;
+        if (node.type === 'leaf') {
+            if (typeof node.paneId !== 'string' || !node.paneId) return null;
+            const scope = node.scope === 'global' ? 'global' : 'chart';
+            if (!this.getNotesTab(scope, node.tabId)) return null;
+            return { type: 'leaf', paneId: node.paneId, scope, tabId: node.tabId };
+        }
+        if (node.type === 'split') {
+            if (!Array.isArray(node.children) || node.children.length !== 2) return null;
+            const a = this.validateNotesPaneTree(node.children[0]);
+            const b = this.validateNotesPaneTree(node.children[1]);
+            if (!a || !b) return null;
+            const direction = node.direction === 'column' ? 'column' : 'row';
+            const ratio = (typeof node.ratio === 'number' && node.ratio > 0 && node.ratio < 1) ? node.ratio : 0.5;
+            return { type: 'split', direction, ratio, children: [a, b] };
+        }
+        return null;
+    }
+
+    // Restores the split layout from last time Full Screen was open, if there's
+    // one saved and it still validates - otherwise returns null and
+    // openNotesFullscreen falls back to a single fresh pane, same as before this
+    // existed.
+    loadNotesPaneLayout() {
+        const raw = this.loadJSONFromStorage('flowchart-notes-pane-layout', null);
+        const validated = raw ? this.validateNotesPaneTree(raw) : null;
+        if (!validated) return null;
+        // Bump the id counter past anything already used in the restored tree,
+        // so a pane split off after restoring never collides with one of these.
+        let maxNum = 0;
+        const scan = (node) => {
+            if (node.type === 'leaf') {
+                const m = /^pane-(\d+)$/.exec(node.paneId);
+                if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
+            } else {
+                node.children.forEach(scan);
+            }
+        };
+        scan(validated);
+        this._notesPaneIdCounter = Math.max(this._notesPaneIdCounter || 0, maxNum);
+        return validated;
+    }
+
     openNotesFullscreen() {
         if (!this.notesFullscreenOverlay) return;
-        this._notesPaneTree = {
+        this._notesPaneTree = this.loadNotesPaneLayout() || {
             type: 'leaf',
             paneId: this.nextNotesPaneId(),
             scope: this._activeNotesScope,
             tabId: this.getActiveNotesTabId(this._activeNotesScope)
         };
-        // The only pane there is starts out "focused" as far as the toolbar's
-        // concerned, so it works immediately without requiring an explicit click
-        // into a pane first.
-        this._activeFullscreenPaneId = this._notesPaneTree.paneId;
+        // Whichever pane is first in the restored (or fresh) tree starts out
+        // "focused" as far as the toolbar's concerned, so it works immediately
+        // without requiring an explicit click into a pane first.
+        this._activeFullscreenPaneId = this.findFirstNotesLeafPaneId(this._notesPaneTree);
         this.notesFullscreenOverlay.style.display = 'flex';
         this.renderNotesFullscreen();
         this.updateNotesInsertDrawingBtnState();
@@ -5652,6 +5708,7 @@ class FlowchartViewer {
             this._notesPaneTree = splitNode;
         }
         this.renderNotesFullscreen();
+        this.saveNotesPaneLayout();
     }
 
     // Closing a pane merges its space back into its sibling: the parent split node
@@ -5695,6 +5752,7 @@ class FlowchartViewer {
         }
         this.renderNotesFullscreen();
         this.updateNotesInsertDrawingBtnState();
+        this.saveNotesPaneLayout();
     }
 
     findFirstNotesLeafPaneId(tree) {
@@ -5708,6 +5766,7 @@ class FlowchartViewer {
         found.node.tabId = tabId;
         this.renderNotesFullscreen();
         this.updateNotesInsertDrawingBtnState();
+        this.saveNotesPaneLayout();
     }
 
     // Dragging one pane's handle onto another (see buildNotesPaneNode) trades
@@ -5726,6 +5785,7 @@ class FlowchartViewer {
         b.node.tabId = tabId;
         this.renderNotesFullscreen();
         this.updateNotesInsertDrawingBtnState();
+        this.saveNotesPaneLayout();
     }
 
     renderNotesFullscreen() {
@@ -5881,6 +5941,7 @@ class FlowchartViewer {
             divider.classList.remove('notes-split-divider-active');
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            this.saveNotesPaneLayout();
         };
         divider.addEventListener('mousedown', (e) => {
             e.preventDefault();
