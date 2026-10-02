@@ -3725,6 +3725,8 @@ class FlowchartViewer {
             this._pughPanelActive = false;
         } else if (this._leftPanelMode === 'morph') {
             this._morphPanelActive = false;
+        } else if (this._leftPanelMode === 'notes') {
+            this._notesTabActive = false;
         } else {
             this._reflectionPanelActive = false;
         }

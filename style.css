@@ -1833,6 +1833,19 @@ body {
     flex-shrink: 0;
 }
 
+/* As a flex item of #notes-panel-header-row, .notes-toolbar-row's default
+   min-width:auto lets it size to its own unwrapped max-content width (fitting
+   every button on one line) rather than shrinking to the row actually
+   available - so its own flex-wrap above never had room to do anything,
+   and it just overflowed its container instead of wrapping, on narrow
+   (mobile) widths. Only scoped to the embedded panel's header - the
+   full-screen header's copy (see #notes-fullscreen-header .notes-toolbar-row)
+   deliberately stays shrink-to-fit so margin-left:auto can push it right. */
+#notes-panel-header-row .notes-toolbar-row {
+    width: 100%;
+    min-width: 0;
+}
+
 /* Shared by every Notes toolbar button (Insert Drawing/Checklist/Title/
    Highlight/Outdent/Indent) - identical look whether it's in the embedded
    panel's header or the full-screen view's toolbar (see buildNotesToolbar). */
