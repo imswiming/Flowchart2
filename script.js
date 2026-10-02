@@ -4998,6 +4998,11 @@ class FlowchartViewer {
             // outdentNotesLine), so editor.ui.view.toolbar.element is
             // deliberately never inserted into the page.
             this.notesEditor = editor;
+            // A live reference the NoteMediaMarker plugin reads directly (see
+            // getNoteMediaMarkerPlugin) - config.noteMediaMarkerApp above is only
+            // for the plugin's very first (pre-interactive) conversion pass, since
+            // editor.config.get() deep-clones its value on every read.
+            editor.notesApp = this;
 
             // Tab/Shift+Tab indent/outdent the current line - same commands as
             // the Indent/Outdent buttons. CKEditor's List plugin doesn't bind
@@ -5450,7 +5455,19 @@ class FlowchartViewer {
 
             init() {
                 const editor = this.editor;
-                const app = editor.config.get('noteMediaMarkerApp');
+                // CKEditor's Config deep-clones every value passed through it on
+                // every single get() (see Config._getFromSource) to keep its
+                // internal state immutable from outside mutation - fine for plain
+                // config values, but it means even a *fresh* get() call here would
+                // hand back a disposable snapshot of the *entire app instance*,
+                // notesImages included: reading from it is harmless, but calling an
+                // action method (editNotesDrawing) on it would run with `this`
+                // bound to that throwaway clone, silently losing any state it
+                // mutates. editor.notesApp (set once the editor's .create() promise
+                // resolves - see renderNotesPanel/createNotesPaneEditor) is the
+                // real, live app and always wins once it exists; the config value
+                // only covers the brief pre-interactive window before that.
+                const getApp = () => editor.notesApp || editor.config.get('noteMediaMarkerApp');
 
                 editor.model.schema.register('noteMediaMarker', {
                     isObject: true,
@@ -5487,7 +5504,7 @@ class FlowchartViewer {
                     view: (modelElement, { writer }) => {
                         const type = modelElement.getAttribute('mediaType');
                         const id = modelElement.getAttribute('mediaId');
-                        const src = app ? app.getNotesMediaSrc(type, id) : '';
+                        const src = getApp().getNotesMediaSrc(type, id);
                         const container = writer.createContainerElement('div', {
                             class: 'note-media-widget',
                             title: type === 'drawing' ? 'Click to edit drawing' : 'Click to view image',
@@ -5504,9 +5521,15 @@ class FlowchartViewer {
                             domElement.addEventListener('click', (e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                if (!app) return;
+                                // Re-fetches the app (see getApp above) instead of reusing
+                                // `src` from this closure - that capture can still be
+                                // empty for a just-pasted image (the same clone-snapshot
+                                // issue getApp works around), and unlike the <img> tag
+                                // (patched after insertion - see insertNotesMediaMarker)
+                                // this handler has no other chance to pick up the real src.
+                                const app = getApp();
                                 if (type === 'drawing') app.editNotesDrawing(id);
-                                else app.openNotesImageLightbox(src);
+                                else app.openNotesImageLightbox(app.getNotesMediaSrc(type, id) || src);
                             });
                         });
                         writer.insert(writer.createPositionAt(container, 0), img);
@@ -6161,6 +6184,8 @@ class FlowchartViewer {
                 return;
             }
             this._notesPaneEditors.set(node.paneId, editor);
+            // See renderNotesPanel's own editor.notesApp assignment - same reason.
+            editor.notesApp = this;
             editor.model.document.on('change:data', () => {
                 // A setData() call from syncNotesPanesShowingTab below (propagating
                 // some OTHER pane's edit into this one) fires this same event -
