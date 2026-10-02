@@ -8202,7 +8202,16 @@ class FlowchartViewer {
                 } else {
                     delete node.color;
                 }
-                
+
+                // "[color=empty]" marks a placeholder "add new" stub (see
+                // createPlaceholderNode), but isPlaceholderNodeData checks the explicit
+                // _isPlaceholder flag, not color - without this, "Hide Placeholders"
+                // (and everything else gated on that flag) silently does nothing for
+                // every stub in an AI-imported tree.
+                if (!name.trim() && color === this.getPlaceholderColor()) {
+                    node._isPlaceholder = true;
+                }
+
                 if (node.children) {
                     node.children.forEach(child => applyColors(child));
                 }
