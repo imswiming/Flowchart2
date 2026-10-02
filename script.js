@@ -6186,6 +6186,24 @@ class FlowchartViewer {
             this._notesPaneEditors.set(node.paneId, editor);
             // See renderNotesPanel's own editor.notesApp assignment - same reason.
             editor.notesApp = this;
+            // Mirrors renderNotesPanel's own clipboardInput listener (see there for
+            // why only image data is intercepted) - a full-screen pane never had
+            // one of its own, so pasting an image into one fell straight through to
+            // CKEditor's default handling, which quietly drops it (no Image plugin
+            // is loaded). insertNotesMediaMarker (called from inside
+            // handleNotesPaste, after the image finishes loading) targets
+            // _notesDrawingInsertTarget when set, so pin it to this exact pane
+            // first - otherwise it would fall back to getActiveNotesTarget() and
+            // could land in whichever pane was merely focused last.
+            editor.editing.view.document.on('clipboardInput', (evt, data) => {
+                if (node.scope === 'global') return;
+                this._notesDrawingInsertTarget = { editor, scope: node.scope, tabId: node.tabId };
+                if (this.handleNotesPaste(data.dataTransfer)) {
+                    evt.stop();
+                } else {
+                    this._notesDrawingInsertTarget = null;
+                }
+            });
             editor.model.document.on('change:data', () => {
                 // A setData() call from syncNotesPanesShowingTab below (propagating
                 // some OTHER pane's edit into this one) fires this same event -
