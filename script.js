@@ -1948,6 +1948,7 @@ class FlowchartViewer {
         const PHOTO_GAP = 6;
         const PHOTO_FILL_HEIGHT = this.PHOTO_FILL_HEIGHT;
         const MAX_CENTERED_LINES = 5;
+        const WIDTH_STEP = 20;
 
         const tempSvg = d3.select('body').append('svg')
             .attr('style', 'position:absolute;left:-9999px;top:-9999px');
@@ -1959,6 +1960,23 @@ class FlowchartViewer {
             return tempText.node().getComputedTextLength();
         };
 
+        const wrapAtWidth = (name, width) => {
+            const words = (name || '').split(/(\s+)/);
+            let lines = [];
+            let current = '';
+            words.forEach(word => {
+                const testLine = (current + word).trim();
+                if (testLine && measureTextWidth(testLine) > width - 16) {
+                    if (current) lines.push(current.trim());
+                    current = word.trim();
+                } else {
+                    current += word;
+                }
+            });
+            if (current.trim()) lines.push(current.trim());
+            return lines.length ? lines : [name || ''];
+        };
+
         root.each(d => {
             const rawName = d.data.name || '';
             // Matches the main render's own capitalize-first-letter mutation
@@ -1967,20 +1985,17 @@ class FlowchartViewer {
             if (rawName) {
                 d.data.name = rawName.replace(/^\s*\S/, ch => ch.toUpperCase());
             }
-            const words = (d.data.name || '').split(/(\s+)/);
-            let lines = [];
-            let current = '';
-            words.forEach(word => {
-                const testLine = (current + word).trim();
-                if (testLine && measureTextWidth(testLine) > NODE_WIDTH - 16) {
-                    if (current) lines.push(current.trim());
-                    current = word.trim();
-                } else {
-                    current += word;
-                }
-            });
-            if (current.trim()) lines.push(current.trim());
-            const finalLines = lines.length ? lines : [d.data.name || ''];
+            // Past MAX_CENTERED_LINES, growing the box wider (instead of just
+            // taller) keeps it from getting disproportionately tall - the box
+            // widens only as much as it takes to fit the text back within the
+            // line cap.
+            let boxWidth = NODE_WIDTH;
+            let finalLines = wrapAtWidth(d.data.name, boxWidth);
+            while (finalLines.length > MAX_CENTERED_LINES) {
+                boxWidth += WIDTH_STEP;
+                finalLines = wrapAtWidth(d.data.name, boxWidth);
+            }
+            d._boxWidth = boxWidth;
 
             const isPhotoFillNode = Boolean(d.data._nodePhotoUrl) && !(d.data.name || '').trim();
             const photoExtra = (d.data._nodePhotoUrl && !isPhotoFillNode) ? (PHOTO_H + PHOTO_GAP) : 0;
@@ -2002,13 +2017,13 @@ class FlowchartViewer {
     // child's top edge stays constant everywhere - including under a node whose
     // own box grew, whose entire subtree needs to shift down by that same growth
     // to preserve every gap below it, not just the immediate parent-child one.
-    // Every node at the same depth shares one row position, computed from
-    // whichever node in that row (or the row above) actually needs the most
-    // room - not each node positioned independently from its own parent, which
-    // let two siblings at the same depth land at different heights whenever one
-    // had a taller box than the other (sibling A's row depending only on A's own
-    // height, sibling B's only on B's), breaking the rule that same-hierarchy
-    // nodes always line up in the same row.
+    // Every set of siblings shares one row position, computed only from their
+    // own parent's box and their own heights - not each node positioned
+    // independently from its own parent alone (which let two siblings land at
+    // different heights whenever one had a taller box), and not one shared row
+    // per depth across the *entire* tree (which let an unrelated branch's tall
+    // node push down every other branch's row at that same depth too). Each
+    // parent's children are only ever aligned with each other.
     applyPrimaryAxisSpacing(root, primarySpacing) {
         const orientation = this.orientation;
         // In LR mode the depth axis runs through each box's fixed width, not its
@@ -2020,19 +2035,14 @@ class FlowchartViewer {
         const bottomExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._bottomExtent != null ? d._bottomExtent : DEFAULT_EXTENT);
         const topExtent = d => orientation === 'LR' ? (this.NODE_WIDTH / 2) : (d._topExtent != null ? d._topExtent : DEFAULT_EXTENT);
 
-        const byDepth = [];
-        root.each(d => {
-            (byDepth[d.depth] || (byDepth[d.depth] = [])).push(d);
-        });
-
-        const rowY = [0];
-        for (let depth = 1; depth < byDepth.length; depth++) {
-            const prevMaxBottom = Math.max(...byDepth[depth - 1].map(bottomExtent));
-            const curMaxTop = Math.max(...byDepth[depth].map(topExtent));
-            rowY[depth] = rowY[depth - 1] + prevMaxBottom + gap + curMaxTop;
-        }
-
-        root.each(d => { d.y = rowY[d.depth]; });
+        const assignRow = (node, y) => {
+            node.y = y;
+            if (node.children && node.children.length) {
+                const childY = y + bottomExtent(node) + gap + Math.max(...node.children.map(topExtent));
+                node.children.forEach(child => assignRow(child, childY));
+            }
+        };
+        assignRow(root, 0);
     }
 
     togglePlaceholders() {
@@ -3282,31 +3292,43 @@ class FlowchartViewer {
         };
 
         const rawName = selectedData.name || '';
-        const words = rawName.split(/(\s+)/);
-        let lines = [];
-        let current = '';
-        words.forEach(word => {
-            const testLine = (current + word).trim();
-            if (testLine && measureTextWidth(testLine) > NODE_WIDTH - 16) {
-                if (current) lines.push(current.trim());
-                current = word.trim();
-            } else {
-                current += word;
-            }
-        });
-        if (current.trim()) lines.push(current.trim());
-        const finalLines = lines.length ? lines : [rawName || ''];
+        const wrapAtWidth = (width) => {
+            const words = rawName.split(/(\s+)/);
+            let lines = [];
+            let current = '';
+            words.forEach(word => {
+                const testLine = (current + word).trim();
+                if (testLine && measureTextWidth(testLine) > width - 16) {
+                    if (current) lines.push(current.trim());
+                    current = word.trim();
+                } else {
+                    current += word;
+                }
+            });
+            if (current.trim()) lines.push(current.trim());
+            return lines.length ? lines : [rawName || ''];
+        };
+
+        // Mirrors the same MAX_CENTERED_LINES box-growth-then-widen handling as
+        // the main renderFlowchart rendering (see there for the full
+        // explanation) - kept in sync so a text edit patched in place mid-gesture
+        // doesn't jump to a differently-shaped box once the real renderFlowchart
+        // runs at gesture end.
+        const MAX_CENTERED_LINES = 5;
+        const WIDTH_STEP = 20;
+        let boxWidth = NODE_WIDTH;
+        let finalLines = wrapAtWidth(boxWidth);
+        while (finalLines.length > MAX_CENTERED_LINES) {
+            boxWidth += WIDTH_STEP;
+            finalLines = wrapAtWidth(boxWidth);
+        }
+        d._boxWidth = boxWidth;
         d._lines = finalLines;
 
         const PHOTO_H = 30;
         const PHOTO_GAP = 6;
         const photoExtra = selectedData._nodePhotoUrl ? (PHOTO_H + PHOTO_GAP) : 0;
 
-        // Mirrors the same MAX_CENTERED_LINES box-growth handling as the main
-        // renderFlowchart rendering (see there for the full explanation) - kept
-        // in sync so a text edit patched in place mid-gesture doesn't jump to a
-        // differently-shaped box once the real renderFlowchart runs at gesture end.
-        const MAX_CENTERED_LINES = 5;
         const rectHeight = finalLines.length * LINE_HEIGHT + PADDING_Y + photoExtra;
         const cappedHalfHeight = (Math.min(finalLines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra) / 2;
         const boxTop = -cappedHalfHeight;
@@ -3314,6 +3336,8 @@ class FlowchartViewer {
 
         const g = d3.select(targetEl);
         g.select('rect')
+            .attr('width', boxWidth)
+            .attr('x', -boxWidth / 2)
             .attr('height', rectHeight)
             .attr('y', boxTop);
 
@@ -8652,8 +8676,17 @@ class FlowchartViewer {
                 // which is what makes the gap between two sibling trees (measured leaf-to-leaf)
                 // balloon far past the gap between plain childless siblings. Using a uniform
                 // separation keeps every pair of adjacent nodes at the same minimum distance,
-                // whether they're true siblings or the closest edges of two neighboring subtrees.
-                .separation(() => 1);
+                // whether they're true siblings or the closest edges of two neighboring subtrees -
+                // except in TB mode, where a node widened past the 5-line cap (see
+                // measureNodeBoxHeights) needs extra room on top of that uniform minimum so its
+                // wider box doesn't overlap whatever sits beside it.
+                .separation((a, b) => {
+                    if (this.orientation === 'LR') return 1;
+                    const gapPx = this.tbHorizontalSpacing - this.NODE_WIDTH;
+                    const halfA = (a._boxWidth || this.NODE_WIDTH) / 2;
+                    const halfB = (b._boxWidth || this.NODE_WIDTH) / 2;
+                    return (halfA + halfB + gapPx) / this.tbHorizontalSpacing;
+                });
             treeLayout(root);
         }
 
@@ -8867,17 +8900,16 @@ class FlowchartViewer {
             return width;
         }
 
-        node.each(function(d) {
-            const rawName = d.data.name || '';
-            if (rawName) {
-                d.data.name = rawName.replace(/^\s*\S/, ch => ch.toUpperCase());
-            }
-            const words = d.data.name.split(/(\s+)/);
+        const MAX_CENTERED_LINES = 5;
+        const WIDTH_STEP = 20;
+
+        function wrapAtWidth(name, width) {
+            const words = name.split(/(\s+)/);
             let lines = [];
             let current = '';
             words.forEach(word => {
                 const testLine = (current + word).trim();
-                if (testLine && measureTextWidth(testLine) > NODE_WIDTH - 16) {
+                if (testLine && measureTextWidth(testLine) > width - 16) {
                     if (current) lines.push(current.trim());
                     current = word.trim();
                 } else {
@@ -8885,7 +8917,24 @@ class FlowchartViewer {
                 }
             });
             if (current.trim()) lines.push(current.trim());
-            d._lines = lines.length ? lines : [d.data.name || ''];
+            return lines.length ? lines : [name || ''];
+        }
+
+        node.each(function(d) {
+            const rawName = d.data.name || '';
+            if (rawName) {
+                d.data.name = rawName.replace(/^\s*\S/, ch => ch.toUpperCase());
+            }
+            // Past MAX_CENTERED_LINES, growing the box wider (instead of just
+            // taller) keeps it from getting disproportionately tall.
+            let boxWidth = NODE_WIDTH;
+            let lines = wrapAtWidth(d.data.name, boxWidth);
+            while (lines.length > MAX_CENTERED_LINES) {
+                boxWidth += WIDTH_STEP;
+                lines = wrapAtWidth(d.data.name, boxWidth);
+            }
+            d._boxWidth = boxWidth;
+            d._lines = lines;
         });
 
         // A node with a photo attached (see captureNodePhotoFromClipboard) gets a
@@ -8912,7 +8961,6 @@ class FlowchartViewer {
         // have; centerOffset shifts the text/photo down to match the box's new
         // (lower) actual center, and is 0 - a no-op - at or under the cap (and
         // for a fixed-height photo-fill node, which never grows past it).
-        const MAX_CENTERED_LINES = 5;
         const cappedHalfHeight = d => isPhotoFillNode(d)
             ? PHOTO_FILL_HEIGHT / 2
             : (Math.min(d._lines.length, MAX_CENTERED_LINES) * LINE_HEIGHT + PADDING_Y + photoExtra(d)) / 2;
@@ -8920,9 +8968,9 @@ class FlowchartViewer {
         const centerOffset = d => boxTop(d) + totalBoxHeight(d) / 2;
 
         node.append('rect')
-        .attr('width', NODE_WIDTH)
+        .attr('width', d => d._boxWidth)
         .attr('height', d => totalBoxHeight(d))
-        .attr('x', -NODE_WIDTH/2)
+        .attr('x', d => -d._boxWidth / 2)
         .attr('y', d => boxTop(d))
         .attr('fill', d => {
             if (this.isPlaceholderNodeData(d.data)) {
