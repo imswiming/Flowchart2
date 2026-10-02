@@ -1624,9 +1624,15 @@ class FlowchartViewer {
     }
 
     computeIndentedContour(node, secondarySpacing) {
+        // The gap actually left between two boxes' edges - secondarySpacing is a
+        // center-to-center figure sized for the default NODE_WIDTH, so a node
+        // widened past the 5-line cap (see measureNodeBoxHeights) needs its own
+        // real half-width counted on top of this fixed gap, not folded into it.
+        const gapPx = secondarySpacing - this.NODE_WIDTH;
+        const halfWidth = (node._boxWidth || this.NODE_WIDTH) / 2;
         const children = node.children;
         if (!children || children.length === 0) {
-            node._contour = [{ min: 0, max: 0 }];
+            node._contour = [{ min: -halfWidth, max: halfWidth }];
             return node._contour;
         }
 
@@ -1671,7 +1677,7 @@ class FlowchartViewer {
                     const parentRow = row + 1;
                     const existing = combined[parentRow];
                     if (existing) {
-                        const required = (existing.max + secondarySpacing) - c.min;
+                        const required = (existing.max + gapPx) - c.min;
                         if (required > offset) offset = required;
                     }
                 }
@@ -1683,14 +1689,14 @@ class FlowchartViewer {
                     if (c) childMin = Math.min(childMin, c.min);
                 });
                 if (!isFinite(childMin)) childMin = 0;
-                offset = (combinedMax + secondarySpacing) - childMin;
+                offset = (combinedMax + gapPx) - childMin;
             }
 
             child._secondaryOffset = offset;
             mergeInto(childContour, offset);
         }
 
-        const contour = [{ min: 0, max: 0 }];
+        const contour = [{ min: -halfWidth, max: halfWidth }];
         for (let row = 1; row < combined.length; row++) {
             contour[row] = combined[row];
         }
