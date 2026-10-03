@@ -226,6 +226,14 @@ class FlowchartViewer {
         this.notesImages = {};
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
+        // No spell-check underlines anywhere (node text, Pugh/Morph cells, etc.) -
+        // applied as fields gain focus so dynamically-built ones are covered too.
+        document.addEventListener('focusin', (e) => {
+            const t = e.target;
+            if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(text|search|)$/.test(t.type))) && t.spellcheck !== false) {
+                t.spellcheck = false;
+            }
+        });
         this.calibrateNotesLineWidth();
         if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.calibrateNotesLineWidth());
         this.setupKeyboardTracking();
@@ -6240,6 +6248,28 @@ class FlowchartViewer {
     // Shared by the embedded editor and every full-screen pane: wires up
     // everything that reacts to what the caret/typing is doing.
     wireNotesEditorFeedback(editor, isEmbedded) {
+        // Ticking a checklist box while not already editing shouldn't start
+        // editing: a press on the checkbox would normally focus the text (which
+        // pops the on-screen keyboard open). Cancelling that press, before
+        // CKEditor sees it, leaves focus alone - the click itself still
+        // toggles the box. If the text is already focused, nothing changes.
+        const domRoot = editor.editing.view.getDomRoot();
+        // No red spell-check underlines in notes.
+        editor.editing.view.change((writer) => {
+            writer.setAttribute('spellcheck', 'false', editor.editing.view.document.getRoot());
+        });
+        if (domRoot) {
+            domRoot.addEventListener('mousedown', (e) => {
+                if (editor.ui.focusTracker.isFocused) return;
+                const hit = e.target && e.target.closest
+                    ? e.target.closest('.todo-list__label > span[contenteditable="false"], .todo-list__label input[type="checkbox"]')
+                    : null;
+                if (hit) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, true);
+        }
         editor.model.document.selection.on('change:range', () => this.updateNotesTitleControls());
         editor.model.document.on('change:data', () => {
             this.updateNotesTitleControls();
