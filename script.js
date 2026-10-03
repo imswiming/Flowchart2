@@ -5041,7 +5041,7 @@ class FlowchartViewer {
 
         // Mobile only (CSS): one button listing every note A-Z, instead of a
         // row of tabs.
-        row.appendChild(makeBtn('📄 Notes ▾', 'Choose a note', 'notes-picker-btn', () => this.openNotesPicker()));
+        row.appendChild(makeBtn('📄 Notes', 'Choose a note (list of all notes)', 'notes-picker-btn', () => this.openNotesPicker()));
         // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
         row.appendChild(makeBtn('↩', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
         row.appendChild(makeBtn('↪', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
@@ -5925,10 +5925,18 @@ class FlowchartViewer {
             if (!shown.length) {
                 const empty = document.createElement('div');
                 empty.className = 'notes-list-empty';
-                empty.textContent = q ? 'No notes match your search.' : (cfg.emptyText || 'Nothing here yet.');
+                empty.textContent = q ? 'Nothing matches your search.' : (cfg.emptyText || 'Nothing here yet.');
                 list.appendChild(empty);
             }
+            let lastGroup = null;
             shown.forEach((item) => {
+                if (item.group && item.group !== lastGroup) {
+                    lastGroup = item.group;
+                    const gh = document.createElement('div');
+                    gh.className = 'notes-list-group';
+                    gh.textContent = item.group;
+                    list.appendChild(gh);
+                }
                 const row = document.createElement('div');
                 row.className = 'notes-list-item' + (item.active ? ' active' : '');
                 const main = document.createElement('button');
@@ -6006,18 +6014,20 @@ class FlowchartViewer {
     openNotesPicker() {
         this.dismissNotesKeyboard();
         this.showNotesListPopup(({ close, refresh }) => {
-            const all = [];
-            this.globalNotesTabs.forEach(tab => all.push({ scope: 'global', tab }));
-            this.notesTabs.forEach(tab => all.push({ scope: 'chart', tab }));
-            all.sort((a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase()));
+            // Global notes first, then this flowchart's - each group A-Z.
+            const byName = (a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase());
+            const all = [
+                ...this.globalNotesTabs.map(tab => ({ scope: 'global', tab })).sort(byName),
+                ...this.notesTabs.map(tab => ({ scope: 'chart', tab })).sort(byName),
+            ];
             return {
-                title: 'All notes (A–Z)',
+                title: 'Notes',
                 searchable: true,
                 searchPlaceholder: 'Search note names and text...',
                 items: all.map(({ scope, tab }) => ({
                     label: tab.name || 'Untitled',
+                    group: scope === 'global' ? 'Global notes' : 'This flowchart',
                     contentText: (tab.content || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
-                    sub: scope === 'global' ? 'Global' : 'This flowchart',
                     active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
                     onClick: () => { this.switchNotesTab(scope, tab.id); close(); },
                     actions: [
@@ -6053,7 +6063,7 @@ class FlowchartViewer {
     updateNotesPickerLabel() {
         const tab = this.getActiveNotesTab();
         document.querySelectorAll('.notes-picker-btn').forEach((b) => {
-            b.textContent = `📄 ${tab.name || 'Untitled'} ▾`;
+            b.textContent = `📄 ${tab.name || 'Untitled'}`;
         });
     }
 
@@ -6065,6 +6075,8 @@ class FlowchartViewer {
         const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
         this.showNotesListPopup(({ close }) => ({
             title: 'Titles',
+            searchable: true,
+            searchPlaceholder: 'Search titles...',
             emptyText: 'No titles in this note yet - use the Title button to make one.',
             items: titles.map((t) => {
                 let text = '';

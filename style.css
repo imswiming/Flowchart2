@@ -472,9 +472,11 @@ body {
     display: none !important;
 }
 
-/* ===== Notes tab bar (global tabs, then this flowchart's own) ===== */
+/* ===== Notes tab bar (global tabs, then this flowchart's own) =====
+   No longer shown - the Notes picker button (list of all notes, grouped
+   Global / This flowchart) replaces it on both desktop and mobile. */
 #notes-tab-bar {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 4px;
     flex-wrap: wrap;
@@ -2264,12 +2266,25 @@ input[type="range"]::-moz-range-progress {
     display: inline-block;
 }
 
-/* Mobile-only toolbar items: the note picker (replaces the row of tabs) and
-   undo/redo. Desktop keeps its tab bar and Ctrl+Z/Ctrl+Y. */
-.notes-picker-btn,
+/* Undo/redo buttons are mobile-only - desktop has Ctrl+Z/Ctrl+Y. The note
+   picker shows everywhere except the full-screen header, whose panes each
+   have their own note selector. */
 .notes-undo-btn,
 .notes-redo-btn {
     display: none;
+}
+
+#notes-fullscreen-header .notes-picker-btn {
+    display: none;
+}
+
+.notes-list-group {
+    padding: 10px 10px 4px;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
 }
 
 /* ===== List popups (note picker, title list) ===== */
@@ -2415,15 +2430,9 @@ input[type="range"]::-moz-range-progress {
 
 /* ===== Mobile Notes ===== */
 @media (max-width: 600px) {
-    .notes-picker-btn,
     .notes-undo-btn,
     .notes-redo-btn {
         display: inline-block;
-    }
-
-    /* The picker replaces the row of tabs. */
-    #notes-tab-bar {
-        display: none;
     }
 
     #notes-panel-label {
