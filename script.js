@@ -3974,10 +3974,16 @@ class FlowchartViewer {
     // there.
     foldNotesSection() {
         if (!window.matchMedia('(max-width: 600px)').matches) return;
-        // The Notes tab on mobile has its own scroll-driven sliding menu now
-        // (see updateNotesDocScrollMode) instead of folding the header away.
-        if (this._leftPanelMode === 'notes') return;
         if (this._notesFolded) return;
+        // On the mobile Notes tab, editing hides the whole Questions/Pugh/
+        // Morph/Notes header; the Show button (moved into the toolbar, see
+        // placeNotesToolbarExtras) brings it back.
+        if (this._leftPanelMode === 'notes') {
+            this._notesFolded = true;
+            document.body.classList.add('notes-header-folded');
+            if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'inline-flex';
+            return;
+        }
         this._notesFolded = true;
         if (this.leftPanelMain) this.leftPanelMain.style.display = 'none';
         if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = 'none';
@@ -3990,6 +3996,7 @@ class FlowchartViewer {
     // point of tapping "Show" is to get back to editing/viewing that content instead.
     unfoldNotesSection() {
         this._notesFolded = false;
+        document.body.classList.remove('notes-header-folded');
         if (this.leftPanelMain) this.leftPanelMain.style.display = '';
         if (this.leftPanelTabsContainer) this.leftPanelTabsContainer.style.display = '';
         if (this.leftPanelZoomControls) this.leftPanelZoomControls.style.display = '';
@@ -5138,6 +5145,7 @@ class FlowchartViewer {
 
         topMenu.appendChild(header);
         this.updateNotesPickerLabel();
+        this.placeNotesToolbarExtras();
 
         const editorWrap = document.createElement('div');
         editorWrap.id = 'notes-editor-wrap';
@@ -5986,7 +5994,17 @@ class FlowchartViewer {
 
     // Every note - global and this flowchart's - in one alphabetical list,
     // replacing the row of tabs on mobile.
+    // Opening a menu from the toolbar must not leave the text focused - the
+    // toolbar deliberately keeps focus on tap (so formatting buttons don't
+    // close the keyboard), which would otherwise leave the keyboard up (or
+    // bring it back) behind a menu that has nothing to type into.
+    dismissNotesKeyboard() {
+        const ae = document.activeElement;
+        if (ae && ae !== document.body && (ae.isContentEditable || /^(INPUT|TEXTAREA)$/.test(ae.tagName))) ae.blur();
+    }
+
     openNotesPicker() {
+        this.dismissNotesKeyboard();
         this.showNotesListPopup(({ close, refresh }) => {
             const all = [];
             this.globalNotesTabs.forEach(tab => all.push({ scope: 'global', tab }));
@@ -6043,6 +6061,7 @@ class FlowchartViewer {
     openNotesTitleList() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
+        this.dismissNotesKeyboard();
         const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
         this.showNotesListPopup(({ close }) => ({
             title: 'Titles',
@@ -6088,11 +6107,39 @@ class FlowchartViewer {
             this.updateNotesPickerLabel();
         } else if (!on && had) {
             document.body.classList.remove('notes-menu-hidden');
+            if (this._notesFolded) this.unfoldNotesSection();
             window.scrollTo(0, 0);
         }
+        this.placeNotesToolbarExtras();
         if (on) {
             const header = document.getElementById('reflection-panel-header');
             if (header) document.documentElement.style.setProperty('--lp-header-h', header.offsetHeight + 'px');
+        }
+    }
+
+    // On mobile (while the Notes tab is open) the zoom -/+ controls and the
+    // Show button live in the Notes toolbar alongside the editing buttons
+    // instead of up in the tab header, which stays hidden while editing.
+    // The same DOM nodes are moved (not copied) so their listeners keep
+    // working, and moved back to the header whenever that mode ends.
+    placeNotesToolbarExtras() {
+        const zoom = this.leftPanelZoomControls;
+        const show = this.notesUnfoldBtn;
+        const header = document.getElementById('reflection-panel-header');
+        if (!zoom || !show || !header) return;
+        const inDoc = document.body.classList.contains('notes-doc-scroll');
+        const row = document.querySelector('#notes-panel-header-row .notes-toolbar-row');
+        if (inDoc && row) {
+            row.prepend(zoom);
+            row.prepend(show);
+        } else {
+            const tabs = this.leftPanelTabsContainer;
+            if (tabs && tabs.parentNode === header) {
+                tabs.after(show);
+                show.after(zoom);
+            } else {
+                header.prepend(show, zoom);
+            }
         }
     }
 

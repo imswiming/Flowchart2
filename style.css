@@ -2481,6 +2481,20 @@ input[type="range"]::-moz-range-progress {
         transition: top 0.22s ease, transform 0.22s ease;
     }
 
+    /* While editing, the whole tab header stays hidden (the Show button in the
+       toolbar brings it back); the sticky toolbar then pins to the very top. */
+    body.notes-doc-scroll.notes-header-folded #reflection-panel-header {
+        display: none;
+    }
+
+    body.notes-doc-scroll.notes-header-folded #notes-top-menu {
+        top: 0;
+    }
+
+    body.notes-doc-scroll .notes-toolbar-row #left-panel-zoom-controls {
+        flex-shrink: 0;
+    }
+
     body.notes-doc-scroll.notes-menu-hidden #reflection-panel-header {
         transform: translateY(-110%);
     }
