@@ -433,6 +433,11 @@ class FlowchartViewer {
         this.updateArrangementButtonLabels();
         this.applyMobileViewState();
 
+        // On a phone the Notes section is what opens first.
+        if (window.matchMedia('(max-width: 600px)').matches) {
+            this.openNotesPanel();
+        }
+
         // Re-render on real window resizes and orientation changes so the SVG's
         // viewBox/width/height actually track the container's new size - otherwise the
         // chart stays pinned to whatever size it was first drawn at, leaving a stale
@@ -996,6 +1001,10 @@ class FlowchartViewer {
                         if (addThem) mergedList = remoteList.concat(localOnlyItems);
                     }
 
+                    // Applying a remote update reloads the flowchart, which closes
+                    // the left panel - reopen Notes afterwards if that's where the
+                    // person was (e.g. the Notes-first start on a phone).
+                    const wasInNotes = this._leftPanelMode === 'notes' && this._notesTabActive;
                     this._applyingRemote = true;
                     this.flowchartList = mergedList;
                     this._lastPushedDataJson = JSON.stringify({ flowchartList: mergedList });
@@ -1023,6 +1032,7 @@ class FlowchartViewer {
                     }
 
                     this._applyingRemote = false;
+                    if (wasInNotes) this.openNotesPanel();
                     this.showNotification('Synced latest changes from another device.');
                 }
             }
