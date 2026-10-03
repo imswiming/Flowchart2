@@ -5143,9 +5143,6 @@ class FlowchartViewer {
             return b;
         };
 
-        // Mobile only (CSS): one button listing every note A-Z, instead of a
-        // row of tabs.
-        row.appendChild(makeBtn('📄 Notes', 'Choose a note (list of all notes)', 'notes-picker-btn', () => this.openNotesPicker()));
         row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
         // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
         row.appendChild(makeBtn('↩', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
