@@ -2318,6 +2318,18 @@ input[type="range"]::-moz-range-progress {
     padding: 0 4px;
 }
 
+.notes-list-search {
+    margin: 8px 10px 2px;
+    padding: 9px 10px;
+    font-size: 15px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--control-bg);
+    color: var(--text);
+    box-sizing: border-box;
+    width: calc(100% - 20px);
+}
+
 .notes-list-items {
     overflow-y: auto;
     flex: 1;
@@ -2412,20 +2424,6 @@ input[type="range"]::-moz-range-progress {
 
     #notes-panel-label {
         display: none;
-    }
-
-    /* One horizontally scrollable toolbar row rather than wrapping onto
-       several lines, so the sliding menu stays short. */
-    #notes-panel-header-row .notes-toolbar-row {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 2px;
-    }
-
-    #notes-panel-header-row .notes-toolbar-btn {
-        flex: 0 0 auto;
-        white-space: nowrap;
     }
 
     /* --- The Notes tab scrolls the page itself (see updateNotesDocScrollMode)

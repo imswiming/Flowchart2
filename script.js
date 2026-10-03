@@ -5071,7 +5071,6 @@ class FlowchartViewer {
         row.appendChild(highlightBtn);
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
-        row.appendChild(makeBtn('▾ Fold', 'Fold/unfold the text under this title', 'notes-title-ctrl notes-fold-this-btn', () => this.toggleCurrentTitleFold()));
         row.appendChild(makeBtn('⇊ Fold all', 'Fold every title', 'notes-title-ctrl', () => this.foldAllTitles(true)));
         row.appendChild(makeBtn('⇈ Unfold all', 'Unfold every title', 'notes-title-ctrl', () => this.foldAllTitles(false)));
         row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
@@ -5842,11 +5841,6 @@ class FlowchartViewer {
         return (parent && parent.is('element', 'heading4')) ? parent : null;
     }
 
-    toggleCurrentTitleFold() {
-        const { editor } = this.getActiveNotesTarget();
-        this.toggleTitleFold(editor, this.getTitleOfSelection(editor));
-    }
-
     foldAllTitles(fold) {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
@@ -5861,15 +5855,12 @@ class FlowchartViewer {
         this._pendingNotesSave = true;
     }
 
-    // The fold/unfold/fold-all/unfold-all buttons only show while the caret is
+    // The fold-all/unfold-all buttons only show while the caret is
     // on a Title line (see buildNotesToolbar).
     updateNotesTitleControls() {
         const { editor } = this.getActiveNotesTarget();
         const title = this.getTitleOfSelection(editor);
         document.querySelectorAll('.notes-title-ctrl').forEach(b => b.classList.toggle('show', !!title));
-        document.querySelectorAll('.notes-fold-this-btn').forEach((b) => {
-            b.textContent = title && title.getAttribute('folded') ? '▸ Unfold' : '▾ Fold';
-        });
     }
 
     // ---- Generic list popup, used by the mobile note picker and the Titles
@@ -5887,6 +5878,7 @@ class FlowchartViewer {
         card.className = 'notes-list-popup';
         overlay.appendChild(card);
 
+        let query = '';
         const render = () => {
             const cfg = buildConfig({ close, refresh: render });
             card.innerHTML = '';
@@ -5906,13 +5898,21 @@ class FlowchartViewer {
 
             const list = document.createElement('div');
             list.className = 'notes-list-items';
-            if (!cfg.items.length) {
+            // Rebuilt on every keystroke in the search box (see below); the box
+            // itself is never rebuilt so it keeps focus while typing.
+            const fillList = () => {
+            list.innerHTML = '';
+            const q = query.trim().toLowerCase();
+            const shown = q
+                ? cfg.items.filter(it => (it.label || '').toLowerCase().includes(q) || (it.contentText || '').toLowerCase().includes(q))
+                : cfg.items;
+            if (!shown.length) {
                 const empty = document.createElement('div');
                 empty.className = 'notes-list-empty';
-                empty.textContent = cfg.emptyText || 'Nothing here yet.';
+                empty.textContent = q ? 'No notes match your search.' : (cfg.emptyText || 'Nothing here yet.');
                 list.appendChild(empty);
             }
-            cfg.items.forEach((item) => {
+            shown.forEach((item) => {
                 const row = document.createElement('div');
                 row.className = 'notes-list-item' + (item.active ? ' active' : '');
                 const main = document.createElement('button');
@@ -5921,9 +5921,15 @@ class FlowchartViewer {
                 const label = document.createElement('span');
                 label.textContent = item.label;
                 main.appendChild(label);
-                if (item.sub) {
+                let subText = item.sub || '';
+                if (q && item.contentText && !(item.label || '').toLowerCase().includes(q)) {
+                    const at = item.contentText.toLowerCase().indexOf(q);
+                    const snippet = item.contentText.slice(Math.max(0, at - 20), at + q.length + 30).replace(/\s+/g, ' ').trim();
+                    subText = (subText ? subText + ' · ' : '') + '…' + snippet + '…';
+                }
+                if (subText) {
                     const sub = document.createElement('small');
-                    sub.textContent = item.sub;
+                    sub.textContent = subText;
                     main.appendChild(sub);
                 }
                 main.addEventListener('click', () => item.onClick({ close, refresh: render }));
@@ -5939,6 +5945,18 @@ class FlowchartViewer {
                 });
                 list.appendChild(row);
             });
+            };
+
+            if (cfg.searchable) {
+                const search = document.createElement('input');
+                search.type = 'search';
+                search.className = 'notes-list-search';
+                search.placeholder = cfg.searchPlaceholder || 'Search...';
+                search.value = query;
+                search.addEventListener('input', () => { query = search.value; fillList(); });
+                card.appendChild(search);
+            }
+            fillList();
             card.appendChild(list);
 
             if (cfg.footer && cfg.footer.length) {
@@ -5968,8 +5986,11 @@ class FlowchartViewer {
             all.sort((a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase()));
             return {
                 title: 'All notes (A–Z)',
+                searchable: true,
+                searchPlaceholder: 'Search note names and text...',
                 items: all.map(({ scope, tab }) => ({
                     label: tab.name || 'Untitled',
+                    contentText: (tab.content || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
                     sub: scope === 'global' ? 'Global' : 'This flowchart',
                     active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
                     onClick: () => { this.switchNotesTab(scope, tab.id); close(); },
@@ -6032,6 +6053,8 @@ class FlowchartViewer {
     }
 
     jumpToNotesTitle(editor, titleEl) {
+        // Jumping to a folded title opens it so its text is there to read.
+        if (titleEl.getAttribute('folded')) this.toggleTitleFold(editor, titleEl, false);
         editor.model.change(writer => writer.setSelection(writer.createPositionAt(titleEl, 'end')));
         const viewEl = editor.editing.mapper.toViewElement(titleEl);
         const dom = viewEl && editor.editing.view.domConverter.mapViewToDom(viewEl);
