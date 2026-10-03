@@ -2546,3 +2546,34 @@ input[type="range"]::-moz-range-progress {
         padding-bottom: calc(var(--kb-inset, 0px) + 10px);
     }
 }
+
+/* Short "Closed ... Undo" prompt (see showUndoToast) */
+#undo-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(24px + var(--kb-inset, 0px));
+    transform: translateX(-50%);
+    z-index: 8000;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: 92vw;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--popup-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+    font-size: 14px;
+}
+
+#undo-toast button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 6px 14px;
+    cursor: pointer;
+}

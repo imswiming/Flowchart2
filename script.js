@@ -4955,6 +4955,65 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // Closing a tab (the x) just takes the note out of the tabs - and offers an
+    // Undo for 5 seconds before the prompt disappears.
+    closeNoteTab(scope, tabId) {
+        const previous = this.notesPinned === null ? null : this.notesPinned.slice();
+        const name = (this.getNotesTab(scope, tabId) || {}).name || 'Untitled';
+        this.toggleNotePinned(scope, tabId);
+        this.showUndoToast(`Closed \u201C${name}\u201D tab`, () => {
+            this.notesPinned = previous;
+            this.renderNotesTabBar();
+            this.autosave();
+        });
+    }
+
+    // A small bottom-of-screen message with an Undo button that hides itself
+    // after 5 seconds. Only one at a time - a new one replaces the old.
+    showUndoToast(message, onUndo, ms = 5000) {
+        const old = document.getElementById('undo-toast');
+        if (old) { clearTimeout(old._timer); old.remove(); }
+        const toast = document.createElement('div');
+        toast.id = 'undo-toast';
+        const text = document.createElement('span');
+        text.textContent = message;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Undo';
+        btn.addEventListener('click', () => {
+            clearTimeout(toast._timer);
+            toast.remove();
+            onUndo();
+        });
+        toast.append(text, btn);
+        document.body.appendChild(toast);
+        toast._timer = setTimeout(() => toast.remove(), ms);
+    }
+
+    // Puts a note in a tab: replaces the note shown by the tab keyed replaceKey
+    // ("scope:id"), or - when replaceKey is null/not found - adds a new tab for
+    // it. A note only ever has one tab, so it's removed from wherever else it was.
+    assignNoteToTab(replaceKey, scope, tabId) {
+        const key = `${scope}:${tabId}`;
+        if (this.notesPinned === null) {
+            this.notesPinned = this.getPinnedNotes().map(e => `${e.scope}:${e.tab.id}`);
+        }
+        const list = this.notesPinned;
+        let at = replaceKey ? list.indexOf(replaceKey) : -1;
+        if (key !== replaceKey) {
+            const dup = list.indexOf(key);
+            if (dup !== -1) {
+                list.splice(dup, 1);
+                if (at > dup) at -= 1;
+            }
+        }
+        if (at === -1) list.push(key);
+        else list[at] = key;
+        this.switchNotesTab(scope, tabId);
+        this.renderNotesTabBar();
+        this.autosave();
+    }
+
     // The tab buttons at the bottom of the Notes menu: only the notes chosen
     // with the star in the notes list (the one currently open is always shown,
     // even if it isn't one of them). Tapping a tab opens that note; x just
@@ -4976,34 +5035,28 @@ class FlowchartViewer {
             const tabEl = document.createElement('div');
             tabEl.className = 'matrix-tab' + (isActive ? ' active' : '') + (pinned ? '' : ' notes-tab-temp');
             tabEl.title = scope === 'global' ? 'Global note' : 'Note in this flowchart';
+            // Tap opens the note; a quick second tap on the same tab opens the
+            // notes list to choose which note this tab shows instead. (Counted by
+            // hand rather than with dblclick, which phones don't reliably fire -
+            // and the bar is rebuilt between the two taps.)
+            const tabKey = `${scope}:${tab.id}`;
             tabEl.addEventListener('click', (e) => {
                 if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                const now = Date.now();
+                const last = this._lastNotesTabTap;
+                if (last && last.key === tabKey && now - last.at < 400) {
+                    this._lastNotesTabTap = null;
+                    this.openNotesPicker(pinned ? { tabKey } : { add: true });
+                    return;
+                }
+                this._lastNotesTabTap = { key: tabKey, at: now };
                 this.switchNotesTab(scope, tab.id);
             });
 
             const label = document.createElement('span');
             label.className = 'matrix-tab-label';
             label.textContent = (scope === 'global' ? '\uD83C\uDF10 ' : '') + (tab.name || 'Untitled');
-            label.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'matrix-tab-name-input';
-                input.value = tab.name || '';
-                label.replaceWith(input);
-                input.focus();
-                input.select();
-                const commit = () => {
-                    this.renameNotesTab(scope, tab.id, input.value);
-                    this.renderNotesTabBar();
-                };
-                input.addEventListener('click', (e2) => e2.stopPropagation());
-                input.addEventListener('keydown', (e2) => {
-                    if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
-                    else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
-                });
-                input.addEventListener('blur', commit);
-            });
+            label.title = 'Double-tap to choose which note this tab shows';
             tabEl.appendChild(label);
 
             if (pinned) {
@@ -5013,12 +5066,20 @@ class FlowchartViewer {
                 x.textContent = '\u00D7';
                 x.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.toggleNotePinned(scope, tab.id);
+                    this.closeNoteTab(scope, tab.id);
                 });
                 tabEl.appendChild(x);
             }
             bar.appendChild(tabEl);
         });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'matrix-tab-add-btn';
+        addBtn.type = 'button';
+        addBtn.title = 'Add a tab';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', () => this.openNotesPicker({ add: true }));
+        bar.appendChild(addBtn);
 
         return bar;
     }
@@ -5085,6 +5146,7 @@ class FlowchartViewer {
         // Mobile only (CSS): one button listing every note A-Z, instead of a
         // row of tabs.
         row.appendChild(makeBtn('📄 Notes', 'Choose a note (list of all notes)', 'notes-picker-btn', () => this.openNotesPicker()));
+        row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
         // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
         row.appendChild(makeBtn('↩', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
         row.appendChild(makeBtn('↪', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
@@ -5131,7 +5193,6 @@ class FlowchartViewer {
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
         row.appendChild(makeBtn('⇊ Fold all', 'Fold every title', 'notes-title-ctrl', () => this.foldAllTitles(true)));
         row.appendChild(makeBtn('⇈ Unfold all', 'Unfold every title', 'notes-title-ctrl', () => this.foldAllTitles(false)));
-        row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
 
         const outdentBtn = document.createElement('button');
         outdentBtn.className = 'notes-toolbar-btn notes-outdent-btn';
@@ -6073,8 +6134,17 @@ class FlowchartViewer {
         if (ae && ae !== document.body && (ae.isContentEditable || /^(INPUT|TEXTAREA)$/.test(ae.tagName))) ae.blur();
     }
 
-    openNotesPicker() {
+    // mode (optional): { tabKey } - choosing a note puts it in the tab whose
+    // "scope:id" key is tabKey (replacing what was there); { add: true } -
+    // choosing a note adds it as a new tab. Without a mode it just opens the
+    // note.
+    openNotesPicker(mode = {}) {
         this.dismissNotesKeyboard();
+        const assigning = Boolean(mode.add || mode.tabKey);
+        const pick = (scope, tabId) => {
+            if (assigning) this.assignNoteToTab(mode.tabKey || null, scope, tabId);
+            else this.switchNotesTab(scope, tabId);
+        };
         this.showNotesListPopup(({ close, refresh }) => {
             // Global notes first, then this flowchart's - each group A-Z.
             const byName = (a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase());
@@ -6083,7 +6153,7 @@ class FlowchartViewer {
                 ...this.notesTabs.map(tab => ({ scope: 'chart', tab })).sort(byName),
             ];
             return {
-                title: 'Notes',
+                title: mode.add ? 'Add a tab - choose a note' : (mode.tabKey ? 'Show which note in this tab?' : 'Notes'),
                 searchable: true,
                 searchPlaceholder: 'Search note names and text...',
                 items: all.map(({ scope, tab }) => ({
@@ -6091,7 +6161,7 @@ class FlowchartViewer {
                     group: scope === 'global' ? 'Global notes' : 'This flowchart',
                     contentText: (tab.content || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
                     active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
-                    onClick: () => { this.switchNotesTab(scope, tab.id); close(); },
+                    onClick: () => { pick(scope, tab.id); close(); },
                     actions: [
                         {
                             label: this.isNotePinned(scope, tab.id) ? '★' : '☆',
@@ -6120,8 +6190,22 @@ class FlowchartViewer {
                     ]
                 })),
                 footer: [
-                    { label: '+ New global note', onClick: () => { this.addNotesTab('global'); close(); } },
-                    { label: '+ New note (this flowchart)', onClick: () => { this.addNotesTab('chart'); close(); } },
+                    {
+                        label: '+ New global note',
+                        onClick: () => {
+                            this.addNotesTab('global');
+                            if (assigning) pick('global', this.getActiveNotesTabId('global'));
+                            close();
+                        }
+                    },
+                    {
+                        label: '+ New note (this flowchart)',
+                        onClick: () => {
+                            this.addNotesTab('chart');
+                            if (assigning) pick('chart', this.getActiveNotesTabId('chart'));
+                            close();
+                        }
+                    },
                 ]
             };
         });
