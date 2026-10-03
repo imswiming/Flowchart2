@@ -2249,6 +2249,10 @@ input[type="range"]::-moz-range-progress {
 #notes-editor-wrap .ck.ck-content h4,
 .notes-editor-wrap-el .ck.ck-content h4 {
     scroll-margin-top: 140px;
+    /* Titles (and the fold arrow drawn at their start) sit two characters of
+       the normal 13px note text in from the left edge - fixed rather than
+       2ch, which would scale with the much larger title font. */
+    margin-left: 14px !important;
 }
 
 /* Fold/unfold buttons only appear while the caret is on a Title line. */
