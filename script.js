@@ -4955,6 +4955,83 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // Hold a tab (about a quarter second) and drag it to a new spot among the
+    // other tabs; letting go saves the new order. A quick tap, or a finger that
+    // moves before the hold registers (i.e. a scroll), is left alone.
+    attachNotesTabDrag(tabEl, bar) {
+        let timer = null;
+        let armed = false;
+        let start = null;
+        let grab = null;
+
+        const finish = (e, commit) => {
+            clearTimeout(timer);
+            if (!armed) { start = null; return; }
+            armed = false;
+            tabEl.classList.remove('dragging');
+            tabEl.style.transform = '';
+            try { tabEl.releasePointerCapture(e.pointerId); } catch (err) { /* not captured */ }
+            this._notesTabDragEndedAt = Date.now();
+            if (commit) {
+                const order = Array.from(bar.querySelectorAll('.matrix-tab[data-key]:not(.notes-tab-temp)')).map(t => t.dataset.key);
+                if (this.notesPinned === null || order.join('|') !== this.notesPinned.join('|')) {
+                    this.notesPinned = order;
+                    this.autosave();
+                }
+            }
+            this.renderNotesTabBar();
+        };
+
+        tabEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== undefined && e.button !== 0) return;
+            if (e.target.closest('.matrix-tab-delete-btn')) return;
+            start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                armed = true;
+                const r = tabEl.getBoundingClientRect();
+                grab = { x: start.x - r.left, y: start.y - r.top };
+                tabEl.classList.add('dragging');
+                try { tabEl.setPointerCapture(start.id); } catch (err) { /* synthetic pointer */ }
+                if (navigator.vibrate) navigator.vibrate(15);
+            }, 250);
+        });
+
+        tabEl.addEventListener('pointermove', (e) => {
+            if (!start) return;
+            if (!armed) {
+                // Moved before the hold registered: it's a scroll/swipe, not a drag.
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
+                    clearTimeout(timer);
+                    start = null;
+                }
+                return;
+            }
+            e.preventDefault();
+            // Reorder live: swap with whichever other tab the pointer is over.
+            const others = Array.from(bar.querySelectorAll('.matrix-tab[data-key]:not(.notes-tab-temp)')).filter(t => t !== tabEl);
+            tabEl.style.transform = '';
+            const hit = others.find((t) => {
+                const r = t.getBoundingClientRect();
+                return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+            });
+            if (hit) {
+                const mine = Array.from(bar.children).indexOf(tabEl);
+                const theirs = Array.from(bar.children).indexOf(hit);
+                if (mine > theirs) hit.before(tabEl);
+                else hit.after(tabEl);
+            }
+            // Follow the finger/cursor.
+            const r = tabEl.getBoundingClientRect();
+            tabEl.style.transform = `translate(${e.clientX - grab.x - r.left}px, ${e.clientY - grab.y - r.top}px)`;
+        });
+
+        tabEl.addEventListener('pointerup', (e) => finish(e, true));
+        tabEl.addEventListener('pointercancel', (e) => finish(e, false));
+        // Long-press would otherwise open the browser's context menu.
+        tabEl.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
     // Closing a tab (the x) just takes the note out of the tabs - and offers an
     // Undo for 5 seconds before the prompt disappears.
     closeNoteTab(scope, tabId) {
@@ -5040,8 +5117,11 @@ class FlowchartViewer {
             // hand rather than with dblclick, which phones don't reliably fire -
             // and the bar is rebuilt between the two taps.)
             const tabKey = `${scope}:${tab.id}`;
+            tabEl.dataset.key = tabKey;
             tabEl.addEventListener('click', (e) => {
                 if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                // The click that ends a hold-and-drag reorder isn't a tap.
+                if (Date.now() - (this._notesTabDragEndedAt || 0) < 400) return;
                 const now = Date.now();
                 const last = this._lastNotesTabTap;
                 if (last && last.key === tabKey && now - last.at < 400) {
@@ -5070,6 +5150,7 @@ class FlowchartViewer {
                 });
                 tabEl.appendChild(x);
             }
+            if (pinned) this.attachNotesTabDrag(tabEl, bar);
             bar.appendChild(tabEl);
         });
 

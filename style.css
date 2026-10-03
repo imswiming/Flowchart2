@@ -2580,3 +2580,20 @@ input[type="range"]::-moz-range-progress {
     padding: 6px 14px;
     cursor: pointer;
 }
+
+/* Tabs can be held and dragged to reorder (see attachNotesTabDrag). */
+#notes-tab-bar .matrix-tab {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+#notes-tab-bar .matrix-tab.dragging {
+    position: relative;
+    z-index: 50;
+    opacity: 0.9;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
+    outline: 2px solid var(--accent);
+    cursor: grabbing;
+}
