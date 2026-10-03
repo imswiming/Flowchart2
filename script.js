@@ -6321,6 +6321,25 @@ class FlowchartViewer {
     setupNotesAutoHideMenu() {
         if (this._notesAutoHideSetup) return;
         this._notesAutoHideSetup = true;
+
+        // A finger drag that starts scrolling the note closes the on-screen
+        // keyboard (the text loses focus). Watching the touch itself rather than
+        // the scroll position means the app's own scroll-to-caret adjustments
+        // while typing never count.
+        let touchStart = null;
+        document.addEventListener('touchstart', (e) => {
+            touchStart = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+        }, { passive: true });
+        document.addEventListener('touchmove', (e) => {
+            if (!touchStart || !document.body.classList.contains('notes-doc-scroll')) return;
+            const t = e.touches[0];
+            if (!t || Math.abs(t.clientY - touchStart.y) < 12) return;
+            touchStart = null;
+            const ae = document.activeElement;
+            if (ae && ae !== document.body && ae.isContentEditable) ae.blur();
+        }, { passive: true });
+        document.addEventListener('touchend', () => { touchStart = null; }, { passive: true });
+
         let lastY = window.scrollY;
         window.addEventListener('scroll', () => {
             const y = window.scrollY;
