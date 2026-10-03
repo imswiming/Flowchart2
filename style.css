@@ -481,11 +481,13 @@ body {
     display: none !important;
 }
 
-/* ===== Notes tab bar (global tabs, then this flowchart's own) =====
-   No longer shown - the Notes picker button (list of all notes, grouped
-   Global / This flowchart) replaces it on both desktop and mobile. */
+/* ===== Notes tab buttons - the notes starred in the notes list, at the
+   bottom of the (hide-on-scroll) Notes menu ===== */
 #notes-tab-bar {
-    display: none;
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 4px;
+    padding-bottom: 4px;
     align-items: center;
     gap: 4px;
     flex-wrap: wrap;

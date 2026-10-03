@@ -208,6 +208,10 @@ class FlowchartViewer {
         this._notesIdCounter = 0;
         this.notesTabs = this.getDefaultNotesTabs();
         this.activeNotesTabId = this.notesTabs[0].id;
+        // Which notes show as tab buttons for this flowchart: null = all of
+        // them (nothing chosen yet), otherwise an array of "scope:tabId" keys
+        // picked from the notes list. Saved with the flowchart.
+        this.notesPinned = null;
         this.globalNotesTabs = this.loadGlobalNotesTabs();
         this.activeGlobalNotesTabId = (() => {
             const saved = localStorage.getItem('flowchart-active-global-notes-tab');
@@ -1461,6 +1465,7 @@ class FlowchartViewer {
                 this.activeNotesTabId = (typeof parsed.activeNotesTabId === 'string' && this.notesTabs.some(t => t.id === parsed.activeNotesTabId))
                     ? parsed.activeNotesTabId
                     : this.notesTabs[0].id;
+                this.notesPinned = Array.isArray(parsed.notesPinned) ? parsed.notesPinned.filter(k => typeof k === 'string') : null;
                 this.notesDrawings = (parsed.notesDrawings && typeof parsed.notesDrawings === 'object') ? parsed.notesDrawings : {};
                 this.notesImages = (parsed.notesImages && typeof parsed.notesImages === 'object') ? parsed.notesImages : {};
                 this.renderNotesPanel();
@@ -3914,6 +3919,7 @@ class FlowchartViewer {
         this.activeMorphMatrixId = this.morphMatrices[0].id;
         this.notesTabs = this.getDefaultNotesTabs();
         this.activeNotesTabId = this.notesTabs[0].id;
+        this.notesPinned = null;
         this.notesDrawings = {};
         this.notesImages = {};
         this.updateLeftPanelTabs();
@@ -4905,87 +4911,104 @@ class FlowchartViewer {
         this.autosave();
     }
 
-    // Builds the row of tabs shown above the Notes toolbar - global tabs first
-    // (shared across every flowchart), then this flowchart's own, each in its
-    // own same-look-as-buildMatrixTabBar (Pugh/Morph Matrix) group with its own
-    // "+". Wired to the Notes tab list and its own switch/add/delete/rename
-    // methods (which additionally have to sync the live CKEditor instance's
-    // content on every switch, unlike the matrices).
+    // The notes picked (from the notes list) to show as tab buttons for this
+    // flowchart, in order - global and flowchart notes alike. Keys that no
+    // longer match a note (it was deleted) are dropped.
+    getPinnedNotes() {
+        const all = [
+            ...this.globalNotesTabs.map(tab => ({ scope: 'global', tab })),
+            ...this.notesTabs.map(tab => ({ scope: 'chart', tab })),
+        ];
+        if (this.notesPinned === null) return all;
+        const out = [];
+        this.notesPinned.forEach((key) => {
+            const hit = all.find(e => `${e.scope}:${e.tab.id}` === key);
+            if (hit) out.push(hit);
+        });
+        return out;
+    }
+
+    isNotePinned(scope, tabId) {
+        return this.notesPinned === null || this.notesPinned.includes(`${scope}:${tabId}`);
+    }
+
+    toggleNotePinned(scope, tabId) {
+        const key = `${scope}:${tabId}`;
+        // First customization: start from "everything is a tab" and edit that.
+        if (this.notesPinned === null) {
+            this.notesPinned = this.getPinnedNotes().map(e => `${e.scope}:${e.tab.id}`);
+        }
+        const i = this.notesPinned.indexOf(key);
+        if (i === -1) this.notesPinned.push(key);
+        else this.notesPinned.splice(i, 1);
+        this.renderNotesTabBar();
+        this.autosave();
+    }
+
+    // The tab buttons at the bottom of the Notes menu: only the notes chosen
+    // with the star in the notes list (the one currently open is always shown,
+    // even if it isn't one of them). Tapping a tab opens that note; x just
+    // removes it from the tabs - the note itself is kept.
     buildNotesTabBar() {
         const bar = document.createElement('div');
         bar.id = 'notes-tab-bar';
+        bar.className = 'matrix-tab-bar';
 
-        const buildGroup = (scope, tabs) => {
-            const group = document.createElement('div');
-            group.className = 'matrix-tab-bar notes-tab-group';
-            const activeId = this.getActiveNotesTabId(scope);
+        const entries = this.getPinnedNotes().map(e => ({ ...e, pinned: true }));
+        const activeKey = `${this._activeNotesScope}:${this.getActiveNotesTabId(this._activeNotesScope)}`;
+        if (!entries.some(e => `${e.scope}:${e.tab.id}` === activeKey)) {
+            const active = this.getActiveNotesTab();
+            entries.push({ scope: this._activeNotesScope, tab: active, pinned: false });
+        }
 
-            tabs.forEach(tab => {
-                const tabEl = document.createElement('div');
-                tabEl.className = 'matrix-tab' + (scope === this._activeNotesScope && tab.id === activeId ? ' active' : '');
-                tabEl.addEventListener('click', (e) => {
-                    if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
-                    this.switchNotesTab(scope, tab.id);
-                });
-
-                const label = document.createElement('span');
-                label.className = 'matrix-tab-label';
-                label.textContent = tab.name || 'Untitled';
-                label.title = 'Double-click to rename';
-                label.addEventListener('dblclick', (e) => {
-                    e.stopPropagation();
-                    const input = document.createElement('input');
-                    input.type = 'text';
-                    input.className = 'matrix-tab-name-input';
-                    input.value = tab.name || '';
-                    label.replaceWith(input);
-                    input.focus();
-                    input.select();
-                    const commit = () => {
-                        this.renameNotesTab(scope, tab.id, input.value);
-                        this.renderNotesTabBar();
-                    };
-                    input.addEventListener('click', (e2) => e2.stopPropagation());
-                    input.addEventListener('keydown', (e2) => {
-                        if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
-                        else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
-                    });
-                    input.addEventListener('blur', commit);
-                });
-                tabEl.appendChild(label);
-
-                if (tabs.length > 1) {
-                    const delBtn = document.createElement('button');
-                    delBtn.className = 'matrix-tab-delete-btn';
-                    delBtn.title = 'Delete this tab';
-                    delBtn.textContent = '×';
-                    delBtn.addEventListener('click', async (e) => {
-                        e.stopPropagation();
-                        const ok = await this.showConfirmDialog(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`);
-                        if (!ok) return;
-                        this.deleteNotesTab(scope, tab.id);
-                    });
-                    tabEl.appendChild(delBtn);
-                }
-
-                group.appendChild(tabEl);
+        entries.forEach(({ scope, tab, pinned }) => {
+            const isActive = `${scope}:${tab.id}` === activeKey;
+            const tabEl = document.createElement('div');
+            tabEl.className = 'matrix-tab' + (isActive ? ' active' : '') + (pinned ? '' : ' notes-tab-temp');
+            tabEl.title = scope === 'global' ? 'Global note' : 'Note in this flowchart';
+            tabEl.addEventListener('click', (e) => {
+                if (e.target.closest('.matrix-tab-delete-btn') || e.target.tagName === 'INPUT') return;
+                this.switchNotesTab(scope, tab.id);
             });
 
-            const addBtn = document.createElement('button');
-            addBtn.className = 'matrix-tab-add-btn';
-            addBtn.title = scope === 'global' ? 'Add a new global tab (shared across all flowcharts)' : 'Add a new tab for this flowchart';
-            addBtn.textContent = '+';
-            addBtn.addEventListener('click', () => this.addNotesTab(scope));
-            group.appendChild(addBtn);
+            const label = document.createElement('span');
+            label.className = 'matrix-tab-label';
+            label.textContent = (scope === 'global' ? '\uD83C\uDF10 ' : '') + (tab.name || 'Untitled');
+            label.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'matrix-tab-name-input';
+                input.value = tab.name || '';
+                label.replaceWith(input);
+                input.focus();
+                input.select();
+                const commit = () => {
+                    this.renameNotesTab(scope, tab.id, input.value);
+                    this.renderNotesTabBar();
+                };
+                input.addEventListener('click', (e2) => e2.stopPropagation());
+                input.addEventListener('keydown', (e2) => {
+                    if (e2.key === 'Enter') { e2.preventDefault(); input.blur(); }
+                    else if (e2.key === 'Escape') { e2.preventDefault(); input.value = tab.name || ''; input.blur(); }
+                });
+                input.addEventListener('blur', commit);
+            });
+            tabEl.appendChild(label);
 
-            return group;
-        };
-
-        bar.appendChild(buildGroup('global', this.globalNotesTabs));
-        const divider = document.createElement('div');
-        divider.className = 'notes-tab-group-divider';
-        bar.appendChild(divider);
-        bar.appendChild(buildGroup('chart', this.notesTabs));
+            if (pinned) {
+                const x = document.createElement('button');
+                x.className = 'matrix-tab-delete-btn';
+                x.title = 'Remove from tabs (the note is kept)';
+                x.textContent = '\u00D7';
+                x.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.toggleNotePinned(scope, tab.id);
+                });
+                tabEl.appendChild(x);
+            }
+            bar.appendChild(tabEl);
+        });
 
         return bar;
     }
@@ -5129,8 +5152,6 @@ class FlowchartViewer {
         const topMenu = document.createElement('div');
         topMenu.id = 'notes-top-menu';
         this.notesPanelBody.appendChild(topMenu);
-        topMenu.appendChild(this.buildNotesTabBar());
-
         const header = document.createElement('div');
         header.id = 'notes-panel-header-row';
         const label = document.createElement('div');
@@ -5154,6 +5175,8 @@ class FlowchartViewer {
         header.appendChild(fullscreenBtn);
 
         topMenu.appendChild(header);
+        // The tab buttons sit at the bottom of this (hide-on-scroll) menu.
+        topMenu.appendChild(this.buildNotesTabBar());
         this.updateNotesPickerLabel();
         this.placeNotesToolbarExtras();
 
@@ -6060,6 +6083,11 @@ class FlowchartViewer {
                     active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
                     onClick: () => { this.switchNotesTab(scope, tab.id); close(); },
                     actions: [
+                        {
+                            label: this.isNotePinned(scope, tab.id) ? '★' : '☆',
+                            title: this.isNotePinned(scope, tab.id) ? 'Shown as a tab - tap to remove from tabs' : 'Tap to show as a tab',
+                            onClick: () => { this.toggleNotePinned(scope, tab.id); refresh(); }
+                        },
                         {
                             label: '✎', title: 'Rename',
                             onClick: () => {
@@ -8770,6 +8798,7 @@ class FlowchartViewer {
             activeMorphMatrixId: this.activeMorphMatrixId,
             notesTabs: this.notesTabs,
             activeNotesTabId: this.activeNotesTabId,
+            notesPinned: this.notesPinned,
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages
         }, null, 2);
