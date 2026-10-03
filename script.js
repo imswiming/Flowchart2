@@ -226,6 +226,8 @@ class FlowchartViewer {
         this.notesImages = {};
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
+        this.calibrateNotesLineWidth();
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.calibrateNotesLineWidth());
         this.setupKeyboardTracking();
         window.matchMedia('(max-width: 600px)').addEventListener('change', () => this.applyMobileViewState());
         this.setupPughPanel();
@@ -5657,6 +5659,25 @@ class FlowchartViewer {
     //  - editingDowncast: model -> what's actually shown on screen - a small
     //    non-editable widget with an <img> thumbnail, clickable to open the
     //    lightbox (or the drawing editor), which is the part that's actually new.
+    // Notes wrap at ~52 real characters per line. CSS `ch` units measure the
+    // width of a "0", which is wider than the average character of normal
+    // text, so they let in noticeably more than 52 - instead the actual
+    // average character width of the note font (regular and bold, for
+    // titles) is measured on a sample of ordinary English and handed to the
+    // stylesheet (--note-char-em / --note-title-char-em, in em).
+    calibrateNotesLineWidth() {
+        const sample = 'The quick brown fox jumps over the lazy dog while a few more words keep the sentence flowing along nicely, as notes tend to do.';
+        const family = getComputedStyle(document.body).fontFamily;
+        const ctx = document.createElement('canvas').getContext('2d');
+        const perCharEm = (weight) => {
+            ctx.font = `${weight} 100px ${family}`;
+            return ctx.measureText(sample).width / 100 / sample.length;
+        };
+        const root = document.documentElement.style;
+        root.setProperty('--note-char-em', perCharEm('normal').toFixed(4));
+        root.setProperty('--note-title-char-em', perCharEm('bold').toFixed(4));
+    }
+
     getNoteMediaMarkerPlugin() {
         if (this._NoteMediaMarkerPlugin) return this._NoteMediaMarkerPlugin;
         const { Plugin, Widget, toWidget } = window.CKEDITOR;

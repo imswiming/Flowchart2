@@ -370,7 +370,11 @@ body {
        once indentation ate into the available width. Overflowing past the
        visible box at deep indent levels is expected - #notes-editor-wrap's
        horizontal scroll is how the rest is reached. */
-    width: 52ch !important;
+    /* ~52 real characters (spaces included) per line. `ch` is the width of a
+       "0", which is wider than the average letter/space, so 52ch fit roughly
+       60 actual characters - instead the width is 52 x the font's measured
+       average character width (--note-char-em, set by calibrateNotesLineWidth). */
+    width: calc(52 * var(--note-char-em, 0.47) * 1em) !important;
     flex-shrink: 0;
 }
 
@@ -381,6 +385,11 @@ body {
 .notes-editor-wrap-el .ck.ck-content ::selection {
     background: #00a67e !important;
     color: #ffffff !important;
+}
+
+#notes-editor-wrap .ck.ck-content h4,
+.notes-editor-wrap-el .ck.ck-content h4 {
+    width: calc(52 * var(--note-title-char-em, 0.52) * 1em) !important;
 }
 
 #notes-editor-wrap .ck.ck-content > * + * , .notes-editor-wrap-el .ck.ck-content > * + * {
