@@ -214,6 +214,7 @@ class FlowchartViewer {
             return (saved && this.globalNotesTabs.some(t => t.id === saved)) ? saved : this.globalNotesTabs[0].id;
         })();
         this._activeNotesScope = localStorage.getItem('flowchart-active-notes-scope') === 'global' ? 'global' : 'chart';
+        this._globalNotesJson = JSON.stringify(this.globalNotesTabs);
         // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
         // globalNotes that references them - see renderNotesDrawingsStrip.
         this.notesDrawings = {};
@@ -225,6 +226,8 @@ class FlowchartViewer {
         this.notesImages = {};
         this._notesPanelHeight = parseInt(localStorage.getItem('notes-panel-height'), 10) || 200;
 
+        this.setupKeyboardTracking();
+        window.matchMedia('(max-width: 600px)').addEventListener('change', () => this.applyMobileViewState());
         this.setupPughPanel();
         this.setupLeftPanelZoom();
         this.updateLeftPanelTabs();
@@ -759,6 +762,8 @@ class FlowchartViewer {
         localStorage.removeItem('cloud-sync-api-key');
         localStorage.removeItem('cloud-sync-id');
         localStorage.removeItem('cloud-sync-known-remote-at');
+        localStorage.removeItem('flowchart-global-notes-known-remote-at');
+        this._lastPushedGlobalNotesJson = null;
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
         this._cloudPollTimer = null;
@@ -850,6 +855,8 @@ class FlowchartViewer {
                 this._uploadedImageHashes.add(hash);
             }
 
+            await this.pushGlobalNotes();
+
             // Skip the main-row upload entirely if the (now image-free) payload is
             // identical to what was last pushed - the ~2s debounce can fire on
             // things like a blur event that didn't change any data.
@@ -895,6 +902,11 @@ class FlowchartViewer {
         if (this._cloudSyncInFlight) return false;
         this._cloudSyncInFlight = true;
         try {
+            try {
+                await this.pullGlobalNotes();
+            } catch (err) {
+                console.error('Global notes pull failed:', err);
+            }
             // Two-step check: first ask for just updated_at (a few bytes) rather than
             // the full row. Every poll used to download the entire data blob - drawings
             // included - just to see if anything had changed, even though almost every
@@ -1009,6 +1021,110 @@ class FlowchartViewer {
         } finally {
             this._cloudSyncInFlight = false;
         }
+    }
+
+    // ===== Global notes cloud sync =====
+    // Global notes tabs (shared across every flowchart) aren't part of any
+    // flowchart's own data, so they never rode along in flowchartList. They get
+    // their own row in the same table, `<syncId>::globalnotes`, with the same
+    // last-write-wins-by-timestamp model as everything else. When both sides
+    // have unsynced changes, tabs are merged by tab id (the newer side wins a
+    // shared tab, tabs only one side has are kept) instead of one side's whole
+    // set overwriting the other's.
+    globalNotesRowId() {
+        return `${this.cloudSyncId}::globalnotes`;
+    }
+
+    cloudHeaders(extra) {
+        return Object.assign({
+            'apikey': this.cloudApiKey,
+            'Authorization': `Bearer ${this.cloudApiKey}`
+        }, extra || {});
+    }
+
+    async pushGlobalNotes() {
+        const tabs = this.globalNotesTabs;
+        const json = JSON.stringify(tabs);
+        if (json === this._lastPushedGlobalNotesJson) return;
+        const localTs = Number(localStorage.getItem('flowchart-global-notes-updated-at')) || 0;
+        const pristine = tabs.length === 1 && !tabs[0].content;
+        if (pristine && !localTs) return;
+        const ts = localTs || Date.now();
+        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
+            method: 'POST',
+            headers: this.cloudHeaders({
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates,return=minimal'
+            }),
+            body: JSON.stringify([{ id: this.globalNotesRowId(), updated_at: ts, data: { tabs } }])
+        });
+        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+        this._lastPushedGlobalNotesJson = json;
+        localStorage.setItem('flowchart-global-notes-updated-at', String(ts));
+        localStorage.setItem('flowchart-global-notes-known-remote-at', String(ts));
+    }
+
+    async pullGlobalNotes() {
+        const id = encodeURIComponent(this.globalNotesRowId());
+        const headRes = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${id}&select=updated_at`, {
+            headers: this.cloudHeaders({ 'Accept': 'application/json' })
+        });
+        if (!headRes.ok) throw new Error(`Supabase API error ${headRes.status}: ${await headRes.text()}`);
+        const headRow = (await headRes.json())[0];
+        if (!headRow) return;
+        const remoteTs = Number(headRow.updated_at) || 0;
+        const knownTs = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
+        if (remoteTs <= knownTs) return;
+
+        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${id}&select=updated_at,data`, {
+            headers: this.cloudHeaders({ 'Accept': 'application/json' })
+        });
+        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+        const row = (await res.json())[0];
+        const remoteTabs = row && row.data && row.data.tabs;
+        if (!Array.isArray(remoteTabs) || remoteTabs.length === 0) return;
+
+        const editorFocused = this.notesEditor && this.notesEditor.ui.focusTracker.isFocused;
+        if (editorFocused && this._activeNotesScope === 'global') return; // don't yank text out from under the caret; next poll retries
+
+        const localTs = Number(localStorage.getItem('flowchart-global-notes-updated-at')) || 0;
+        const localTabs = this.globalNotesTabs;
+        const localPristine = localTabs.length === 1 && !localTabs[0].content;
+        const hasUnsyncedLocal = !localPristine && localTs > knownTs;
+        const neverSynced = !knownTs && !localPristine;
+        let merged;
+        if (hasUnsyncedLocal || neverSynced) {
+            const remoteWins = remoteTs >= localTs;
+            const byId = new Map();
+            (remoteWins ? localTabs : remoteTabs).forEach(t => byId.set(t.id, t));
+            (remoteWins ? remoteTabs : localTabs).forEach(t => byId.set(t.id, t));
+            merged = this.sanitizeNotesTabs(Array.from(byId.values()));
+        } else {
+            merged = this.sanitizeNotesTabs(remoteTabs);
+        }
+
+        this._applyingRemoteGlobalNotes = true;
+        try {
+            this.globalNotesTabs = merged;
+            if (!merged.some(t => t.id === this.activeGlobalNotesTabId)) this.activeGlobalNotesTabId = merged[0].id;
+            this._globalNotesJson = JSON.stringify(merged);
+            this._lastPushedGlobalNotesJson = (merged.length === remoteTabs.length && JSON.stringify(merged) === JSON.stringify(this.sanitizeNotesTabs(remoteTabs)))
+                ? this._globalNotesJson : null;
+            this.saveGlobalNotesTabs();
+        } finally {
+            this._applyingRemoteGlobalNotes = false;
+        }
+        localStorage.setItem('flowchart-global-notes-known-remote-at', String(remoteTs));
+        localStorage.setItem('flowchart-global-notes-updated-at', String(Math.max(remoteTs, hasUnsyncedLocal || neverSynced ? Date.now() : 0)));
+
+        if (this._activeNotesScope === 'global' && this.notesEditor) {
+            this.notesEditor.setData(this.getActiveNotesTab().content || '<p></p>');
+        }
+        this.renderNotesTabBar();
+        if (this._notesPaneEditors && this._notesPaneEditors.size) {
+            merged.forEach(t => this.syncNotesPanesShowingTab('global', t.id, t.content));
+        }
+        if (merged.length !== remoteTabs.length || this._lastPushedGlobalNotesJson === null) this.scheduleCloudPush();
     }
 
     // Helper methods for leaf node and green node detection
@@ -2806,6 +2922,10 @@ class FlowchartViewer {
         if (!el) return;
         el.style.height = 'auto';
         el.style.height = (el.scrollHeight + 2) + 'px';
+        if (this.nodeBeingEdited && this.nodeEditPopup.style.display === 'block' &&
+            window.matchMedia('(max-width: 600px)').matches) {
+            this.positionNodeEditPopupForMobile();
+        }
     }
 
     // Mobile-only fold state for the node edit menu's extra rows (Pugh/Morph
@@ -2828,6 +2948,7 @@ class FlowchartViewer {
     }
 
     showNodeEditPopup(d) {
+        this._nodePopupAnchorBottom = null;
         if (!d || !d.data) return;
 
         // Clicking straight from one node to another (rather than clicking
@@ -3030,43 +3151,9 @@ class FlowchartViewer {
             colorBtns.appendChild(yellowBtn);
             colorBtns.appendChild(emptyBtn);
 
-            const moveLeftBtn = document.createElement('button');
-            moveLeftBtn.textContent = '\u2190';
-            moveLeftBtn.title = 'Move left (swap with previous sibling)';
-            moveLeftBtn.style.background = 'var(--control-bg)';
-            moveLeftBtn.style.color = 'var(--text)';
-            moveLeftBtn.style.border = '1px solid var(--border)';
-            moveLeftBtn.style.borderRadius = '5px';
-            moveLeftBtn.style.padding = '6px 12px';
-            moveLeftBtn.style.cursor = 'pointer';
-            moveLeftBtn.onmousedown = (e) => e.preventDefault();
-            moveLeftBtn.onclick = () => this.moveNodeLeft();
-
-            const moveRightBtn = document.createElement('button');
-            moveRightBtn.textContent = '\u2192';
-            moveRightBtn.title = 'Move right (swap with next sibling)';
-            moveRightBtn.style.background = 'var(--control-bg)';
-            moveRightBtn.style.color = 'var(--text)';
-            moveRightBtn.style.border = '1px solid var(--border)';
-            moveRightBtn.style.borderRadius = '5px';
-            moveRightBtn.style.padding = '6px 12px';
-            moveRightBtn.style.cursor = 'pointer';
-            moveRightBtn.onmousedown = (e) => e.preventDefault();
-            moveRightBtn.onclick = () => this.moveNodeRight();
-
-            // Its own row, a flex sibling of colorBtns rather than appended
-            // inside it - on mobile (see CSS), the shared wrapper's wrap
-            // drops this row underneath the color buttons instead of
-            // crowding them into the same line; on desktop there's enough
-            // room for both side by side, same as before this was split out.
-            const moveBtnsRow = document.createElement('div');
-            moveBtnsRow.id = 'node-move-btns-row';
-            moveBtnsRow.style.display = 'flex';
-            moveBtnsRow.style.gap = '10px';
-            moveBtnsRow.style.justifyContent = 'center';
-            moveBtnsRow.appendChild(moveLeftBtn);
-            moveBtnsRow.appendChild(moveRightBtn);
-
+            // The move-left/right sibling-swap buttons now live in the radial
+            // F/C/M row (see refreshRadialButtons) so they hide along with the
+            // other node-action buttons instead of crowding this popup.
             const colorAndMoveWrap = document.createElement('div');
             colorAndMoveWrap.id = 'node-color-and-move-wrap';
             colorAndMoveWrap.style.display = 'flex';
@@ -3075,7 +3162,6 @@ class FlowchartViewer {
             colorAndMoveWrap.style.justifyContent = 'center';
             colorAndMoveWrap.style.marginBottom = '10px';
             colorAndMoveWrap.appendChild(colorBtns);
-            colorAndMoveWrap.appendChild(moveBtnsRow);
             this.nodeEditPopup.insertBefore(colorAndMoveWrap, this.nodeEditPopup.firstChild);
 
             // Second row: quick-add this node's name into the Pugh Matrix as either a
@@ -3211,6 +3297,7 @@ class FlowchartViewer {
         this.nodeEditInput.focus();
         this.nodeEditInput.select();
 
+        this._nodePopupAnchorBottom = null;
         this.positionNodeEditPopupForMobile();
         this.updateReflectionPanel(d);
     }
@@ -3257,9 +3344,58 @@ class FlowchartViewer {
         const viewportHeight = window.innerHeight;
         const topPosition = (viewportHeight * 0.375) + POPUP_BTN_HEIGHT;
 
-        this.nodeEditPopup.style.top = topPosition + 'px';
-        this.nodeEditPopup.style.bottom = 'auto';
-        this.nodeEditPopup.style.maxHeight = Math.max(120, viewportHeight - topPosition - 20) + 'px';
+        // The first time it's shown, it's placed by its top edge as before, and
+        // the resulting bottom edge is remembered. From then on the *bottom*
+        // edge is what stays put (clamped above the on-screen keyboard), so as
+        // the text wraps onto more lines the box grows upward instead of its
+        // last line sliding down behind the keyboard.
+        if (this._nodePopupAnchorBottom == null) {
+            this.nodeEditPopup.style.top = topPosition + 'px';
+            this.nodeEditPopup.style.bottom = 'auto';
+            this.nodeEditPopup.style.maxHeight = Math.max(120, viewportHeight - topPosition - 20) + 'px';
+            this._nodePopupAnchorBottom = topPosition + this.nodeEditPopup.offsetHeight;
+        }
+        const keyboardTop = viewportHeight - this.getKeyboardInset();
+        const bottomEdge = Math.min(this._nodePopupAnchorBottom, keyboardTop - 8);
+        this.nodeEditPopup.style.top = 'auto';
+        this.nodeEditPopup.style.bottom = Math.max(0, viewportHeight - bottomEdge) + 'px';
+        this.nodeEditPopup.style.maxHeight = Math.max(120, bottomEdge - 70) + 'px';
+    }
+
+    // How much of the bottom of the screen the on-screen keyboard currently
+    // covers. The app asks browsers to overlay the keyboard on top of the page
+    // instead of resizing it (see the viewport meta tag), and in that mode
+    // Chrome only reports it through navigator.virtualKeyboard, while iOS
+    // shrinks the visual viewport instead - so both are checked.
+    getKeyboardInset() {
+        let inset = 0;
+        try {
+            const vk = navigator.virtualKeyboard;
+            if (vk && vk.boundingRect) inset = vk.boundingRect.height || 0;
+        } catch (err) { /* unsupported */ }
+        const vv = window.visualViewport;
+        if (vv) inset = Math.max(inset, window.innerHeight - vv.height - vv.offsetTop);
+        return Math.max(0, inset);
+    }
+
+    // Runs whenever the keyboard opens/closes/changes height.
+    handleKeyboardChange() {
+        document.documentElement.style.setProperty('--kb-inset', this.getKeyboardInset() + 'px');
+        if (this.nodeBeingEdited && window.matchMedia('(max-width: 600px)').matches) {
+            this.positionNodeEditPopupForMobile();
+        }
+        this.ensureNotesCaretVisible();
+    }
+
+    setupKeyboardTracking() {
+        const handler = () => this.handleKeyboardChange();
+        try {
+            if (navigator.virtualKeyboard) navigator.virtualKeyboard.addEventListener('geometrychange', handler);
+        } catch (err) { /* unsupported */ }
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', handler);
+            window.visualViewport.addEventListener('scroll', handler);
+        }
     }
 
     // Updates one node's on-screen text/box directly, without touching any other DOM
@@ -3469,6 +3605,7 @@ class FlowchartViewer {
     hideNodeEditPopup(save = true, deferRender = false) {
         this._pendingNodeSave = false;
         if (save) this.saveNodeEdit(deferRender);
+        this._nodePopupAnchorBottom = null;
         this.nodeEditPopup.style.display = 'none';
         this.nodeBeingEdited = null;
         this._suppressPopupHide = false;
@@ -3789,6 +3926,8 @@ class FlowchartViewer {
             : this._leftPanelMode === 'notes' ? this._notesTabActive
             : questionsActive;
 
+        this.updateNotesDocScrollMode(isMobile && panelActive && this._leftPanelMode === 'notes');
+
         if (!isMobile) {
             if (this._notesFolded) this.unfoldNotesSection();
             this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
@@ -3827,6 +3966,9 @@ class FlowchartViewer {
     // there.
     foldNotesSection() {
         if (!window.matchMedia('(max-width: 600px)').matches) return;
+        // The Notes tab on mobile has its own scroll-driven sliding menu now
+        // (see updateNotesDocScrollMode) instead of folding the header away.
+        if (this._leftPanelMode === 'notes') return;
         if (this._notesFolded) return;
         this._notesFolded = true;
         if (this.leftPanelMain) this.leftPanelMain.style.display = 'none';
@@ -4453,15 +4595,8 @@ class FlowchartViewer {
     // showing, just brings that view forward; otherwise falls back to the Pugh Matrix
     // tab, since Notes isn't a view of its own anymore and needs something above it.
     openNotesPanel() {
-        if (this._leftPanelMode === 'questions' && this._reflectionQuestions) {
-            this._reflectionPanelActive = true;
-            this.applyMobileViewState();
-        } else {
-            this.openPughPanel();
-        }
-        if (this.notesEditor) {
-            this.notesEditor.editing.view.focus();
-        }
+        this._notesTabActive = true;
+        this.switchLeftPanelMode('notes');
     }
 
     switchLeftPanelMode(mode) {
@@ -4681,7 +4816,17 @@ class FlowchartViewer {
     // flowchartList payload, so it currently stays local to this browser
     // rather than following you to another computer.
     saveGlobalNotesTabs() {
-        localStorage.setItem('flowchart-global-notes-tabs', JSON.stringify(this.globalNotesTabs));
+        const json = JSON.stringify(this.globalNotesTabs);
+        // Stamps "last edited" only when the tabs' actual content changed (not
+        // when just the active tab/scope did) so Cloud Sync's last-write-wins
+        // comparison (see pullGlobalNotes/pushGlobalNotes) reflects real edits.
+        if (json !== this._globalNotesJson) {
+            this._globalNotesJson = json;
+            if (!this._applyingRemoteGlobalNotes) {
+                localStorage.setItem('flowchart-global-notes-updated-at', String(Date.now()));
+            }
+        }
+        localStorage.setItem('flowchart-global-notes-tabs', json);
         localStorage.setItem('flowchart-active-global-notes-tab', this.activeGlobalNotesTabId || '');
         localStorage.setItem('flowchart-active-notes-scope', this._activeNotesScope || 'chart');
     }
@@ -4828,6 +4973,7 @@ class FlowchartViewer {
         if (!old || !old.parentNode) return;
         old.replaceWith(this.buildNotesTabBar());
         this.updateNotesInsertDrawingBtnState();
+        this.updateNotesPickerLabel();
     }
 
     // Insert Drawing is disabled while a global tab is active (see renderNotesPanel)
@@ -4862,6 +5008,28 @@ class FlowchartViewer {
     buildNotesToolbar() {
         const row = document.createElement('div');
         row.className = 'notes-toolbar-row';
+        // Tapping a toolbar button must not pull focus out of the text (which
+        // would drop the caret and close the on-screen keyboard mid-edit).
+        row.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) e.preventDefault();
+        });
+
+        const makeBtn = (text, title, className, onClick) => {
+            const b = document.createElement('button');
+            b.className = 'notes-toolbar-btn' + (className ? ' ' + className : '');
+            b.type = 'button';
+            b.textContent = text;
+            b.title = title;
+            b.addEventListener('click', onClick);
+            return b;
+        };
+
+        // Mobile only (CSS): one button listing every note A-Z, instead of a
+        // row of tabs.
+        row.appendChild(makeBtn('📄 Notes ▾', 'Choose a note', 'notes-picker-btn', () => this.openNotesPicker()));
+        // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
+        row.appendChild(makeBtn('↩', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
+        row.appendChild(makeBtn('↪', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
         const insertDrawingBtn = document.createElement('button');
         insertDrawingBtn.className = 'notes-toolbar-btn notes-insert-drawing-btn';
@@ -4902,6 +5070,12 @@ class FlowchartViewer {
         highlightBtn.addEventListener('click', () => this.toggleNotesHighlight());
         row.appendChild(highlightBtn);
 
+        // Only shown while the caret is on a Title line (see updateNotesTitleControls).
+        row.appendChild(makeBtn('▾ Fold', 'Fold/unfold the text under this title', 'notes-title-ctrl notes-fold-this-btn', () => this.toggleCurrentTitleFold()));
+        row.appendChild(makeBtn('⇊ Fold all', 'Fold every title', 'notes-title-ctrl', () => this.foldAllTitles(true)));
+        row.appendChild(makeBtn('⇈ Unfold all', 'Unfold every title', 'notes-title-ctrl', () => this.foldAllTitles(false)));
+        row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
+
         const outdentBtn = document.createElement('button');
         outdentBtn.className = 'notes-toolbar-btn notes-outdent-btn';
         outdentBtn.type = 'button';
@@ -4926,7 +5100,12 @@ class FlowchartViewer {
         this.notesPanelBody.innerHTML = '';
         this.notesPanelBody.style.height = this._notesPanelHeight + 'px';
 
-        this.notesPanelBody.appendChild(this.buildNotesTabBar());
+        // Tab bar + toolbar live in one wrapper so they can stick to the top
+        // and slide away together on mobile (see updateNotesDocScrollMode).
+        const topMenu = document.createElement('div');
+        topMenu.id = 'notes-top-menu';
+        this.notesPanelBody.appendChild(topMenu);
+        topMenu.appendChild(this.buildNotesTabBar());
 
         const header = document.createElement('div');
         header.id = 'notes-panel-header-row';
@@ -4950,7 +5129,8 @@ class FlowchartViewer {
         fullscreenBtn.addEventListener('click', () => this.openNotesFullscreen());
         header.appendChild(fullscreenBtn);
 
-        this.notesPanelBody.appendChild(header);
+        topMenu.appendChild(header);
+        this.updateNotesPickerLabel();
 
         const editorWrap = document.createElement('div');
         editorWrap.id = 'notes-editor-wrap';
@@ -4974,7 +5154,7 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin()],
             noteMediaMarkerApp: this,
             // Only paragraph/heading4 ("Title") are offered - matches the old
             // Tiptap config (StarterKit's heading restricted to level 4 only).
@@ -5052,6 +5232,7 @@ class FlowchartViewer {
                 this._pendingNotesSave = true;
                 this.renderNotesMediaStrip();
             });
+            this.wireNotesEditorFeedback(editor, true);
 
             this.renderNotesMediaStrip();
         }).catch((err) => {
@@ -5070,6 +5251,20 @@ class FlowchartViewer {
     // this.notesEditor - the embedded one normally, or whichever full-screen pane
     // is currently focused, so the one relocated toolbar (see buildNotesToolbar)
     // can serve either view.
+    undoNotesEdit() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        editor.execute('undo');
+        editor.editing.view.focus();
+    }
+
+    redoNotesEdit() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        editor.execute('redo');
+        editor.editing.view.focus();
+    }
+
     toggleNotesChecklist() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
@@ -5543,6 +5738,415 @@ class FlowchartViewer {
 
         this._NoteMediaMarkerPlugin = NoteMediaMarkerPlugin;
         return this._NoteMediaMarkerPlugin;
+    }
+
+    // A second custom CKEditor plugin: lets a Title (heading4) line be folded,
+    // hiding every block between it and the next Title. The folded flag is a
+    // model attribute on the Title, saved as data-folded="true" on its <h4> so
+    // it survives reloads/sync; the hiding itself is a class added to the
+    // following blocks' editing-view elements (re-applied after every change,
+    // since reconverting an element drops it) and never touches the saved data.
+    getNoteTitleFoldPlugin() {
+        if (this._NoteTitleFoldPlugin) return this._NoteTitleFoldPlugin;
+        const { Plugin } = window.CKEDITOR;
+
+        class NoteTitleFoldPlugin extends Plugin {
+            static get pluginName() { return 'NoteTitleFold'; }
+
+            afterInit() {
+                const editor = this.editor;
+                editor.model.schema.extend('heading4', { allowAttributes: ['folded'] });
+                editor.conversion.for('upcast').attributeToAttribute({
+                    view: { name: 'h4', key: 'data-folded' },
+                    model: { key: 'folded', value: () => true },
+                });
+                editor.conversion.for('downcast').attributeToAttribute({
+                    model: { name: 'heading4', key: 'folded' },
+                    view: () => ({ key: 'data-folded', value: 'true' }),
+                });
+
+                let anyHidden = false;
+                const applyFolds = () => {
+                    const root = editor.model.document.getRoot();
+                    if (!root) return;
+                    const tasks = [];
+                    let hiding = false;
+                    let anyFolded = false;
+                    for (const child of root.getChildren()) {
+                        if (child.is('element', 'heading4')) {
+                            hiding = !!child.getAttribute('folded');
+                            if (hiding) anyFolded = true;
+                            tasks.push([child, false]);
+                        } else {
+                            tasks.push([child, hiding]);
+                        }
+                    }
+                    if (!anyFolded && !anyHidden) return;
+                    anyHidden = anyFolded;
+                    editor.editing.view.change((writer) => {
+                        for (const [child, hide] of tasks) {
+                            let viewEl = editor.editing.mapper.toViewElement(child);
+                            if (!viewEl) continue;
+                            while (viewEl.parent && !viewEl.parent.is('editableElement')) viewEl = viewEl.parent;
+                            if (!viewEl.parent) continue;
+                            if (hide) writer.addClass('note-folded-hidden', viewEl);
+                            else writer.removeClass('note-folded-hidden', viewEl);
+                        }
+                    });
+                };
+                editor.model.document.on('change:data', applyFolds, { priority: 'low' });
+                editor.once('ready', () => {
+                    applyFolds();
+                    // Tapping the arrow drawn before a Title (see the h4::before
+                    // rule in style.css) folds/unfolds it.
+                    const dom = editor.editing.view.getDomRoot();
+                    if (!dom) return;
+                    dom.addEventListener('click', (e) => {
+                        const h = e.target && e.target.closest ? e.target.closest('h4') : null;
+                        if (!h || !dom.contains(h)) return;
+                        const rect = h.getBoundingClientRect();
+                        const zoom = h.offsetWidth ? rect.width / h.offsetWidth : 1;
+                        const fontSize = parseFloat(getComputedStyle(h).fontSize) || 30;
+                        if (e.clientX - rect.left > fontSize * 1.3 * zoom) return;
+                        const viewEl = editor.editing.view.domConverter.mapDomToView(h);
+                        const modelEl = viewEl && editor.editing.mapper.toModelElement(viewEl);
+                        if (modelEl && modelEl.is('element', 'heading4')) {
+                            e.preventDefault();
+                            const app = editor.notesApp;
+                            if (app) app.toggleTitleFold(editor, modelEl);
+                        }
+                    });
+                });
+            }
+        }
+
+        this._NoteTitleFoldPlugin = NoteTitleFoldPlugin;
+        return this._NoteTitleFoldPlugin;
+    }
+
+    toggleTitleFold(editor, titleEl, force) {
+        if (!editor || !titleEl) return;
+        const next = force === undefined ? !titleEl.getAttribute('folded') : force;
+        editor.model.enqueueChange({ isUndoable: false }, (writer) => {
+            if (next) writer.setAttribute('folded', true, titleEl);
+            else writer.removeAttribute('folded', titleEl);
+        });
+        this.updateNotesTitleControls();
+        this._pendingNotesSave = true;
+    }
+
+    getTitleOfSelection(editor) {
+        if (!editor) return null;
+        const pos = editor.model.document.selection.getFirstPosition();
+        const parent = pos && pos.parent;
+        return (parent && parent.is('element', 'heading4')) ? parent : null;
+    }
+
+    toggleCurrentTitleFold() {
+        const { editor } = this.getActiveNotesTarget();
+        this.toggleTitleFold(editor, this.getTitleOfSelection(editor));
+    }
+
+    foldAllTitles(fold) {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+        editor.model.enqueueChange({ isUndoable: false }, (writer) => {
+            titles.forEach((t) => {
+                if (fold) writer.setAttribute('folded', true, t);
+                else writer.removeAttribute('folded', t);
+            });
+        });
+        this.updateNotesTitleControls();
+        this._pendingNotesSave = true;
+    }
+
+    // The fold/unfold/fold-all/unfold-all buttons only show while the caret is
+    // on a Title line (see buildNotesToolbar).
+    updateNotesTitleControls() {
+        const { editor } = this.getActiveNotesTarget();
+        const title = this.getTitleOfSelection(editor);
+        document.querySelectorAll('.notes-title-ctrl').forEach(b => b.classList.toggle('show', !!title));
+        document.querySelectorAll('.notes-fold-this-btn').forEach((b) => {
+            b.textContent = title && title.getAttribute('folded') ? '▸ Unfold' : '▾ Fold';
+        });
+    }
+
+    // ---- Generic list popup, used by the mobile note picker and the Titles
+    // list. buildConfig is re-run on refresh so rows reflect changes made from
+    // inside the popup itself (rename/delete/new note).
+    showNotesListPopup(buildConfig) {
+        const existing = document.getElementById('notes-list-overlay');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'notes-list-overlay';
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        const card = document.createElement('div');
+        card.className = 'notes-list-popup';
+        overlay.appendChild(card);
+
+        const render = () => {
+            const cfg = buildConfig({ close, refresh: render });
+            card.innerHTML = '';
+            const head = document.createElement('div');
+            head.className = 'notes-list-head';
+            const title = document.createElement('div');
+            title.className = 'notes-list-title';
+            title.textContent = cfg.title;
+            head.appendChild(title);
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'notes-list-close';
+            x.textContent = '×';
+            x.addEventListener('click', close);
+            head.appendChild(x);
+            card.appendChild(head);
+
+            const list = document.createElement('div');
+            list.className = 'notes-list-items';
+            if (!cfg.items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'notes-list-empty';
+                empty.textContent = cfg.emptyText || 'Nothing here yet.';
+                list.appendChild(empty);
+            }
+            cfg.items.forEach((item) => {
+                const row = document.createElement('div');
+                row.className = 'notes-list-item' + (item.active ? ' active' : '');
+                const main = document.createElement('button');
+                main.type = 'button';
+                main.className = 'notes-list-main';
+                const label = document.createElement('span');
+                label.textContent = item.label;
+                main.appendChild(label);
+                if (item.sub) {
+                    const sub = document.createElement('small');
+                    sub.textContent = item.sub;
+                    main.appendChild(sub);
+                }
+                main.addEventListener('click', () => item.onClick({ close, refresh: render }));
+                row.appendChild(main);
+                (item.actions || []).forEach((a) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'notes-list-action';
+                    b.textContent = a.label;
+                    b.title = a.title || '';
+                    b.addEventListener('click', (e) => { e.stopPropagation(); a.onClick({ close, refresh: render }); });
+                    row.appendChild(b);
+                });
+                list.appendChild(row);
+            });
+            card.appendChild(list);
+
+            if (cfg.footer && cfg.footer.length) {
+                const foot = document.createElement('div');
+                foot.className = 'notes-list-foot';
+                cfg.footer.forEach((f) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.textContent = f.label;
+                    b.addEventListener('click', () => f.onClick({ close, refresh: render }));
+                    foot.appendChild(b);
+                });
+                card.appendChild(foot);
+            }
+        };
+        render();
+        document.body.appendChild(overlay);
+    }
+
+    // Every note - global and this flowchart's - in one alphabetical list,
+    // replacing the row of tabs on mobile.
+    openNotesPicker() {
+        this.showNotesListPopup(({ close, refresh }) => {
+            const all = [];
+            this.globalNotesTabs.forEach(tab => all.push({ scope: 'global', tab }));
+            this.notesTabs.forEach(tab => all.push({ scope: 'chart', tab }));
+            all.sort((a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase()));
+            return {
+                title: 'All notes (A–Z)',
+                items: all.map(({ scope, tab }) => ({
+                    label: tab.name || 'Untitled',
+                    sub: scope === 'global' ? 'Global' : 'This flowchart',
+                    active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
+                    onClick: () => { this.switchNotesTab(scope, tab.id); close(); },
+                    actions: [
+                        {
+                            label: '✎', title: 'Rename',
+                            onClick: () => {
+                                const name = window.prompt('Rename note', tab.name || '');
+                                if (name === null) return;
+                                this.renameNotesTab(scope, tab.id, name);
+                                this.renderNotesTabBar();
+                                refresh();
+                            }
+                        },
+                        ...(this.getNotesTabsList(scope).length > 1 ? [{
+                            label: '×', title: 'Delete',
+                            onClick: async () => {
+                                const ok = await this.showConfirmDialog(`Delete "${tab.name || 'Untitled'}"? This can't be undone.`);
+                                if (!ok) return;
+                                this.deleteNotesTab(scope, tab.id);
+                                refresh();
+                            }
+                        }] : [])
+                    ]
+                })),
+                footer: [
+                    { label: '+ New global note', onClick: () => { this.addNotesTab('global'); close(); } },
+                    { label: '+ New note (this flowchart)', onClick: () => { this.addNotesTab('chart'); close(); } },
+                ]
+            };
+        });
+    }
+
+    updateNotesPickerLabel() {
+        const tab = this.getActiveNotesTab();
+        document.querySelectorAll('.notes-picker-btn').forEach((b) => {
+            b.textContent = `📄 ${tab.name || 'Untitled'} ▾`;
+        });
+    }
+
+    // Jump list of every Title in the open note.
+    openNotesTitleList() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+        this.showNotesListPopup(({ close }) => ({
+            title: 'Titles',
+            emptyText: 'No titles in this note yet - use the Title button to make one.',
+            items: titles.map((t) => {
+                let text = '';
+                for (const item of t.getChildren()) if (item.is('$text')) text += item.data;
+                return {
+                    label: text.trim() || '(untitled)',
+                    sub: t.getAttribute('folded') ? 'Folded' : '',
+                    onClick: () => { close(); this.jumpToNotesTitle(editor, t); }
+                };
+            }),
+            footer: []
+        }));
+    }
+
+    jumpToNotesTitle(editor, titleEl) {
+        editor.model.change(writer => writer.setSelection(writer.createPositionAt(titleEl, 'end')));
+        const viewEl = editor.editing.mapper.toViewElement(titleEl);
+        const dom = viewEl && editor.editing.view.domConverter.mapViewToDom(viewEl);
+        this.lockNotesMenu(1000);
+        if (dom) dom.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+
+    // ---- Mobile Notes: document-level scrolling + auto-hiding top menu ----
+    // On mobile, while the Notes tab is open the page itself scrolls (instead
+    // of a fixed full-screen panel scrolling internally), which is what lets
+    // the browser's own address bar slide away like it does on other sites.
+    // The tab header and Notes toolbar are sticky at the top and slide out of
+    // view while scrolling down, back in while scrolling up, and come back
+    // whenever the person taps into the text or types.
+    updateNotesDocScrollMode(on) {
+        const had = document.body.classList.contains('notes-doc-scroll');
+        document.documentElement.classList.toggle('notes-doc-scroll', on);
+        document.body.classList.toggle('notes-doc-scroll', on);
+        if (on && !had) {
+            window.scrollTo(0, 0);
+            this.setupNotesAutoHideMenu();
+            this.showNotesMenu();
+            this.updateNotesPickerLabel();
+        } else if (!on && had) {
+            document.body.classList.remove('notes-menu-hidden');
+            window.scrollTo(0, 0);
+        }
+        if (on) {
+            const header = document.getElementById('reflection-panel-header');
+            if (header) document.documentElement.style.setProperty('--lp-header-h', header.offsetHeight + 'px');
+        }
+    }
+
+    lockNotesMenu(ms = 700) {
+        this._notesMenuLockUntil = Date.now() + ms;
+    }
+
+    showNotesMenu() {
+        document.body.classList.remove('notes-menu-hidden');
+    }
+
+    hideNotesMenu() {
+        document.body.classList.add('notes-menu-hidden');
+    }
+
+    setupNotesAutoHideMenu() {
+        if (this._notesAutoHideSetup) return;
+        this._notesAutoHideSetup = true;
+        let lastY = window.scrollY;
+        window.addEventListener('scroll', () => {
+            const y = window.scrollY;
+            const dy = y - lastY;
+            lastY = y;
+            if (!document.body.classList.contains('notes-doc-scroll')) return;
+            if (Date.now() < (this._notesMenuLockUntil || 0)) return;
+            if (y < 60) { this.showNotesMenu(); return; }
+            if (dy > 6) this.hideNotesMenu();
+            else if (dy < -6) this.showNotesMenu();
+        }, { passive: true });
+    }
+
+    // Called as the person types: if the caret has moved to (or past) the
+    // bottom edge of what the on-screen keyboard leaves visible - e.g. text
+    // wrapped onto a new line or Enter made one - scrolls the page just enough
+    // to keep the caret line (plus one more line of breathing room) in view.
+    ensureNotesCaretVisible() {
+        if (!document.body.classList.contains('notes-doc-scroll')) return;
+        const editor = this.notesEditor;
+        if (!editor || !editor.ui.focusTracker.isFocused) return;
+        requestAnimationFrame(() => {
+            const sel = window.getSelection();
+            if (!sel || !sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            let rect = range.getClientRects()[0] || range.getBoundingClientRect();
+            if (!rect || (!rect.height && !rect.top)) {
+                const el = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+                if (!el) return;
+                rect = el.getBoundingClientRect();
+            }
+            const lineH = rect.height || 20;
+            const viewBottom = window.innerHeight - this.getKeyboardInset();
+            const menuVisible = !document.body.classList.contains('notes-menu-hidden');
+            const header = document.getElementById('reflection-panel-header');
+            const menu = document.getElementById('notes-top-menu');
+            const topLimit = menuVisible ? ((header ? header.offsetHeight : 0) + (menu ? menu.offsetHeight : 0)) : 0;
+            this.lockNotesMenu(500);
+            if (rect.bottom + lineH * 1.5 > viewBottom) {
+                window.scrollBy(0, rect.bottom + lineH * 1.5 - viewBottom);
+            } else if (rect.top < topLimit) {
+                window.scrollBy(0, rect.top - topLimit - lineH);
+            }
+        });
+    }
+
+    // Shared by the embedded editor and every full-screen pane: wires up
+    // everything that reacts to what the caret/typing is doing.
+    wireNotesEditorFeedback(editor, isEmbedded) {
+        editor.model.document.selection.on('change:range', () => this.updateNotesTitleControls());
+        editor.model.document.on('change:data', () => {
+            this.updateNotesTitleControls();
+            if (isEmbedded) {
+                this.showNotesMenu();
+                this.lockNotesMenu(700);
+                this.ensureNotesCaretVisible();
+            }
+        });
+        if (isEmbedded) {
+            const dom = editor.editing.view.getDomRoot();
+            if (dom) {
+                dom.addEventListener('click', () => {
+                    this.showNotesMenu();
+                    this.lockNotesMenu(700);
+                });
+            }
+        }
     }
 
     // Shared by the drawing tool - drops a [[type:id]] marker on its own line at
@@ -6163,7 +6767,7 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin()],
             noteMediaMarkerApp: this,
             heading: {
                 options: [
@@ -6218,6 +6822,7 @@ class FlowchartViewer {
                 this._pendingNotesSave = true;
                 this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
             });
+            this.wireNotesEditorFeedback(editor, false);
             editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
                 if (isFocused) {
                     // The relocated toolbar (see buildNotesToolbar) acts on whichever
@@ -6997,8 +7602,8 @@ class FlowchartViewer {
         this.swapNodeWithSibling(1);
     }
 
-    swapNodeWithSibling(direction) {
-        const d = this.nodeBeingEdited;
+    swapNodeWithSibling(direction, node = this.nodeBeingEdited) {
+        const d = node;
         if (!d || !d.parent) return;
         const siblings = d.parent.data.children;
         if (!Array.isArray(siblings)) return;
@@ -9333,6 +9938,10 @@ class FlowchartViewer {
         // button having a hardcoded offset (which is what made the row look lopsided
         // before). F (fold) always sits immediately left of C (make connection).
         const deleteRowBtns = [];
+        if (targetDatum.parent) {
+            deleteRowBtns.push({ label: '←', activate: () => self.swapNodeWithSibling(-1, targetDatum), fontSize: 22 });
+            deleteRowBtns.push({ label: '→', activate: () => self.swapNodeWithSibling(1, targetDatum), fontSize: 22 });
+        }
         if (canFold) deleteRowBtns.push({ label: 'F', activate: activateFold });
         deleteRowBtns.push({ label: 'C', activate: activateMakeConnection });
         deleteRowBtns.push({ label: 'M', activate: activateMove });

@@ -665,6 +665,9 @@ create policy "allow all" on flowchart_sync
       if (window.visualViewport) {
         const vv = window.visualViewport;
         const resetScroll = () => {
+          // The mobile Notes tab scrolls the page on purpose (see
+          // updateNotesDocScrollMode in script.js) - don't fight it.
+          if (document.body && document.body.classList.contains('notes-doc-scroll')) return;
           if (window.scrollX !== 0 || window.scrollY !== 0) {
             window.scrollTo(0, 0);
           }

@@ -370,8 +370,17 @@ body {
        once indentation ate into the available width. Overflowing past the
        visible box at deep indent levels is expected - #notes-editor-wrap's
        horizontal scroll is how the rest is reached. */
-    width: 50ch !important;
+    width: 52ch !important;
     flex-shrink: 0;
+}
+
+/* Selected text uses the app's green with white text (same as the active
+   tab) instead of the browser's default selection colors. */
+::selection,
+#notes-editor-wrap .ck.ck-content ::selection,
+.notes-editor-wrap-el .ck.ck-content ::selection {
+    background: #00a67e !important;
+    color: #ffffff !important;
 }
 
 #notes-editor-wrap .ck.ck-content > * + * , .notes-editor-wrap-el .ck.ck-content > * + * {
@@ -2209,4 +2218,295 @@ input[type="range"]::-moz-range-progress {
     height: 4px !important;
     border-radius: 2px !important;
     background: #00a67e !important;
+}
+
+/* ===== Notes: fold-able titles ===== */
+#notes-editor-wrap .ck.ck-content .note-folded-hidden,
+.notes-editor-wrap-el .ck.ck-content .note-folded-hidden {
+    display: none !important;
+}
+
+/* An arrow before every Title - tapping it folds/unfolds the text under it
+   (see getNoteTitleFoldPlugin). Purely visual: not part of the saved text. */
+#notes-editor-wrap .ck.ck-content h4::before,
+.notes-editor-wrap-el .ck.ck-content h4::before {
+    content: '▾';
+    display: inline-block;
+    width: 1.1em;
+    margin-right: 0.15em;
+    font-size: 0.7em;
+    color: var(--muted);
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+#notes-editor-wrap .ck.ck-content h4[data-folded]::before,
+.notes-editor-wrap-el .ck.ck-content h4[data-folded]::before {
+    content: '▸';
+    color: var(--accent);
+}
+
+#notes-editor-wrap .ck.ck-content h4,
+.notes-editor-wrap-el .ck.ck-content h4 {
+    scroll-margin-top: 140px;
+}
+
+/* Fold/unfold buttons only appear while the caret is on a Title line. */
+.notes-title-ctrl {
+    display: none;
+}
+
+.notes-title-ctrl.show {
+    display: inline-block;
+}
+
+/* Mobile-only toolbar items: the note picker (replaces the row of tabs) and
+   undo/redo. Desktop keeps its tab bar and Ctrl+Z/Ctrl+Y. */
+.notes-picker-btn,
+.notes-undo-btn,
+.notes-redo-btn {
+    display: none;
+}
+
+/* ===== List popups (note picker, title list) ===== */
+#notes-list-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 7000;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 8vh 12px 12px;
+    box-sizing: border-box;
+}
+
+.notes-list-popup {
+    background: var(--popup-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+.notes-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.notes-list-title {
+    font-weight: bold;
+    font-size: 15px;
+}
+
+.notes-list-close {
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.notes-list-items {
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px;
+}
+
+.notes-list-empty {
+    padding: 16px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.notes-list-item {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    border-radius: 6px;
+}
+
+.notes-list-item.active {
+    background: rgba(0, 166, 126, 0.22);
+}
+
+.notes-list-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 15px;
+    padding: 10px 10px;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.notes-list-main span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notes-list-main small {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.notes-list-action {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 17px;
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.notes-list-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.notes-list-foot button {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    padding: 9px 10px;
+    cursor: pointer;
+}
+
+/* ===== Mobile Notes ===== */
+@media (max-width: 600px) {
+    .notes-picker-btn,
+    .notes-undo-btn,
+    .notes-redo-btn {
+        display: inline-block;
+    }
+
+    /* The picker replaces the row of tabs. */
+    #notes-tab-bar {
+        display: none;
+    }
+
+    #notes-panel-label {
+        display: none;
+    }
+
+    /* One horizontally scrollable toolbar row rather than wrapping onto
+       several lines, so the sliding menu stays short. */
+    #notes-panel-header-row .notes-toolbar-row {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 2px;
+    }
+
+    #notes-panel-header-row .notes-toolbar-btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+
+    /* --- The Notes tab scrolls the page itself (see updateNotesDocScrollMode)
+       so the browser's address bar can slide away like on other sites. --- */
+    html.notes-doc-scroll,
+    body.notes-doc-scroll,
+    body.notes-doc-scroll .container {
+        position: static !important;
+        inset: auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+        width: 100% !important;
+        overflow: visible !important;
+    }
+
+    body.notes-doc-scroll .flowchart-panel {
+        display: none !important;
+    }
+
+    body.notes-doc-scroll #reflection-panel {
+        position: static !important;
+        display: flex !important;
+        flex-direction: column;
+        height: auto !important;
+        min-height: calc(100vh + 2px);
+        width: 100% !important;
+        max-width: 100% !important;
+        box-shadow: none;
+        border-right: none;
+        overflow: visible !important;
+    }
+
+    body.notes-doc-scroll #reflection-panel-header {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        background: var(--popup-bg);
+        overflow: visible;
+        transition: transform 0.22s ease;
+    }
+
+    body.notes-doc-scroll #notes-panel-body {
+        display: block;
+        flex: none !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    body.notes-doc-scroll #notes-top-menu {
+        position: sticky;
+        top: calc(var(--lp-header-h, 0px) / var(--panel-zoom, 1));
+        z-index: 29;
+        background: var(--popup-bg);
+        padding-top: 2px;
+        transition: top 0.22s ease, transform 0.22s ease;
+    }
+
+    body.notes-doc-scroll.notes-menu-hidden #reflection-panel-header {
+        transform: translateY(-110%);
+    }
+
+    body.notes-doc-scroll.notes-menu-hidden #notes-top-menu {
+        top: 0;
+        transform: translateY(-110%);
+    }
+
+    body.notes-doc-scroll #notes-editor-wrap {
+        flex: none;
+        height: auto;
+        min-height: 70vh;
+        overflow-x: auto;
+        overflow-y: visible;
+    }
+
+    /* Room below the last line to scroll it above the on-screen keyboard. */
+    body.notes-doc-scroll #notes-editor-wrap .ck.ck-content {
+        padding-bottom: calc(40vh + var(--kb-inset, 0px)) !important;
+        min-height: 70vh;
+    }
+
+    body.notes-doc-scroll #notes-drawings-strip {
+        padding-bottom: calc(var(--kb-inset, 0px) + 10px);
+    }
 }
