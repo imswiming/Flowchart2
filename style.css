@@ -486,7 +486,10 @@ body {
 #notes-tab-bar {
     display: flex;
     flex-wrap: wrap;
-    margin-top: 4px;
+    /* A divider line separating the tabs from the editing buttons above. */
+    border-top: 2px solid var(--border);
+    margin-top: 6px;
+    padding-top: 8px;
     padding-bottom: 4px;
     align-items: center;
     gap: 4px;
