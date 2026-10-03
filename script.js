@@ -3380,11 +3380,19 @@ class FlowchartViewer {
 
     // Runs whenever the keyboard opens/closes/changes height.
     handleKeyboardChange() {
-        document.documentElement.style.setProperty('--kb-inset', this.getKeyboardInset() + 'px');
+        const inset = this.getKeyboardInset();
+        document.documentElement.style.setProperty('--kb-inset', inset + 'px');
         if (this.nodeBeingEdited && window.matchMedia('(max-width: 600px)').matches) {
             this.positionNodeEditPopupForMobile();
         }
-        this.ensureNotesCaretVisible();
+        // visualViewport also fires scroll/resize while the person is simply
+        // scrolling (the address bar sliding away resizes it) - only an actual
+        // keyboard open/close/resize should pull the view back to the caret,
+        // never ordinary scrolling.
+        if (inset !== this._lastKeyboardInset) {
+            this._lastKeyboardInset = inset;
+            this.ensureNotesCaretVisible();
+        }
     }
 
     setupKeyboardTracking() {
@@ -6158,12 +6166,18 @@ class FlowchartViewer {
             if (isEmbedded) {
                 this.showNotesMenu();
                 this.lockNotesMenu(700);
-                this.ensureNotesCaretVisible();
+                // Only follow the caret for edits the person is actively
+                // typing - not programmatic changes (sync, setData) or scrolling.
+                if (Date.now() - (this._lastNotesTypingAt || 0) < 1000) this.ensureNotesCaretVisible();
             }
         });
         if (isEmbedded) {
             const dom = editor.editing.view.getDomRoot();
             if (dom) {
+                const markTyping = () => { this._lastNotesTypingAt = Date.now(); };
+                dom.addEventListener('beforeinput', markTyping);
+                dom.addEventListener('keydown', markTyping);
+                dom.addEventListener('compositionupdate', markTyping);
                 dom.addEventListener('click', () => {
                     this.showNotesMenu();
                     this.lockNotesMenu(700);
