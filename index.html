@@ -6,7 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
   <title>Flowchart Editor</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <!-- d3 and CKEditor are served from this site (not a third-party CDN) and
+       deferred, so the page isn't held up waiting on them to download before
+       anything can paint; deferred scripts still run in this order, before
+       script.js, which needs both. -->
+  <script src="d3.v7.min.js" defer></script>
   <!-- Notes uses CKEditor 5 as its rich-text backend, vendored locally
        (vendor/ckeditor5/) rather than loaded from ckeditor.com's own CDN -
        CKEditor's CDN build requires a paid license key even for basic use;
@@ -16,7 +20,7 @@
        synchronously, so it's guaranteed ready before script.js (deferred)
        runs. -->
   <link rel="stylesheet" href="vendor/ckeditor5/ckeditor5.css">
-  <script src="vendor/ckeditor5/ckeditor5.umd.js"></script>
+  <script src="vendor/ckeditor5/ckeditor5.umd.js" defer></script>
   <script src="script.js" defer></script>
   <style>
     /* Hamburger menu styles */

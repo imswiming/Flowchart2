@@ -441,10 +441,8 @@ class FlowchartViewer {
         this.updateArrangementButtonLabels();
         this.applyMobileViewState();
 
-        // On a phone the Notes section is what opens first.
-        if (window.matchMedia('(max-width: 600px)').matches) {
-            this.openNotesPanel();
-        }
+        // The Notes section is what opens first, on every screen size.
+        this.openNotesPanel();
 
         // Re-render on real window resizes and orientation changes so the SVG's
         // viewBox/width/height actually track the container's new size - otherwise the
@@ -10501,10 +10499,11 @@ class FlowchartViewer {
     }
 }
 
-// Initialize the viewer when the page loads. CKEditor's UMD build (see
-// index.html) is a plain, non-deferred script tag, so window.CKEDITOR is
-// already available by the time this (deferred) script runs - no async
-// wait needed, unlike the old Tiptap ESM loader this replaced.
+// Initialize the viewer when the page loads. d3 and CKEditor's UMD build (see
+// index.html) are deferred scripts listed before this one, and deferred
+// scripts run in order, so d3 and window.CKEDITOR are both already available
+// by the time this runs - no async wait needed, unlike the old Tiptap ESM
+// loader this replaced.
 document.addEventListener('DOMContentLoaded', () => {
     new FlowchartViewer();
 });
