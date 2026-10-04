@@ -238,6 +238,14 @@ class FlowchartViewer {
                 t.spellcheck = false;
             }
         });
+        const flushNotes = () => {
+            if (this._pendingNotesSave) {
+                this._pendingNotesSave = false;
+                this.autosave();
+            }
+        };
+        document.addEventListener('visibilitychange', () => { if (document.hidden) flushNotes(); });
+        window.addEventListener('pagehide', flushNotes);
         this.calibrateNotesLineWidth();
         if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.calibrateNotesLineWidth());
         this.setupKeyboardTracking();
@@ -1098,7 +1106,7 @@ class FlowchartViewer {
         if (!headRow) return;
         const remoteTs = Number(headRow.updated_at) || 0;
         const knownTs = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
-        if (remoteTs <= knownTs) return;
+        if (remoteTs === knownTs) return;
 
         const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${id}&select=updated_at,data`, {
             headers: this.cloudHeaders({ 'Accept': 'application/json' })
@@ -1108,8 +1116,10 @@ class FlowchartViewer {
         const remoteTabs = row && row.data && row.data.tabs;
         if (!Array.isArray(remoteTabs) || remoteTabs.length === 0) return;
 
-        const editorFocused = this.notesEditor && this.notesEditor.ui.focusTracker.isFocused;
-        if (editorFocused && this._activeNotesScope === 'global') return; // don't yank text out from under the caret; next poll retries
+        // Don't swap the text out while the person is actively typing in it (the next
+        // poll retries); if the note is merely open/focused, it's updated in place.
+        const typingNow = Date.now() - (this._lastNotesTypingAt || 0) < 3000;
+        if (this._activeNotesScope === 'global' && this.notesEditor && this.notesEditor.ui.focusTracker.isFocused && typingNow) return;
 
         const localTs = Number(localStorage.getItem('flowchart-global-notes-updated-at')) || 0;
         const localTabs = this.globalNotesTabs;
@@ -1142,7 +1152,22 @@ class FlowchartViewer {
         localStorage.setItem('flowchart-global-notes-updated-at', String(Math.max(remoteTs, hasUnsyncedLocal || neverSynced ? Date.now() : 0)));
 
         if (this._activeNotesScope === 'global' && this.notesEditor) {
-            this.notesEditor.setData(this.getActiveNotesTab().content || '<p></p>');
+            const ed = this.notesEditor;
+            const path = ed.ui.focusTracker.isFocused ? ed.model.document.selection.getFirstPosition().path.slice() : null;
+            this._applyingRemoteGlobalNotes = true;
+            try {
+                ed.setData(this.getActiveNotesTab().content || '<p></p>');
+                // Whatever the editor normalized the HTML to becomes the baseline,
+                // so this update isn't mistaken for a local edit and bounced back.
+                this.saveGlobalNotesTabs();
+            } finally {
+                this._applyingRemoteGlobalNotes = false;
+            }
+            if (path) {
+                try {
+                    ed.model.change(w => w.setSelection(ed.model.createPositionFromPath(ed.model.document.getRoot(), path)));
+                } catch (err) { /* the text got shorter - leave the caret where it landed */ }
+            }
         }
         this.renderNotesTabBar();
         if (this._notesPaneEditors && this._notesPaneEditors.size) {
@@ -4864,7 +4889,11 @@ class FlowchartViewer {
         if (json !== this._globalNotesJson) {
             this._globalNotesJson = json;
             if (!this._applyingRemoteGlobalNotes) {
-                localStorage.setItem('flowchart-global-notes-updated-at', String(Date.now()));
+                // Never lower than the version already in the cloud, even if this
+                // device's clock runs behind another's - otherwise the edit would
+                // look older than what it replaces and other devices would ignore it.
+                const known = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
+                localStorage.setItem('flowchart-global-notes-updated-at', String(Math.max(Date.now(), known + 1)));
             }
         }
         localStorage.setItem('flowchart-global-notes-tabs', json);
@@ -5426,7 +5455,10 @@ class FlowchartViewer {
 
             editor.model.document.on('change:data', () => {
                 this.globalNotes = editor.getData();
-                this._pendingNotesSave = true;
+                if (!this._applyingRemoteGlobalNotes) {
+                    this._pendingNotesSave = true;
+                    this.scheduleNotesAutosave();
+                }
                 this.renderNotesMediaStrip();
             });
             this.wireNotesEditorFeedback(editor, true);
@@ -5448,6 +5480,19 @@ class FlowchartViewer {
     // this.notesEditor - the embedded one normally, or whichever full-screen pane
     // is currently focused, so the one relocated toolbar (see buildNotesToolbar)
     // can serve either view.
+    // Saves (and so syncs) a couple of seconds after typing pauses, rather than
+    // only when the text loses focus - a note left open on one device would
+    // otherwise never reach the others. Also flushed when the page is hidden.
+    scheduleNotesAutosave() {
+        clearTimeout(this._notesTypingSaveTimer);
+        this._notesTypingSaveTimer = setTimeout(() => {
+            if (this._pendingNotesSave) {
+                this._pendingNotesSave = false;
+                this.autosave();
+            }
+        }, 2000);
+    }
+
     undoNotesEdit() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
@@ -5475,7 +5520,12 @@ class FlowchartViewer {
     toggleNotesTitle() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
-        const isTitle = editor.commands.get('heading').value === 'heading4';
+        // Toggles off only when *every* selected line is already a title - a
+        // selection that merely starts in (or includes) an existing title plus
+        // other lines makes all of them titles, instead of the first line's
+        // state flipping every other line the wrong way.
+        const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
+        const isTitle = blocks.length > 0 && blocks.every(b => b.is('element', 'heading4'));
         editor.execute(isTitle ? 'paragraph' : 'heading', isTitle ? undefined : { value: 'heading4' });
         editor.editing.view.focus();
     }
@@ -7186,6 +7236,7 @@ class FlowchartViewer {
                 const liveTab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
                 if (liveTab) liveTab.content = newContent;
                 this._pendingNotesSave = true;
+                this.scheduleNotesAutosave();
                 this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
             });
             this.wireNotesEditorFeedback(editor, false);
