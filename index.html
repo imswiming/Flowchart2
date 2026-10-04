@@ -633,6 +633,21 @@ create policy "allow all" on flowchart_sync
   </div>
 
   <script>
+    // Keep the app's files cached on the device (see sw.js) so repeat visits
+    // load from local storage. Skipped on localhost so editing files while
+    // developing always shows the latest; set localStorage 'enable-sw' = '1'
+    // there to test it.
+    if ('serviceWorker' in navigator) {
+      const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+      let force = false;
+      try { force = localStorage.getItem('enable-sw') === '1'; } catch (e) { /* storage blocked */ }
+      if (!local || force) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline cache unavailable:', err));
+        });
+      }
+    }
+
     // ===== KEYBOARD OVERLAY (don't let the on-screen keyboard push the chart up) =====
     // Two things normally make the keyboard "push" mobile content up:
     //  1. CSS vh units and window.innerHeight can track the shrunk visual viewport in
