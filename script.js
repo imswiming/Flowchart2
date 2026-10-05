@@ -5524,6 +5524,22 @@ class FlowchartViewer {
         // state flipping every other line the wrong way.
         const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
         const isTitle = blocks.length > 0 && blocks.every(b => b.is('element', 'heading4'));
+        if (!isTitle) {
+            // A title is always a top-level block (folding, the Titles list and
+            // fold-all all only look at the editor's direct children) - turning a
+            // bullet/checklist line into one left a heading nested inside the list
+            // item, which none of that could see or fold. Take such lines out of
+            // their list first so they become real top-level titles.
+            const listBlocks = blocks.filter(b => b.hasAttribute('listItemId'));
+            if (listBlocks.length) {
+                editor.model.change(writer => {
+                    listBlocks.forEach(b => {
+                        ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent']
+                            .forEach(attr => { if (b.hasAttribute(attr)) writer.removeAttribute(attr, b); });
+                    });
+                });
+            }
+        }
         editor.execute(isTitle ? 'paragraph' : 'heading', isTitle ? undefined : { value: 'heading4' });
         editor.editing.view.focus();
     }
@@ -5555,6 +5571,11 @@ class FlowchartViewer {
             editor.execute('bulletedList');
         } else if (editor.commands.get('indentList').isEnabled) {
             editor.execute('indentList');
+        } else {
+            // Already as deep as the list model allows under the item above (or
+            // the very first item) - keep going with a visual-only extra indent
+            // (see the NoteMediaMarker plugin's afterInit).
+            this.shiftNotesExtraIndent(editor, 1);
         }
         editor.editing.view.focus();
     }
@@ -5562,8 +5583,30 @@ class FlowchartViewer {
     outdentNotesLine() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
-        editor.execute('outdentList');
+        // Undo any visual extra indent first, before touching real nesting.
+        if (!this.shiftNotesExtraIndent(editor, -1)) {
+            editor.execute('outdentList');
+        }
         editor.editing.view.focus();
+    }
+
+    // Adds delta to the extra indent of every selected list item (never below 0).
+    // Returns whether anything actually changed.
+    shiftNotesExtraIndent(editor, delta) {
+        const blocks = Array.from(editor.model.document.selection.getSelectedBlocks())
+            .filter(b => b.hasAttribute('listItemId'));
+        const targets = delta < 0
+            ? blocks.filter(b => (b.getAttribute('noteExtraIndent') || 0) > 0)
+            : blocks;
+        if (!targets.length) return false;
+        editor.model.change(writer => {
+            targets.forEach(b => {
+                const next = Math.max(0, (b.getAttribute('noteExtraIndent') || 0) + delta);
+                if (next) writer.setAttribute('noteExtraIndent', next, b);
+                else writer.removeAttribute('noteExtraIndent', b);
+            });
+        });
+        return true;
     }
 
 
@@ -5998,6 +6041,33 @@ class FlowchartViewer {
                     },
                 });
             }
+
+            // CKEditor's list model never lets an item sit more than one level
+            // deeper than the item above it. "Extra indent" is a purely visual
+            // margin-left stored on the list item (saved as an inline style, so it
+            // round-trips through the saved HTML) used once that structural limit
+            // is hit - see indentNotesLine/outdentNotesLine.
+            afterInit() {
+                const editor = this.editor;
+                const listEditing = editor.plugins.get('ListEditing');
+                const STEP_PX = 40;
+                editor.model.schema.extend('$listItem', { allowAttributes: 'noteExtraIndent' });
+                listEditing.registerDowncastStrategy({
+                    scope: 'item',
+                    attributeName: 'noteExtraIndent',
+                    setAttributeOnDowncast(writer, value, viewElement) {
+                        if (value) writer.setStyle('margin-left', (value * STEP_PX) + 'px', viewElement);
+                        else writer.removeStyle('margin-left', viewElement);
+                    },
+                });
+                editor.conversion.for('upcast').attributeToAttribute({
+                    view: { name: 'li', styles: { 'margin-left': /.+/ } },
+                    model: {
+                        key: 'noteExtraIndent',
+                        value: (viewElement) => Math.round(parseFloat(viewElement.getStyle('margin-left')) / STEP_PX) || null,
+                    },
+                });
+            }
         }
 
         this._NoteMediaMarkerPlugin = NoteMediaMarkerPlugin;
@@ -6065,13 +6135,30 @@ class FlowchartViewer {
                     // rule in style.css) folds/unfolds it.
                     const dom = editor.editing.view.getDomRoot();
                     if (!dom) return;
-                    dom.addEventListener('click', (e) => {
+                    const arrowTitle = (e) => {
                         const h = e.target && e.target.closest ? e.target.closest('h4') : null;
-                        if (!h || !dom.contains(h)) return;
+                        if (!h || !dom.contains(h)) return null;
                         const rect = h.getBoundingClientRect();
                         const zoom = h.offsetWidth ? rect.width / h.offsetWidth : 1;
                         const fontSize = parseFloat(getComputedStyle(h).fontSize) || 30;
-                        if (e.clientX - rect.left > fontSize * 1.3 * zoom) return;
+                        if (e.clientX - rect.left > fontSize * 1.3 * zoom) return null;
+                        return h;
+                    };
+                    // Pressing the arrow must not focus the text (that is what pops
+                    // the on-screen keyboard open) - cancelled before CKEditor sees
+                    // the press, same as the checklist-box handling in
+                    // wireNotesEditorFeedback. Only matters while the text isn't
+                    // already focused; the click below still folds/unfolds.
+                    dom.addEventListener('mousedown', (e) => {
+                        if (editor.ui.focusTracker.isFocused) return;
+                        if (arrowTitle(e)) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                    }, true);
+                    dom.addEventListener('click', (e) => {
+                        const h = arrowTitle(e);
+                        if (!h) return;
                         const viewEl = editor.editing.view.domConverter.mapDomToView(h);
                         const modelEl = viewEl && editor.editing.mapper.toModelElement(viewEl);
                         if (modelEl && modelEl.is('element', 'heading4')) {
@@ -10245,10 +10332,24 @@ class FlowchartViewer {
                 .attr('class', 'radial-add-btn')
                 .attr('transform', `translate(${baseX + dx},${baseY + dy})`)
                 .style('cursor', 'pointer')
-                .on('mousedown', (event) => event.stopPropagation())
+                // preventDefault keeps focus in the node's edit field: otherwise
+                // pressing the button blurs it, and if the name was just edited that
+                // blur saves it and re-renders the whole SVG - destroying this very
+                // button before the mouse is released, so the click never lands and
+                // the first press on a button appears to do nothing.
+                .on('mousedown', (event) => {
+                    event.stopPropagation();
+                    // Desktop only: on mobile the blur is what dismisses the keyboard
+                    // when a button is tapped.
+                    if (!window.matchMedia('(max-width: 600px)').matches) event.preventDefault();
+                })
                 .on('touchstart', (event) => event.stopPropagation())
                 .on('click', (event) => {
                     event.stopPropagation();
+                    if (self._pendingNodeSave && self.nodeBeingEdited) {
+                        self._pendingNodeSave = false;
+                        try { self.saveNodeEdit(true); } catch (err) { console.error('Error saving node edit before radial action:', err); }
+                    }
                     onActivate();
                 });
             btnGroup.append('rect')
