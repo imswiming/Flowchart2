@@ -645,6 +645,19 @@ create policy "allow all" on flowchart_sync
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline cache unavailable:', err));
         });
+        // The worker found a newer version of the app files than the ones this
+        // page is running - offer a reload rather than doing it under the
+        // person's fingers (they may be mid-edit).
+        navigator.serviceWorker.addEventListener('message', (e) => {
+          if (!e.data || e.data.type !== 'app-updated' || document.getElementById('app-update-toast')) return;
+          const t = document.createElement('button');
+          t.id = 'app-update-toast';
+          t.type = 'button';
+          t.textContent = 'New version available - tap to reload';
+          t.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:100000;padding:10px 16px;border-radius:8px;border:1px solid #00a67e;background:#0f1722;color:#fff;font-size:14px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4)';
+          t.addEventListener('click', () => location.reload());
+          document.body.appendChild(t);
+        });
       }
     }
 
