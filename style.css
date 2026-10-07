@@ -1915,7 +1915,11 @@ body {
 }
 
 /* Each open note has its own editor inside #notes-editor-wrap (see
-   createEmbeddedEditor); only the one being viewed is shown (inline display). */
+   createEmbeddedEditor); only the one being viewed is shown (the holder's inline
+   display; .is-hidden is what earlier versions of the script used). */
+.notes-editor-host.is-hidden {
+    display: none;
+}
 
 .notes-icon-btn svg {
     display: block;
