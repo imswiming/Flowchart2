@@ -1914,6 +1914,12 @@ body {
     line-height: 0;
 }
 
+/* Each open note has its own editor inside #notes-editor-wrap (see
+   createEmbeddedEditor); only the one being viewed is shown. */
+.notes-editor-host.is-hidden {
+    display: none;
+}
+
 .notes-icon-btn svg {
     display: block;
     width: 18px;

@@ -1487,24 +1487,17 @@ class FlowchartViewer {
         localStorage.setItem('flowchart-global-notes-base', remoteJson);
         localStorage.setItem('flowchart-global-notes-known-remote-at', String(remoteTs));
 
-        if (this._activeNotesScope === 'global' && this.notesEditor) {
-            const ed = this.notesEditor;
-            const path = ed.ui.focusTracker.isFocused ? ed.model.document.selection.getFirstPosition().path.slice() : null;
-            this._applyingRemoteGlobalNotes = true;
-            try {
-                ed.setData(this.getActiveNotesTab().content || '<p></p>');
-                // Whatever the editor normalized the HTML to becomes the baseline,
-                // so this update isn't mistaken for a local edit and bounced back.
-                this.saveGlobalNotesTabs();
-            } finally {
-                this._applyingRemoteGlobalNotes = false;
-            }
-            if (path) {
-                try {
-                    ed.model.change(w => w.setSelection(ed.model.createPositionFromPath(ed.model.document.getRoot(), path)));
-                } catch (err) { /* the text got shorter - leave the caret where it landed */ }
-            }
+        // Every open global note's editor (not just the visible one) is brought up
+        // to date; the stored content is left as the merge produced it, so this
+        // isn't mistaken for a local edit and bounced back.
+        this._applyingRemoteGlobalNotes = true;
+        try {
+            this.refreshEmbeddedEditors();
+        } finally {
+            this._applyingRemoteGlobalNotes = false;
         }
+        // A global note that was merged away entirely, or its sibling whose id changed.
+        if (this._activeNotesScope === 'global') this.showEmbeddedEditor('global', this.getActiveNotesTab().id);
         // Nothing of this device's own was merged in: whatever shape the editor
         // normalized the HTML to is the baseline, so that isn't pushed back as an edit.
         if (JSON.stringify(merged) === remoteJson) {
@@ -5250,7 +5243,7 @@ class FlowchartViewer {
         list.push(tab);
         this._activeNotesScope = scope;
         this.setActiveNotesTabId(scope, tab.id);
-        if (this.notesEditor) this.notesEditor.setData(tab.content || '<p></p>');
+        this.showEmbeddedEditor(scope, tab.id);
         this.renderNotesTabBar();
         this.autosave();
     }
@@ -5261,12 +5254,11 @@ class FlowchartViewer {
         const idx = list.findIndex(t => t.id === tabId);
         if (idx === -1) return;
         list.splice(idx, 1);
+        this.destroyEmbeddedEditor(scope, tabId);
         if (this.getActiveNotesTabId(scope) === tabId) {
             const newTab = list[Math.max(0, idx - 1)];
             this.setActiveNotesTabId(scope, newTab.id);
-            if (scope === this._activeNotesScope && this.notesEditor) {
-                this.notesEditor.setData(newTab.content || '<p></p>');
-            }
+            if (scope === this._activeNotesScope) this.showEmbeddedEditor(scope, newTab.id);
         }
         this.renderNotesTabBar();
         this.autosave();
@@ -5292,24 +5284,11 @@ class FlowchartViewer {
 
     switchNotesTab(scope, tabId) {
         if (scope === this._activeNotesScope && tabId === this.getActiveNotesTabId(scope)) return;
-        // Capture whatever's currently in the editor into the tab being left
-        // before switching - the editor's own change:data event normally
-        // does this, but that's debounced through _pendingNotesSave/blur,
-        // so a switch right after typing could otherwise lose it.
-        // Only worth serializing the whole note again if it was edited since it
-        // was last saved - otherwise the tab's stored content is already current.
-        if (this.notesEditor && this._pendingNotesSave) this.getActiveNotesTab().content = this.notesEditor.getData();
+        // Nothing to capture from the note being left: each note has its own
+        // editor whose change handler keeps that note's stored content current.
         this._activeNotesScope = scope;
         this.setActiveNotesTabId(scope, tabId);
-        // The editor's change handler must not treat this swap as an edit: it
-        // would re-serialize the note it was just given, flag it unsaved and
-        // schedule yet another save.
-        this._switchingNotesTab = true;
-        try {
-            if (this.notesEditor) this.notesEditor.setData(this.globalNotes || '<p></p>');
-        } finally {
-            this._switchingNotesTab = false;
-        }
+        this.showEmbeddedEditor(scope, tabId);
         this.renderNotesTabBar();
         // Remembering which tab is open doesn't need to hold up the tap (saving
         // re-serializes the whole flowchart); do it a moment later, once.
@@ -5702,25 +5681,168 @@ class FlowchartViewer {
 
         const editorWrap = document.createElement('div');
         editorWrap.id = 'notes-editor-wrap';
-        const editorEl = document.createElement('div');
-        editorEl.id = 'notes-editor';
-        editorWrap.appendChild(editorEl);
         this.notesPanelBody.appendChild(editorWrap);
 
-        if (this.notesEditor) {
-            try { this.notesEditor.destroy(); } catch (err) { /* ignore */ }
-            this.notesEditor = null;
-        }
+        this.destroyEmbeddedEditors();
 
         if (!window.CKEDITOR) {
             // vendor/ckeditor5/ckeditor5.umd.js (see index.html) failed to load -
             // surface this rather than silently showing an empty, uneditable box.
-            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+            editorWrap.textContent = 'Notes editor failed to load - check your connection and reload.';
             return;
         }
 
+        // Only the open note's editor is built here, so opening Notes costs what
+        // it always did; the others are built later (see schedulePrewarm).
+        this.showEmbeddedEditor(this._activeNotesScope, this.getActiveNotesTab().id);
+    }
+
+    // ===== One live editor per note (embedded panel) =====
+    // Swapping the one editor's content between notes meant re-rendering the whole
+    // note on every tab tap (slow for long notes, slower on a phone). Instead each
+    // note gets its own CKEditor, kept alive inside #notes-editor-wrap with only
+    // the open one visible - so switching back to a note already opened is just
+    // showing it again. this.notesEditor is always the open note's editor (null
+    // for the moment while that note's editor is still being built), so everything
+    // that acts on "the notes editor" keeps working unchanged. Each editor's
+    // change handler writes into its OWN note (never "whichever is active").
+    // The pool is capped; the least recently used are dropped.
+    destroyEmbeddedEditors() {
+        clearTimeout(this._notesPrewarmTimer);
+        if (this._embeddedEditors) {
+            this._embeddedEditors.forEach((entry) => {
+                entry.dead = true;
+                if (entry.editor) { try { entry.editor.destroy(); } catch (err) { /* ignore */ } }
+            });
+        }
+        this._embeddedEditors = new Map();
+        this._embeddedWanted = null;
+        this.notesEditor = null;
+    }
+
+    destroyEmbeddedEditor(scope, tabId) {
+        if (!this._embeddedEditors) return;
+        const key = `${scope}:${tabId}`;
+        const entry = this._embeddedEditors.get(key);
+        if (!entry) return;
+        entry.dead = true;
+        this._embeddedEditors.delete(key);
+        if (this.notesEditor === entry.editor) this.notesEditor = null;
+        if (entry.editor) { try { entry.editor.destroy(); } catch (err) { /* ignore */ } }
+        if (entry.host && entry.host.parentNode) entry.host.remove();
+    }
+
+    // Makes (scope, tabId) the open note: shows its editor if it exists,
+    // otherwise starts building it and shows it as soon as it's ready.
+    showEmbeddedEditor(scope, tabId) {
+        if (!this._embeddedEditors) this._embeddedEditors = new Map();
+        const key = `${scope}:${tabId}`;
+        this._embeddedWanted = key;
+        let entry = this._embeddedEditors.get(key);
+        if (!entry) entry = this.createEmbeddedEditor(scope, tabId);
+        if (!entry) return;
+        entry.lastUsed = Date.now();
+        if (entry.editor) this.activateEmbeddedEntry(entry);
+        else this.notesEditor = null;
+    }
+
+    activateEmbeddedEntry(entry) {
+        this._embeddedEditors.forEach(e => e.host.classList.toggle('is-hidden', e !== entry));
+        this.notesEditor = entry.editor;
+        // Anything that changed this note elsewhere while its editor sat hidden
+        // (sync, a Full Screen pane) is picked up now.
+        this.syncEmbeddedEntry(entry);
+        this.renderNotesMediaStrip();
+        this.updateNotesTitleControls();
+        this.trimEmbeddedEditors();
+        this.schedulePrewarm();
+    }
+
+    // Brings a (possibly hidden) editor in line with its note's stored content.
+    syncEmbeddedEntry(entry) {
+        const tab = this.getNotesTab(entry.scope, entry.tabId);
+        if (!tab) {
+            this.destroyEmbeddedEditor(entry.scope, entry.tabId);
+            return;
+        }
+        if (!entry.editor || tab.content === entry.lastContent) return;
+        const ed = entry.editor;
+        const path = ed.ui.focusTracker.isFocused ? ed.model.document.selection.getFirstPosition().path.slice() : null;
+        entry.applying = true;
+        try {
+            ed.setData(tab.content || '<p></p>');
+        } finally {
+            entry.applying = false;
+        }
+        entry.lastContent = tab.content;
+        if (path) {
+            try {
+                ed.model.change(w => w.setSelection(ed.model.createPositionFromPath(ed.model.document.getRoot(), path)));
+            } catch (err) { /* the text got shorter - leave the caret where it landed */ }
+        }
+    }
+
+    refreshEmbeddedEditors() {
+        if (!this._embeddedEditors) return;
+        Array.from(this._embeddedEditors.values()).forEach(entry => this.syncEmbeddedEntry(entry));
+    }
+
+    trimEmbeddedEditors(max = 8) {
+        if (!this._embeddedEditors || this._embeddedEditors.size <= max) return;
+        const candidates = Array.from(this._embeddedEditors.values())
+            .filter(e => e.key !== this._embeddedWanted && e.editor && !e.editor.ui.focusTracker.isFocused)
+            .sort((a, b) => a.lastUsed - b.lastUsed);
+        while (this._embeddedEditors.size > max && candidates.length) {
+            const old = candidates.shift();
+            this.destroyEmbeddedEditor(old.scope, old.tabId);
+        }
+    }
+
+    // Builds the other open notes' editors in the background, one at a time and
+    // only while idle - well after Notes itself is on screen - so that the first
+    // visit to each is as quick as every later one.
+    schedulePrewarm(delay = 2500) {
+        clearTimeout(this._notesPrewarmTimer);
+        this._notesPrewarmTimer = setTimeout(() => this.prewarmNextEmbeddedEditor(), delay);
+    }
+
+    prewarmNextEmbeddedEditor() {
+        if (!window.CKEDITOR || !this._embeddedEditors || this._embeddedEditors.size >= 6) return;
+        const busy = document.hidden
+            || Date.now() - (this._lastNotesTypingAt || 0) < 3000
+            || (this.notesFullscreenOverlay && this.notesFullscreenOverlay.style.display !== 'none');
+        if (busy) { this.schedulePrewarm(4000); return; }
+        const next = this.getPinnedNotes().find(e => !this._embeddedEditors.has(`${e.scope}:${e.tab.id}`));
+        if (!next) return;
+        const run = () => {
+            if (!this._embeddedEditors || this._embeddedEditors.has(`${next.scope}:${next.tab.id}`)) return;
+            this.createEmbeddedEditor(next.scope, next.tab.id);
+            this.schedulePrewarm(1500);
+        };
+        if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 8000 });
+        else run();
+    }
+
+    createEmbeddedEditor(scope, tabId) {
+        const wrap = document.getElementById('notes-editor-wrap');
+        const tab = this.getNotesTab(scope, tabId);
+        if (!wrap || !tab || !window.CKEDITOR) return null;
+        const key = `${scope}:${tabId}`;
+        const host = document.createElement('div');
+        host.className = 'notes-editor-host is-hidden';
+        host.dataset.key = key;
+        wrap.appendChild(host);
+        const entry = { key, scope, tabId, host, editor: null, lastContent: tab.content, lastUsed: Date.now(), applying: false, dead: false };
+        this._embeddedEditors.set(key, entry);
+
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
-        DecoupledEditor.create(editorEl, {
+        // Started a moment later (a microtask) rather than right now: startup
+        // renders the Notes panel more than once in a single synchronous pass
+        // (once with defaults, again after the saved flowchart loads), and an
+        // editor for a render that's immediately replaced shouldn't be built.
+        Promise.resolve().then(() => {
+            if (entry.dead) return null;
+            return DecoupledEditor.create(host, {
             licenseKey: 'GPL',
             plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin()],
             noteMediaMarkerApp: this,
@@ -5739,15 +5861,21 @@ class FlowchartViewer {
                     { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#ffee00', type: 'marker' },
                 ],
             },
-            initialData: this.globalNotes || '<p></p>',
+            initialData: tab.content || '<p></p>',
+            });
         }).then((editor) => {
+            if (!editor) return;
+            if (entry.dead || this._embeddedEditors.get(key) !== entry) {
+                try { editor.destroy(); } catch (err) { /* ignore */ }
+                return;
+            }
             // DecoupledEditor doesn't attach its own toolbar/UI anywhere by
             // default - this app drives it entirely through its own
             // Checklist/Title/Outdent/Indent buttons above instead (see
             // toggleNotesChecklist/toggleNotesTitle/indentNotesLine/
             // outdentNotesLine), so editor.ui.view.toolbar.element is
             // deliberately never inserted into the page.
-            this.notesEditor = editor;
+            entry.editor = editor;
             // A live reference the NoteMediaMarker plugin reads directly (see
             // getNoteMediaMarkerPlugin) - config.noteMediaMarkerApp above is only
             // for the plugin's very first (pre-interactive) conversion pass, since
@@ -5781,7 +5909,7 @@ class FlowchartViewer {
             // just falls through to CKEditor's own default handling, which quietly
             // drops it since no Image plugin is loaded.
             editor.editing.view.document.on('clipboardInput', (evt, data) => {
-                if (this._activeNotesScope !== 'global' && this.handleNotesPaste(data.dataTransfer)) {
+                if (entry.scope !== 'global' && this.handleNotesPaste(data.dataTransfer)) {
                     evt.stop();
                 }
             });
@@ -5796,22 +5924,29 @@ class FlowchartViewer {
             });
 
             editor.model.document.on('change:data', () => {
-                if (!this._switchingNotesTab) {
-                    this.globalNotes = editor.getData();
-                    if (!this._applyingRemoteGlobalNotes) {
-                        this._pendingNotesSave = true;
-                        this.scheduleNotesAutosave();
-                    }
+                // A refresh pushing the stored content into this editor (see
+                // syncEmbeddedEntry) isn't an edit.
+                if (entry.applying) return;
+                const t = this.getNotesTab(entry.scope, entry.tabId);
+                if (!t) return;
+                const html = editor.getData();
+                t.content = html;
+                entry.lastContent = html;
+                if (!this._applyingRemoteGlobalNotes) {
+                    this._pendingNotesSave = true;
+                    this.scheduleNotesAutosave();
                 }
-                this.renderNotesMediaStrip();
+                if (this.notesEditor === editor) this.renderNotesMediaStrip();
             });
             this.wireNotesEditorFeedback(editor, true);
 
-            this.renderNotesMediaStrip();
+            if (this._embeddedWanted === key) this.activateEmbeddedEntry(entry);
         }).catch((err) => {
             console.error('Failed to create Notes editor:', err);
-            editorEl.textContent = 'Notes editor failed to load - check your connection and reload.';
+            if (this._embeddedEditors && this._embeddedEditors.get(key) === entry) this._embeddedEditors.delete(key);
+            host.textContent = 'Notes editor failed to load - check your connection and reload.';
         });
+        return entry;
     }
 
     // Toggles the selected (or current) lines' checklist state. Uses
@@ -8535,7 +8670,7 @@ class FlowchartViewer {
             const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             this.globalNotes = (this.globalNotes || '')
                 .replace(new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`), '');
-            if (this.notesEditor) this.notesEditor.setData(this.globalNotes);
+            this.refreshEmbeddedEditors();
             this.renderNotesMediaStrip();
             this.autosave();
         }
