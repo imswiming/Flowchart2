@@ -5272,18 +5272,49 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // A tap on a tab: show it as selected immediately, then swap the editor's
+    // content on the next frame. Re-rendering a long note takes a while (most of
+    // it inside the editor itself, and several times longer on a phone), and
+    // doing it inside the tap meant nothing visibly happened until it finished.
+    // Only the highlight changes right away - no state does - so a second tap
+    // before the swap simply replaces the first.
+    switchNotesTabSoon(scope, tabId, tabEl) {
+        if (tabEl && tabEl.parentNode) {
+            tabEl.parentNode.querySelectorAll('.matrix-tab.active').forEach(el => el.classList.remove('active'));
+            tabEl.classList.add('active');
+        }
+        cancelAnimationFrame(this._tabSwitchRaf);
+        clearTimeout(this._tabSwitchTimer);
+        this._tabSwitchRaf = requestAnimationFrame(() => {
+            this._tabSwitchTimer = setTimeout(() => this.switchNotesTab(scope, tabId), 0);
+        });
+    }
+
     switchNotesTab(scope, tabId) {
         if (scope === this._activeNotesScope && tabId === this.getActiveNotesTabId(scope)) return;
         // Capture whatever's currently in the editor into the tab being left
         // before switching - the editor's own change:data event normally
         // does this, but that's debounced through _pendingNotesSave/blur,
         // so a switch right after typing could otherwise lose it.
-        if (this.notesEditor) this.getActiveNotesTab().content = this.notesEditor.getData();
+        // Only worth serializing the whole note again if it was edited since it
+        // was last saved - otherwise the tab's stored content is already current.
+        if (this.notesEditor && this._pendingNotesSave) this.getActiveNotesTab().content = this.notesEditor.getData();
         this._activeNotesScope = scope;
         this.setActiveNotesTabId(scope, tabId);
-        if (this.notesEditor) this.notesEditor.setData(this.globalNotes || '<p></p>');
+        // The editor's change handler must not treat this swap as an edit: it
+        // would re-serialize the note it was just given, flag it unsaved and
+        // schedule yet another save.
+        this._switchingNotesTab = true;
+        try {
+            if (this.notesEditor) this.notesEditor.setData(this.globalNotes || '<p></p>');
+        } finally {
+            this._switchingNotesTab = false;
+        }
         this.renderNotesTabBar();
-        this.autosave();
+        // Remembering which tab is open doesn't need to hold up the tap (saving
+        // re-serializes the whole flowchart); do it a moment later, once.
+        clearTimeout(this._tabSwitchSaveTimer);
+        this._tabSwitchSaveTimer = setTimeout(() => this.autosave(), 600);
     }
 
     renameNotesTab(scope, tabId, name) {
@@ -5502,7 +5533,7 @@ class FlowchartViewer {
                     return;
                 }
                 this._lastNotesTabTap = { key: tabKey, at: now };
-                this.switchNotesTab(scope, tab.id);
+                this.switchNotesTabSoon(scope, tab.id, tabEl);
             });
 
             const label = document.createElement('span');
@@ -5765,10 +5796,12 @@ class FlowchartViewer {
             });
 
             editor.model.document.on('change:data', () => {
-                this.globalNotes = editor.getData();
-                if (!this._applyingRemoteGlobalNotes) {
-                    this._pendingNotesSave = true;
-                    this.scheduleNotesAutosave();
+                if (!this._switchingNotesTab) {
+                    this.globalNotes = editor.getData();
+                    if (!this._applyingRemoteGlobalNotes) {
+                        this._pendingNotesSave = true;
+                        this.scheduleNotesAutosave();
+                    }
                 }
                 this.renderNotesMediaStrip();
             });
@@ -6085,9 +6118,20 @@ class FlowchartViewer {
     renderNotesMediaStrip() {
         if (!this.notesPanelBody) return;
         let strip = document.getElementById('notes-drawings-strip');
-        if (strip) strip.remove();
 
         const items = this.getNotesMediaMarkers();
+        // Called on every edit as well as every tab switch: rebuilding the strip
+        // re-creates (and re-decodes) every thumbnail, so leave it be when
+        // nothing in it would change.
+        const sig = items.map(({ type, id }) => {
+            const src = type === 'drawing' ? (this.notesDrawings[id] || {}).dataUrl
+                : type === 'image' ? ((this.notesImages[id] || {}).dataUrl || (this.notesImages[id] || {}).url)
+                : id;
+            return `${type}:${id}:${src ? src.length : 0}`;
+        }).join('|');
+        if (strip && sig === this._mediaStripSig) return;
+        this._mediaStripSig = sig;
+        if (strip) strip.remove();
         if (items.length === 0) return;
 
         // A plain <textarea> can't contain a real clickable hyperlink no matter what
