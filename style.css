@@ -1866,9 +1866,11 @@ body {
    (mobile) widths. Only scoped to the embedded panel's header - the
    full-screen header's copy (see #notes-fullscreen-header .notes-toolbar-row)
    deliberately stays shrink-to-fit so margin-left:auto can push it right. */
-#notes-panel-header-row .notes-toolbar-row {
-    width: 100%;
-    min-width: 0;
+@media (max-width: 600px) {
+    #notes-panel-header-row .notes-toolbar-row {
+        width: 100%;
+        min-width: 0;
+    }
 }
 
 /* Shared by every Notes toolbar button (Insert Drawing/Checklist/Title/
@@ -1895,6 +1897,33 @@ body {
 
 .notes-toolbar-btn:disabled:hover {
     background: var(--control-bg);
+}
+
+/* Icon-only Notes toolbar buttons - the SVG is the whole label (the name lives in
+   the tooltip/aria-label). Deliberately sets no `display`, so the rules that
+   hide some of these (desktop indent/outdent, title controls, mobile undo/redo)
+   keep working. */
+.notes-toolbar-btn.notes-icon-btn {
+    padding: 5px 8px;
+    line-height: 0;
+}
+
+.notes-pane-btn.notes-icon-btn,
+#notes-fullscreen-close-btn.notes-icon-btn {
+    padding: 4px 6px;
+    line-height: 0;
+}
+
+.notes-icon-btn svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
 }
 
 #notes-drawings-strip {

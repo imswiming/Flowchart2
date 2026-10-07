@@ -166,6 +166,30 @@ const NotesMerge = (() => {
     return { mergeHtml, mergeTabs, splitBlocks };
 })();
 
+// Line icons for the Notes toolbar (24x24, drawn in currentColor - see
+// .notes-icon-btn in style.css).
+const NOTES_ICONS = (() => {
+    const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+    return {
+        titles: svg('<path d="M4 6h16M4 12h16M4 18h10"/>'),
+        undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
+        redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
+        drawing: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.3-.9-.5-1.3-.3-.4-.4-.8-.4-1.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7" r="1"/><circle cx="15.5" cy="7.5" r="1"/>'),
+        checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
+        title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
+        highlight: svg('<path d="M9 11l7.5-7.5 4 4L13 15z"/><path d="M9 11l-5 5v4h4l5-5"/><path d="M14.5 5.5l4 4"/>'),
+        foldAll: svg('<path d="M7 20l5-5 5 5"/><path d="M7 4l5 5 5-5"/>'),
+        unfoldAll: svg('<path d="M7 15l5 5 5-5"/><path d="M7 9l5-5 5 5"/>'),
+        outdent: svg('<path d="M4 6h16M10 12h10M4 18h16"/><path d="M7 9l-3 3 3 3"/>'),
+        indent: svg('<path d="M4 6h16M10 12h10M4 18h16"/><path d="M4 9l3 3-3 3"/>'),
+        fullscreen: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+        splitRow: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>'),
+        splitColumn: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>'),
+        close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+        move: svg('<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>'),
+    };
+})();
+
 class FlowchartViewer {
     constructor() {
         // Shared with computeIndentedContour/updateStickyAncestors/renderFlowchart so
@@ -5549,25 +5573,25 @@ class FlowchartViewer {
             if (e.target.closest('button')) e.preventDefault();
         });
 
-        const makeBtn = (text, title, className, onClick) => {
+        // Icon-only buttons: the title attribute (hover tooltip) and aria-label
+        // carry the name that used to be written out.
+        const makeBtn = (icon, title, className, onClick) => {
             const b = document.createElement('button');
-            b.className = 'notes-toolbar-btn' + (className ? ' ' + className : '');
+            b.className = 'notes-toolbar-btn notes-icon-btn' + (className ? ' ' + className : '');
             b.type = 'button';
-            b.textContent = text;
+            b.innerHTML = NOTES_ICONS[icon];
             b.title = title;
+            b.setAttribute('aria-label', title);
             b.addEventListener('click', onClick);
             return b;
         };
 
-        row.appendChild(makeBtn('☰ Titles', 'Jump to a title', '', () => this.openNotesTitleList()));
+        row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
         // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
-        row.appendChild(makeBtn('↩', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
-        row.appendChild(makeBtn('↪', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
+        row.appendChild(makeBtn('undo', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
+        row.appendChild(makeBtn('redo', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
-        const insertDrawingBtn = document.createElement('button');
-        insertDrawingBtn.className = 'notes-toolbar-btn notes-insert-drawing-btn';
-        insertDrawingBtn.type = 'button';
-        insertDrawingBtn.textContent = '🎨 Insert Drawing';
+        const insertDrawingBtn = makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing());
         // Drawings/pasted images are stored per-flowchart (notesDrawings/
         // notesImages), not per-tab - there's nowhere for one to live if the
         // active tab/pane is a global tab not tied to any single flowchart,
@@ -5576,52 +5600,18 @@ class FlowchartViewer {
         // listener is always attached; only .disabled (kept current by
         // updateNotesInsertDrawingBtnState, called from everywhere the active
         // tab/pane can change) gates whether it actually does anything.
-        insertDrawingBtn.addEventListener('click', () => this.startNewNotesDrawing());
         row.appendChild(insertDrawingBtn);
 
-        const checklistBtn = document.createElement('button');
-        checklistBtn.className = 'notes-toolbar-btn';
-        checklistBtn.type = 'button';
-        checklistBtn.textContent = '☑ Checklist';
-        checklistBtn.title = 'Turn the selected (or current) lines into a checklist';
-        checklistBtn.addEventListener('click', () => this.toggleNotesChecklist());
-        row.appendChild(checklistBtn);
-
-        const titleBtn = document.createElement('button');
-        titleBtn.className = 'notes-toolbar-btn';
-        titleBtn.type = 'button';
-        titleBtn.textContent = 'T• Title';
-        titleBtn.title = 'Make the selected (or current) lines a bold title';
-        titleBtn.addEventListener('click', () => this.toggleNotesTitle());
-        row.appendChild(titleBtn);
-
-        const highlightBtn = document.createElement('button');
-        highlightBtn.className = 'notes-toolbar-btn';
-        highlightBtn.type = 'button';
-        highlightBtn.textContent = '✏️ Highlight';
-        highlightBtn.title = 'Highlight the selected text in yellow';
-        highlightBtn.addEventListener('click', () => this.toggleNotesHighlight());
-        row.appendChild(highlightBtn);
+        row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
+        row.appendChild(makeBtn('title', 'Title - make the selected (or current) lines a bold title', '', () => this.toggleNotesTitle()));
+        row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
-        row.appendChild(makeBtn('⇊ Fold all', 'Fold every title', 'notes-title-ctrl', () => this.foldAllTitles(true)));
-        row.appendChild(makeBtn('⇈ Unfold all', 'Unfold every title', 'notes-title-ctrl', () => this.foldAllTitles(false)));
+        row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-title-ctrl', () => this.foldAllTitles(true)));
+        row.appendChild(makeBtn('unfoldAll', 'Unfold all titles', 'notes-title-ctrl', () => this.foldAllTitles(false)));
 
-        const outdentBtn = document.createElement('button');
-        outdentBtn.className = 'notes-toolbar-btn notes-outdent-btn';
-        outdentBtn.type = 'button';
-        outdentBtn.textContent = '⇤ Outdent';
-        outdentBtn.title = 'Decrease indent';
-        outdentBtn.addEventListener('click', () => this.outdentNotesLine());
-        row.appendChild(outdentBtn);
-
-        const indentBtn = document.createElement('button');
-        indentBtn.className = 'notes-toolbar-btn notes-indent-btn';
-        indentBtn.type = 'button';
-        indentBtn.textContent = '⇥ Indent';
-        indentBtn.title = 'Increase indent';
-        indentBtn.addEventListener('click', () => this.indentNotesLine());
-        row.appendChild(indentBtn);
+        row.appendChild(makeBtn('outdent', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
+        row.appendChild(makeBtn('indent', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
 
         return row;
     }
@@ -5652,9 +5642,11 @@ class FlowchartViewer {
         // happened to be current the last time this panel was rebuilt.
         const fullscreenBtn = document.createElement('button');
         fullscreenBtn.id = 'notes-fullscreen-btn';
+        fullscreenBtn.className = 'notes-toolbar-btn notes-icon-btn';
         fullscreenBtn.type = 'button';
-        fullscreenBtn.textContent = '⛶ Full Screen';
+        fullscreenBtn.innerHTML = NOTES_ICONS.fullscreen;
         fullscreenBtn.title = 'Open Notes full screen (and split into multiple panes)';
+        fullscreenBtn.setAttribute('aria-label', 'Full screen');
         fullscreenBtn.addEventListener('click', () => this.openNotesFullscreen());
         header.appendChild(fullscreenBtn);
 
@@ -7446,9 +7438,10 @@ class FlowchartViewer {
         // size) stay put; only what's currently inside each one trades places.
         // See swapNotesPanes and the pane's own dragover/drop handlers below.
         const dragHandle = document.createElement('button');
-        dragHandle.className = 'notes-pane-btn notes-pane-drag-handle';
+        dragHandle.className = 'notes-pane-btn notes-icon-btn notes-pane-drag-handle';
         dragHandle.title = 'Drag onto another pane to swap them';
-        dragHandle.textContent = '✥';
+        dragHandle.setAttribute('aria-label', 'Drag to swap panes');
+        dragHandle.innerHTML = NOTES_ICONS.move;
         dragHandle.draggable = true;
         dragHandle.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('text/plain', node.paneId);
@@ -7479,24 +7472,27 @@ class FlowchartViewer {
         header.appendChild(select);
 
         const splitRightBtn = document.createElement('button');
-        splitRightBtn.className = 'notes-pane-btn';
+        splitRightBtn.className = 'notes-pane-btn notes-icon-btn';
         splitRightBtn.title = 'Split this pane vertically (side by side)';
-        splitRightBtn.textContent = '⥐ Split →';
+        splitRightBtn.setAttribute('aria-label', 'Split side by side');
+        splitRightBtn.innerHTML = NOTES_ICONS.splitRow;
         splitRightBtn.addEventListener('click', () => this.splitNotesPane(node.paneId, 'row'));
         header.appendChild(splitRightBtn);
 
         const splitDownBtn = document.createElement('button');
-        splitDownBtn.className = 'notes-pane-btn';
+        splitDownBtn.className = 'notes-pane-btn notes-icon-btn';
         splitDownBtn.title = 'Split this pane horizontally (stacked)';
-        splitDownBtn.textContent = '⥒ Split ↓';
+        splitDownBtn.setAttribute('aria-label', 'Split stacked');
+        splitDownBtn.innerHTML = NOTES_ICONS.splitColumn;
         splitDownBtn.addEventListener('click', () => this.splitNotesPane(node.paneId, 'column'));
         header.appendChild(splitDownBtn);
 
         if (!isOnlyPane) {
             const closeBtn = document.createElement('button');
-            closeBtn.className = 'notes-pane-btn';
+            closeBtn.className = 'notes-pane-btn notes-icon-btn';
             closeBtn.title = 'Close this pane (merge back into the other one)';
-            closeBtn.textContent = '✕';
+            closeBtn.setAttribute('aria-label', 'Close pane');
+            closeBtn.innerHTML = NOTES_ICONS.close;
             closeBtn.addEventListener('click', () => this.closeNotesPane(node.paneId));
             header.appendChild(closeBtn);
         }
