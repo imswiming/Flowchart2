@@ -411,6 +411,9 @@ class FlowchartViewer {
         })();
         this._activeNotesScope = localStorage.getItem('flowchart-active-notes-scope') === 'global' ? 'global' : 'chart';
         this._globalNotesJson = JSON.stringify(this.globalNotesTabs);
+        // Drawings and pasted images that live in global notes (the chart-scoped
+        // ones below are saved with each flowchart): { drawings: {id: {dataUrl}}, images: {...} }.
+        this.globalNotesMedia = this.loadGlobalNotesMedia();
         // Drawings inserted into the notes, keyed by the [[drawing:ID]] marker in
         // globalNotes that references them - see renderNotesDrawingsStrip.
         this.notesDrawings = {};
@@ -984,6 +987,7 @@ class FlowchartViewer {
         localStorage.removeItem('cloud-sync-known-remote-at');
         localStorage.removeItem('flowchart-global-notes-known-remote-at');
         localStorage.removeItem('flowchart-global-notes-base');
+        localStorage.removeItem('flowchart-global-notes-media-base');
         localStorage.removeItem('flowchart-notes-bases');
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
@@ -1356,6 +1360,51 @@ class FlowchartViewer {
         return `${this.cloudSyncId}::globalnotes`;
     }
 
+    // What global notes' drawings/images look like in the cloud row: just
+    // { id: { t: type, h: content hash } }, sorted so two copies compare equal.
+    // The pictures themselves are separate `<syncId>::img::<hash>` rows (the same
+    // ones flowchart images use), uploaded once and fetched only when missing.
+    globalMediaManifest() {
+        const out = {};
+        [['drawing', this.globalNotesMedia.drawings], ['image', this.globalNotesMedia.images]].forEach(([type, map]) => {
+            Object.keys(map).sort().forEach((id) => {
+                const src = map[id] && map[id].dataUrl;
+                if (typeof src === 'string' && src) out[id] = { t: type, h: this.hashImageString(src) };
+            });
+        });
+        return out;
+    }
+
+    async uploadImageRow(hash, dataUrl) {
+        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
+            method: 'POST',
+            headers: this.cloudHeaders({
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates,return=minimal'
+            }),
+            body: JSON.stringify([{ id: `${this.cloudSyncId}::img::${hash}`, updated_at: Date.now(), data: { dataUrl } }])
+        });
+        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+    }
+
+    // { hash: dataUrl } for whichever of these hashes the cloud has.
+    async fetchImageRows(hashes) {
+        const out = {};
+        if (hashes.length === 0) return out;
+        const prefix = `${this.cloudSyncId}::img::`;
+        const idsFilter = hashes.map(h => encodeURIComponent(prefix + h)).join(',');
+        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=in.(${idsFilter})&select=id,data`, {
+            headers: this.cloudHeaders({ 'Accept': 'application/json' })
+        });
+        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+        (await res.json()).forEach((row) => {
+            if (row.id.startsWith(prefix) && row.data && typeof row.data.dataUrl === 'string') {
+                out[row.id.slice(prefix.length)] = row.data.dataUrl;
+            }
+        });
+        return out;
+    }
+
     cloudHeaders(extra) {
         return Object.assign({
             'apikey': this.cloudApiKey,
@@ -1374,9 +1423,13 @@ class FlowchartViewer {
             const tabs = this.globalNotesTabs;
             const json = JSON.stringify(tabs);
             const base = this.loadJSONFromStorage('flowchart-global-notes-base', null);
-            if (Array.isArray(base) && JSON.stringify(base) === json) return;
+            const manifest = this.globalMediaManifest();
+            const manifestJson = JSON.stringify(manifest);
+            const mediaBase = this.loadJSONFromStorage('flowchart-global-notes-media-base', null);
+            const mediaSame = manifestJson === JSON.stringify(mediaBase || {});
+            if (Array.isArray(base) && JSON.stringify(base) === json && mediaSame) return;
             const pristine = tabs.length === 1 && !tabs[0].content;
-            if (!Array.isArray(base) && pristine) return;
+            if (!Array.isArray(base) && pristine && Object.keys(manifest).length === 0) return;
 
             const headRes = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${rowId}&select=updated_at`, {
                 headers: this.cloudHeaders({ 'Accept': 'application/json' })
@@ -1396,6 +1449,15 @@ class FlowchartViewer {
                 continue;
             }
 
+            // Pictures first, so no other device ever sees a reference it can't fetch.
+            if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
+            for (const id of Object.keys(manifest)) {
+                const { t, h } = manifest[id];
+                if (this._uploadedImageHashes.has(h)) continue;
+                await this.uploadImageRow(h, this.getNotesMediaMap(t, 'global')[id].dataUrl);
+                this._uploadedImageHashes.add(h);
+            }
+
             const ts = Math.max(Date.now(), knownTs + 1);
             let res;
             if (!headRow) {
@@ -1405,7 +1467,7 @@ class FlowchartViewer {
                         'Content-Type': 'application/json',
                         'Prefer': 'return=minimal'
                     }),
-                    body: JSON.stringify([{ id: this.globalNotesRowId(), updated_at: ts, data: { tabs } }])
+                    body: JSON.stringify([{ id: this.globalNotesRowId(), updated_at: ts, data: { tabs, media: manifest } }])
                 });
                 // Another device created the row first - go round again and merge.
                 if (res.status === 409) continue;
@@ -1416,7 +1478,7 @@ class FlowchartViewer {
                         'Content-Type': 'application/json',
                         'Prefer': 'return=representation'
                     }),
-                    body: JSON.stringify({ updated_at: ts, data: { tabs } })
+                    body: JSON.stringify({ updated_at: ts, data: { tabs, media: manifest } })
                 });
             }
             if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
@@ -1425,6 +1487,7 @@ class FlowchartViewer {
                 if (!Array.isArray(written) || written.length === 0) continue; // lost the race
             }
             localStorage.setItem('flowchart-global-notes-base', json);
+            localStorage.setItem('flowchart-global-notes-media-base', manifestJson);
             localStorage.setItem('flowchart-global-notes-known-remote-at', String(ts));
             return;
         }
@@ -1456,6 +1519,35 @@ class FlowchartViewer {
         // poll retries); if the note is merely open/focused, it's updated in place.
         const typingNow = Date.now() - (this._lastNotesTypingAt || 0) < 3000;
         if (this._activeNotesScope === 'global' && this.notesEditor && this.notesEditor.ui.focusTracker.isFocused && typingNow) return;
+
+        // Drawings/images: ones the other device added come across, one this
+        // device changed itself is kept, anything else takes the cloud's picture.
+        // Fetched before anything is applied, so a failed download retries next poll.
+        const remoteManifest = (row.data.media && typeof row.data.media === 'object') ? row.data.media : {};
+        const mediaBase = this.loadJSONFromStorage('flowchart-global-notes-media-base', null) || {};
+        const localManifest = this.globalMediaManifest();
+        const wanted = {};
+        Object.keys(remoteManifest).forEach((id) => {
+            const r = remoteManifest[id];
+            if (!r || (r.t !== 'drawing' && r.t !== 'image') || typeof r.h !== 'string') return;
+            const l = localManifest[id];
+            if (l && l.h === r.h) return;
+            if (l && !(mediaBase[id] && mediaBase[id].h === l.h)) return; // edited here since the last sync
+            wanted[id] = r;
+        });
+        const missingHashes = Array.from(new Set(Object.values(wanted).map(r => r.h)));
+        const fetched = await this.fetchImageRows(missingHashes);
+        let mediaChanged = false;
+        Object.keys(wanted).forEach((id) => {
+            const r = wanted[id];
+            if (fetched[r.h] === undefined) return;
+            this.getNotesMediaMap(r.t, 'global')[id] = { dataUrl: fetched[r.h] };
+            if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
+            this._uploadedImageHashes.add(r.h);
+            mediaChanged = true;
+        });
+        if (mediaChanged) this.saveGlobalNotesMedia();
+        localStorage.setItem('flowchart-global-notes-media-base', JSON.stringify(remoteManifest));
 
         // Three-way merge: what the cloud held last time we synced (base), what
         // this device has now, and what the cloud holds now. A device that never
@@ -1509,7 +1601,7 @@ class FlowchartViewer {
         }
         // The merge brought in something the cloud doesn't have yet (this device's
         // own edits) - send it back.
-        if (JSON.stringify(merged) !== remoteJson) this.scheduleCloudPush();
+        if (JSON.stringify(merged) !== remoteJson || JSON.stringify(this.globalMediaManifest()) !== JSON.stringify(remoteManifest)) this.scheduleCloudPush();
     }
 
     // Helper methods for leaf node and green node detection
@@ -5237,6 +5329,40 @@ class FlowchartViewer {
         localStorage.setItem('flowchart-active-notes-scope', this._activeNotesScope || 'chart');
     }
 
+    loadGlobalNotesMedia() {
+        const saved = this.loadJSONFromStorage('flowchart-global-notes-media', null) || {};
+        const clean = (m) => (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+        return { drawings: clean(saved.drawings), images: clean(saved.images) };
+    }
+
+    saveGlobalNotesMedia() {
+        try {
+            localStorage.setItem('flowchart-global-notes-media', JSON.stringify(this.globalNotesMedia));
+        } catch (err) {
+            console.error('Could not store global note images (storage full?):', err);
+        }
+    }
+
+    // The store a drawing/image lives in: global notes keep theirs separately
+    // from the per-flowchart ones.
+    getNotesMediaMap(type, scope) {
+        if (scope === 'global') return type === 'drawing' ? this.globalNotesMedia.drawings : this.globalNotesMedia.images;
+        return type === 'drawing' ? this.notesDrawings : this.notesImages;
+    }
+
+    // Ids are random, so an id belongs to at most one store - which one tells
+    // where a marker's picture is kept.
+    findNotesMedia(type, id) {
+        const own = this.getNotesMediaMap(type, 'chart')[id];
+        if (own) return own;
+        return this.getNotesMediaMap(type, 'global')[id] || null;
+    }
+
+    notesMediaScopeOf(type, id) {
+        if (this.getNotesMediaMap(type, 'chart')[id]) return 'chart';
+        return this.getNotesMediaMap(type, 'global')[id] ? 'global' : null;
+    }
+
     addNotesTab(scope) {
         const list = this.getNotesTabsList(scope);
         const tab = this.getDefaultNotesTab(`${scope === 'global' ? 'Global' : 'Notes'} ${list.length + 1}`);
@@ -5554,31 +5680,7 @@ class FlowchartViewer {
         const old = document.getElementById('notes-tab-bar');
         if (!old || !old.parentNode) return;
         old.replaceWith(this.buildNotesTabBar());
-        this.updateNotesInsertDrawingBtnState();
         this.updateNotesPickerLabel();
-    }
-
-    // Insert Drawing is disabled while a global tab is active (see renderNotesPanel)
-    // - switching tabs/scope goes through the lightweight renderNotesTabBar rather
-    // than a full renderNotesPanel, so this has to be refreshed there too, not just
-    // baked into the button once at full-render time.
-    // There can be two Insert Drawing buttons in the DOM at once - the embedded
-    // header's and the full-screen toolbar's (see buildNotesToolbar) - so this
-    // updates every one of them rather than a single by-id lookup. Scope is
-    // getActiveNotesTarget()'s, not always _activeNotesScope, so a focused
-    // full-screen pane showing a global tab disables it even if the embedded
-    // view (in the background) is on a chart tab, and vice versa.
-    updateNotesInsertDrawingBtnState() {
-        const isGlobal = this.getActiveNotesTarget().scope === 'global';
-        document.querySelectorAll('.notes-insert-drawing-btn').forEach(btn => {
-            if (isGlobal) {
-                btn.disabled = true;
-                btn.title = 'Not available on a global tab (drawings live with a single flowchart)';
-            } else {
-                btn.disabled = false;
-                btn.title = 'Insert a drawing at the cursor';
-            }
-        });
     }
 
     // The Insert Drawing/Checklist/Title/Highlight/Outdent/Indent toolbar row -
@@ -5614,16 +5716,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('undo', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
         row.appendChild(makeBtn('redo', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
-        const insertDrawingBtn = makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing());
-        // Drawings/pasted images are stored per-flowchart (notesDrawings/
-        // notesImages), not per-tab - there's nowhere for one to live if the
-        // active tab/pane is a global tab not tied to any single flowchart,
-        // hence disabled on the global scope (see the clipboardInput handler in
-        // renderNotesPanel for the same restriction on image paste). The
-        // listener is always attached; only .disabled (kept current by
-        // updateNotesInsertDrawingBtnState, called from everywhere the active
-        // tab/pane can change) gates whether it actually does anything.
-        row.appendChild(insertDrawingBtn);
+        row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('title', 'Title - make the selected (or current) lines a bold title', '', () => this.toggleNotesTitle()));
@@ -5729,7 +5822,7 @@ class FlowchartViewer {
         this._embeddedEditors.delete(key);
         if (this.notesEditor === entry.editor) this.notesEditor = null;
         if (entry.editor) { try { entry.editor.destroy(); } catch (err) { /* ignore */ } }
-        if (entry.host && entry.host.parentNode) entry.host.remove();
+        if (entry.holder && entry.holder.parentNode) entry.holder.remove();
     }
 
     // Makes (scope, tabId) the open note: shows its editor if it exists,
@@ -5747,12 +5840,15 @@ class FlowchartViewer {
     }
 
     activateEmbeddedEntry(entry) {
-        this._embeddedEditors.forEach(e => e.host.classList.toggle('is-hidden', e !== entry));
+        // Hidden by the wrapper around each editor, never the editor's own element:
+        // CKEditor rewrites that element's class/style back to what it had when the
+        // editor was built every time it gains or loses focus, which would hide
+        // (or show) the note again at the wrong moment.
+        this._embeddedEditors.forEach(e => { e.holder.style.display = e === entry ? '' : 'none'; });
         this.notesEditor = entry.editor;
         // Anything that changed this note elsewhere while its editor sat hidden
         // (sync, a Full Screen pane) is picked up now.
         this.syncEmbeddedEntry(entry);
-        this.renderNotesMediaStrip();
         this.updateNotesTitleControls();
         this.trimEmbeddedEditors();
         this.schedulePrewarm();
@@ -5828,11 +5924,15 @@ class FlowchartViewer {
         const tab = this.getNotesTab(scope, tabId);
         if (!wrap || !tab || !window.CKEDITOR) return null;
         const key = `${scope}:${tabId}`;
+        const holder = document.createElement('div');
+        holder.className = 'notes-editor-holder';
+        holder.style.display = 'none';
         const host = document.createElement('div');
-        host.className = 'notes-editor-host is-hidden';
+        host.className = 'notes-editor-host';
+        holder.appendChild(host);
         host.dataset.key = key;
-        wrap.appendChild(host);
-        const entry = { key, scope, tabId, host, editor: null, lastContent: tab.content, lastUsed: Date.now(), applying: false, dead: false };
+        wrap.appendChild(holder);
+        const entry = { key, scope, tabId, holder, host, editor: null, lastContent: tab.content, lastUsed: Date.now(), applying: false, dead: false };
         this._embeddedEditors.set(key, entry);
 
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
@@ -5904,13 +6004,13 @@ class FlowchartViewer {
             // Only image *data* (a screenshot, or an image copied from an image
             // editor) is intercepted here - everything else (plain text, a
             // pasted URL) leaves the event alone so CKEditor's own default
-            // paste handling still runs normally. Skipped entirely on the global
-            // scope (see insertDrawingBtn above for why) - a pasted image there
-            // just falls through to CKEditor's own default handling, which quietly
-            // drops it since no Image plugin is loaded.
+            // paste handling still runs normally.
             editor.editing.view.document.on('clipboardInput', (evt, data) => {
-                if (entry.scope !== 'global' && this.handleNotesPaste(data.dataTransfer)) {
+                this._notesDrawingInsertTarget = { editor, scope: entry.scope, tabId: entry.tabId };
+                if (this.handleNotesPaste(data.dataTransfer, entry.scope)) {
                     evt.stop();
+                } else {
+                    this._notesDrawingInsertTarget = null;
                 }
             });
 
@@ -5936,7 +6036,6 @@ class FlowchartViewer {
                     this._pendingNotesSave = true;
                     this.scheduleNotesAutosave();
                 }
-                if (this.notesEditor === editor) this.renderNotesMediaStrip();
             });
             this.wireNotesEditorFeedback(editor, true);
 
@@ -6226,98 +6325,10 @@ class FlowchartViewer {
         return html || '<p></p>';
     }
 
-    // Drawing/image markers embedded in the notes text look like [[drawing:ID]] or
-    // [[image:ID]] (used only for raw pasted image *data*, which has no natural text
-    // form), plus plain pasted image URLs found directly in the text (used for a
-    // pasted *link* to an image - left as ordinary, readable/copyable URL text
-    // instead of being hidden behind a marker, since that's the closest thing to "a
-    // hyperlink to the image" achievable inside a plain textarea, which can't
-    // support real clickable links no matter what text sits inside it). Everything
-    // found gets a small preview thumbnail in a strip under the textarea, in the
-    // order it appears in the text; tapping a drawing reopens it for editing,
-    // tapping a photo opens it full-size.
-    getNotesMediaMarkers() {
-        const text = this.globalNotes || '';
-        const items = [];
-        const re = /\[\[(drawing|image):([a-zA-Z0-9_-]+)\]\]/g;
-        let m;
-        while ((m = re.exec(text))) items.push({ type: m[1], id: m[2] });
-
-        const urlRe = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|avif)(?:\?\S*)?/gi;
-        let um;
-        while ((um = urlRe.exec(text))) items.push({ type: 'image-url', id: um[0] });
-
-        return items;
-    }
-
-    renderNotesMediaStrip() {
-        if (!this.notesPanelBody) return;
-        let strip = document.getElementById('notes-drawings-strip');
-
-        const items = this.getNotesMediaMarkers();
-        // Called on every edit as well as every tab switch: rebuilding the strip
-        // re-creates (and re-decodes) every thumbnail, so leave it be when
-        // nothing in it would change.
-        const sig = items.map(({ type, id }) => {
-            const src = type === 'drawing' ? (this.notesDrawings[id] || {}).dataUrl
-                : type === 'image' ? ((this.notesImages[id] || {}).dataUrl || (this.notesImages[id] || {}).url)
-                : id;
-            return `${type}:${id}:${src ? src.length : 0}`;
-        }).join('|');
-        if (strip && sig === this._mediaStripSig) return;
-        this._mediaStripSig = sig;
-        if (strip) strip.remove();
-        if (items.length === 0) return;
-
-        // A plain <textarea> can't contain a real clickable hyperlink no matter what
-        // text is used - the [[drawing:id]]/[[image:id]] markers (or a pasted image
-        // URL) sitting in the raw notes stay inert, plain text either way. This strip
-        // is the closest equivalent: every embedded drawing/image gets a labeled,
-        // clickable entry here that opens it, styled and captioned like a link
-        // rather than a bare thumbnail, so it's clear at a glance that tapping it
-        // does something.
-        strip = document.createElement('div');
-        strip.id = 'notes-drawings-strip';
-
-        const addEntry = (src, label, onClick) => {
-            const entry = document.createElement('div');
-            entry.className = 'notes-media-link';
-            entry.addEventListener('click', onClick);
-            const thumb = document.createElement('img');
-            thumb.className = 'notes-drawing-thumb';
-            thumb.src = src;
-            entry.appendChild(thumb);
-            const caption = document.createElement('span');
-            caption.className = 'notes-media-link-label';
-            caption.textContent = label;
-            entry.appendChild(caption);
-            strip.appendChild(entry);
-        };
-
-        items.forEach(({ type, id }) => {
-            if (type === 'drawing') {
-                const drawing = this.notesDrawings && this.notesDrawings[id];
-                if (!drawing) return;
-                addEntry(drawing.dataUrl, '🎨 Open drawing', () => this.editNotesDrawing(id));
-            } else if (type === 'image') {
-                // Legacy marker format - kept for backward compatibility with
-                // already-saved notes from before URL pastes stopped using markers.
-                const image = this.notesImages && this.notesImages[id];
-                if (!image) return;
-                addEntry(image.dataUrl || image.url, '🖼 View image', () => this.openNotesImageLightbox(image.dataUrl || image.url));
-            } else if (type === 'image-url') {
-                // id IS the URL here - found directly in the text, no lookup needed.
-                addEntry(id, '🖼 View image', () => this.openNotesImageLightbox(id));
-            }
-        });
-        this.notesPanelBody.appendChild(strip);
-    }
-
     // Downscales and re-encodes an image data URL before it's ever stored - a
     // pasted phone photo or screenshot can run several MB at full resolution,
-    // and every embedded image here ends up in localStorage and (unless it's a
-    // global-notes tab, which isn't cloud-synced at all - see saveGlobalNotesTabs)
-    // in the Cloud Sync payload too (see stripImagesFromDataString/cloudPush),
+    // and every embedded image here ends up in localStorage and in the Cloud
+    // Sync payload too (see stripImagesFromDataString/cloudPush),
     // so keeping these small matters for both. Used at every point raw image data
     // is captured: handleNotesPaste, captureNodePhotoFromClipboard, and
     // closeDrawingOverlay.
@@ -6359,13 +6370,12 @@ class FlowchartViewer {
     // an image editor) or a plain text URL that looks like it points at an image.
     // Raw image data has no natural embeddable form here, so it still gets a
     // [[image:ID]] marker; a pasted URL is left as plain, ordinary URL text -
-    // readable and copyable, and picked up automatically for a preview by
-    // getNotesMediaMarkers. Called from the editor's clipboardInput event (see
+    // readable and copyable. Called from the editor's clipboardInput event (see
     // renderNotesPanel) with CKEditor's DataTransfer for the paste - returning
     // true tells that handler to stop() the event (don't also run CKEditor's
     // own default paste behavior); returning false/undefined lets a plain
     // text/URL paste go through normally.
-    handleNotesPaste(dataTransfer) {
+    handleNotesPaste(dataTransfer, scope = 'chart') {
         // `dataTransfer` here is CKEditor's own DataTransfer wrapper (see
         // renderNotesPanel's clipboardInput listener), not the native browser one -
         // it exposes `.files` (an array of File objects), not `.items` (a native
@@ -6380,28 +6390,23 @@ class FlowchartViewer {
                 reader.onload = async () => {
                     const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
                     const dataUrl = await this.compressImageDataUrl(reader.result);
-                    this.notesImages[id] = { dataUrl };
+                    this.getNotesMediaMap('image', scope)[id] = { dataUrl };
+                    if (scope === 'global') this.saveGlobalNotesMedia();
                     this.insertNotesMediaMarker('image', id);
                 };
                 reader.readAsDataURL(blob);
                 return true;
             }
         }
-        // Otherwise, a pasted image URL (or any other text) just pastes normally -
-        // getNotesMediaMarkers picks up the URL and shows its preview automatically
-        // once the resulting update fires and re-renders the strip.
+        // Otherwise, a pasted image URL (or any other text) just pastes normally.
         return false;
     }
 
     // The actual pixels for a [[type:id]] marker - shared by the media strip and
     // by the inline widget plugin below.
     getNotesMediaSrc(type, id) {
-        if (type === 'drawing') {
-            const d = this.notesDrawings && this.notesDrawings[id];
-            return d ? d.dataUrl : '';
-        }
-        const img = this.notesImages && this.notesImages[id];
-        return img ? (img.dataUrl || img.url) : '';
+        const m = this.findNotesMedia(type === 'drawing' ? 'drawing' : 'image', id);
+        return m ? (m.dataUrl || m.url || '') : '';
     }
 
     // A custom CKEditor plugin, built once per page load and reused by every
@@ -6416,9 +6421,8 @@ class FlowchartViewer {
     //    the default paragraph converter).
     //  - dataDowncast: model -> the HTML string that gets saved/synced - turns
     //    that model element right back into the exact same "<p>[[type:id]]</p>"
-    //    text, so the saved format (and everything that already text-scans it -
-    //    getNotesMediaMarkers/renderNotesMediaStrip - as well as Cloud Sync's
-    //    payload size) is completely unchanged.
+    //    text, so the saved format (and Cloud Sync's payload size) is
+    //    completely unchanged.
     //  - editingDowncast: model -> what's actually shown on screen - a small
     //    non-editable widget with an <img> thumbnail, clickable to open the
     //    lightbox (or the drawing editor), which is the part that's actually new.
@@ -6514,6 +6518,15 @@ class FlowchartViewer {
                             class: 'note-media-widget-img',
                         }, (domElement) => {
                             domElement.setAttribute('src', src || '');
+                            // Pressing on the picture must not focus the note (CKEditor's
+                            // own handler does that on mousedown, which is what pops the
+                            // on-screen keyboard open on a phone before the preview opens);
+                            // a plain click still goes through to the handler below.
+                            domElement.addEventListener('mousedown', (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                            });
+                            domElement.addEventListener('pointerdown', (e) => e.stopPropagation());
                             domElement.addEventListener('click', (e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -7154,6 +7167,12 @@ class FlowchartViewer {
         const editor = target.editor;
         if (editor) {
             editor.editing.view.focus();
+            // A picture that's still selected (just pasted/inserted) would be
+            // replaced by the new one - put the caret after it instead.
+            const selected = editor.model.document.selection.getSelectedElement();
+            if (selected && selected.is('element', 'noteMediaMarker')) {
+                editor.model.change(writer => writer.setSelection(selected, 'after'));
+            }
             const viewFragment = editor.data.processor.toView(`<p>${marker}</p>`);
             const modelFragment = editor.data.toModel(viewFragment);
             editor.model.insertContent(modelFragment);
@@ -7180,7 +7199,6 @@ class FlowchartViewer {
                 this.syncNotesPanesShowingTab(target.scope, target.tabId, newContent);
             }
         }
-        this.renderNotesMediaStrip();
         this._notesDrawingInsertTarget = null;
         this.autosave();
     }
@@ -7431,7 +7449,6 @@ class FlowchartViewer {
         this._activeFullscreenPaneId = this.findFirstNotesLeafPaneId(this._notesPaneTree);
         this.notesFullscreenOverlay.style.display = 'flex';
         this.renderNotesFullscreen();
-        this.updateNotesInsertDrawingBtnState();
     }
 
     closeNotesFullscreen() {
@@ -7532,7 +7549,6 @@ class FlowchartViewer {
             this._activeFullscreenPaneId = this.findFirstNotesLeafPaneId(this._notesPaneTree);
         }
         this.renderNotesFullscreen();
-        this.updateNotesInsertDrawingBtnState();
         this.saveNotesPaneLayout();
     }
 
@@ -7546,7 +7562,6 @@ class FlowchartViewer {
         found.node.scope = scope;
         found.node.tabId = tabId;
         this.renderNotesFullscreen();
-        this.updateNotesInsertDrawingBtnState();
         this.saveNotesPaneLayout();
     }
 
@@ -7565,7 +7580,6 @@ class FlowchartViewer {
         b.node.scope = scope;
         b.node.tabId = tabId;
         this.renderNotesFullscreen();
-        this.updateNotesInsertDrawingBtnState();
         this.saveNotesPaneLayout();
     }
 
@@ -7800,9 +7814,8 @@ class FlowchartViewer {
             // first - otherwise it would fall back to getActiveNotesTarget() and
             // could land in whichever pane was merely focused last.
             editor.editing.view.document.on('clipboardInput', (evt, data) => {
-                if (node.scope === 'global') return;
                 this._notesDrawingInsertTarget = { editor, scope: node.scope, tabId: node.tabId };
-                if (this.handleNotesPaste(data.dataTransfer)) {
+                if (this.handleNotesPaste(data.dataTransfer, node.scope)) {
                     evt.stop();
                 } else {
                     this._notesDrawingInsertTarget = null;
@@ -7827,7 +7840,6 @@ class FlowchartViewer {
                     // The relocated toolbar (see buildNotesToolbar) acts on whichever
                     // pane was last focused - this is the only place that changes.
                     this._activeFullscreenPaneId = node.paneId;
-                    this.updateNotesInsertDrawingBtnState();
                 } else if (this._pendingNotesSave) {
                     this._pendingNotesSave = false;
                     this.autosave();
@@ -8526,7 +8538,10 @@ class FlowchartViewer {
         }
         if (this._drawingHelpers.updateSizeIndicator) this._drawingHelpers.updateSizeIndicator();
 
-        if (existingId && this.notesDrawings[existingId]) {
+        // Which store the drawing being edited lives in (chart or global notes).
+        state.editingScope = existingId ? this.notesMediaScopeOf('drawing', existingId) : null;
+        const existingDrawing = existingId ? this.findNotesMedia('drawing', existingId) : null;
+        if (existingDrawing) {
             const img = new Image();
             img.onload = () => {
                 ctx.fillStyle = '#ffffff';
@@ -8542,7 +8557,7 @@ class FlowchartViewer {
                 const offsetY = (canvas.height - drawH) / 2;
                 ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
             };
-            img.src = this.notesDrawings[existingId].dataUrl;
+            img.src = existingDrawing.dataUrl;
         }
     }
 
@@ -8567,7 +8582,11 @@ class FlowchartViewer {
             if (!id) {
                 id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
             }
-            this.notesDrawings[id] = { dataUrl };
+            const drawingScope = state.editingId
+                ? (state.editingScope || 'chart')
+                : ((this._notesDrawingInsertTarget && this._notesDrawingInsertTarget.scope === 'global') ? 'global' : 'chart');
+            this.getNotesMediaMap('drawing', drawingScope)[id] = { dataUrl };
+            if (drawingScope === 'global') this.saveGlobalNotesMedia();
 
             if (!state.editingId && this._notesDrawingInsertTarget && this._notesDrawingInsertTarget.editor) {
                 // Brand new drawing - insert its marker at wherever the cursor last
@@ -8664,14 +8683,22 @@ class FlowchartViewer {
             state.nodeTarget = null;
             this.renderFlowchart(this.rootData);
             this.autosave();
-        } else if (state.editingId && this.notesDrawings[state.editingId]) {
-            delete this.notesDrawings[state.editingId];
+        } else if (state.editingId && this.findNotesMedia('drawing', state.editingId)) {
+            const scope = this.notesMediaScopeOf('drawing', state.editingId);
+            delete this.getNotesMediaMap('drawing', scope)[state.editingId];
+            if (scope === 'global') this.saveGlobalNotesMedia();
+            // Take the marker out of every note of that scope too, so Notes
+            // doesn't end up with a dead "[[drawing:...]]" line pointing at nothing.
             const marker = `[[drawing:${state.editingId}]]`;
             const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            this.globalNotes = (this.globalNotes || '')
-                .replace(new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`), '');
+            const markerRe = new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`);
+            this.getNotesTabsList(scope).forEach((tab) => {
+                if (typeof tab.content === 'string' && markerRe.test(tab.content)) {
+                    tab.content = tab.content.replace(markerRe, '');
+                    this.syncNotesPanesShowingTab(scope, tab.id, tab.content);
+                }
+            });
             this.refreshEmbeddedEditors();
-            this.renderNotesMediaStrip();
             this.autosave();
         }
         this.drawingOverlay.style.display = 'none';
