@@ -621,7 +621,10 @@ class FlowchartViewer {
         // On first ever load seed with sample data; otherwise restore the last opened flowchart
         if (this.flowchartList.length > 0) {
             const initialIndex = this.getPreferredFlowchartIndex();
-            this.loadFlowchartFromList(initialIndex);
+            // On a phone Notes is what's on screen at startup (see openNotesPanel
+            // below), so don't make it wait for a large flowchart to be drawn -
+            // draw the chart right after Notes has painted instead.
+            this.loadFlowchartFromList(initialIndex, { deferRender: window.matchMedia('(max-width: 600px)').matches });
         } else {
             this.renderFlowchart(this.getSampleData(), { fitView: true });
             this.currentSlotIndex = 0;
@@ -1746,7 +1749,7 @@ class FlowchartViewer {
         this.showNotification('New flowchart created!');
     }
     
-    loadFlowchartFromList(index) {
+    loadFlowchartFromList(index, opts = {}) {
         if (index >= this.flowchartList.length) return;
 
         // A flowchart pulled from cloud sync only has the *opened* slot's images
@@ -1757,7 +1760,7 @@ class FlowchartViewer {
         const item0 = this.flowchartList[index];
         if (item0 && item0.data && this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId &&
             /"@img:/.test(item0.data)) {
-            this.rehydrateFlowchartImages(index).then(() => this.loadFlowchartFromList(index));
+            this.rehydrateFlowchartImages(index).then(() => this.loadFlowchartFromList(index, opts));
             return;
         }
         
@@ -1863,11 +1866,19 @@ class FlowchartViewer {
                             return null;
                         })
                         .filter(Boolean);
-                    
+                }
+
+                // deferRender (used for the very first load on a phone): everything
+                // above - the flowchart's data and its Notes - is already in place,
+                // but drawing a big chart takes seconds, so it waits until after the
+                // Notes panel has had a chance to paint (see the constructor).
+                if (opts.deferRender) {
+                    requestAnimationFrame(() => setTimeout(() => {
+                        if (this.currentSlotIndex === index && this.rootData) this.renderFlowchart(this.rootData, renderOpts);
+                    }, 0));
+                } else {
                     this.renderFlowchart(this.rootData, renderOpts);
                 }
-                
-                this.renderFlowchart(this.rootData, renderOpts);
                 this.currentSlotIndex = index;
                 this.saveCurrentFlowchart();
                 this.autosave();
@@ -4334,12 +4345,14 @@ class FlowchartViewer {
                 this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
             }
             this.updateStickyAncestors();
+            this.applyPendingFit();
             return;
         }
 
         this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
         this.nodeEditPopup.style.display = (!panelActive && this.nodeBeingEdited) ? 'block' : 'none';
         this.updateStickyAncestors();
+        this.applyPendingFit();
     }
 
     // Toggles between the node edit menu and the reflection/question-boxes view on
@@ -6785,6 +6798,7 @@ class FlowchartViewer {
             document.body.classList.remove('notes-menu-hidden');
             if (this._notesFolded) this.unfoldNotesSection();
             window.scrollTo(0, 0);
+            this.applyPendingFit();
         }
         this.placeNotesToolbarExtras();
         if (on) {
@@ -10087,8 +10101,10 @@ class FlowchartViewer {
         
         this.flowchartContainer.innerHTML = '';
 
-        const width = this.flowchartPanel.clientWidth;
-        const height = this.flowchartPanel.clientHeight;
+        // On a phone the chart panel is display:none while Notes is open, which
+        // measures as 0x0 - size the drawing to the screen it will fill once shown.
+        const width = this.flowchartPanel.clientWidth || window.innerWidth;
+        const height = this.flowchartPanel.clientHeight || window.innerHeight;
 
         const svg = d3.select('#flowchart')
             .append('svg')
@@ -10553,13 +10569,8 @@ class FlowchartViewer {
 
         const isIdentity = (t) => t.k === 1 && t.x === 0 && t.y === 0;
         if (fitView || isIdentity(this.transform)) {
-            const bounds = g.node().getBBox();
-            const scale = 0.9 / Math.max(bounds.width / width, bounds.height / height);
-            const tx = (width - bounds.width * scale) / 2 - bounds.x * scale;
-            const ty = (height - bounds.height * scale) / 2 - bounds.y * scale;
-            this.transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
-            g.attr('transform', this.transform);
-            svg.call(this._zoomBehavior.transform, this.transform);
+            this._fitPending = true;
+            this.applyPendingFit();
         } else {
             g.attr('transform', this.transform);
         }
@@ -10568,6 +10579,28 @@ class FlowchartViewer {
 
         this.updateUndoRedoButtons();
         this.refreshRadialButtons();
+    }
+
+    // Zooms/pans the drawn chart to fit the screen. A chart drawn while its panel
+    // is hidden (a phone showing Notes) has no measurable size yet, so the fit
+    // stays pending and is applied by applyMobileViewState once it's shown.
+    applyPendingFit() {
+        if (!this._fitPending) return;
+        const g = this._flowchartG;
+        const svg = d3.select('#flowchart svg');
+        if (!g || svg.empty() || !this._zoomBehavior) return;
+        const width = this.flowchartPanel.clientWidth;
+        const height = this.flowchartPanel.clientHeight;
+        if (!width || !height) return;
+        const bounds = g.node().getBBox();
+        if (!bounds.width || !bounds.height) return;
+        this._fitPending = false;
+        const scale = 0.9 / Math.max(bounds.width / width, bounds.height / height);
+        const tx = (width - bounds.width * scale) / 2 - bounds.x * scale;
+        const ty = (height - bounds.height * scale) / 2 - bounds.y * scale;
+        this.transform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+        g.attr('transform', this.transform);
+        svg.call(this._zoomBehavior.transform, this.transform);
     }
 
     // Floating quick-add buttons around the currently selected node: left/right add a
