@@ -1,3 +1,171 @@
+// Three-way merge for Notes, so devices that edited the same note (at the same
+// time, or one long after the other) combine their changes instead of one
+// whole version overwriting the other. Given the last version both sides
+// agreed on (base) plus each side's current text, anything only one side
+// changed is kept, and edits to different places merge cleanly. Works on the
+// note's saved HTML by splitting it into one chunk per paragraph/list
+// item/title (merged like lines of text) and, where both sides touched the same
+// chunk, word by word. Only when both changed the very same words does it keep
+// both versions (never silently dropping either). Returns null if the result
+// can't be proven well-formed, so the caller can keep both copies instead.
+const NotesMerge = (() => {
+    const BREAK_BEFORE = /(<(?:ul|ol|li|p|h[1-6]|figure|div|table|blockquote)\b|<\/(?:ul|ol)>)/g;
+    const BREAK_AFTER = /(<\/(?:p|li|h[1-6]|figure|div|table|blockquote)>)/g;
+    const VOID_TAGS = new Set(['br', 'img', 'hr', 'input', 'meta', 'link']);
+    const MAX_CELLS = 9e6;
+
+    const splitBlocks = (html) => html.replace(BREAK_BEFORE, '\u0001$1').replace(BREAK_AFTER, '$1\u0001')
+        .split('\u0001').filter(s => s !== '');
+    const splitWords = (text) => text.split(/(<[^>]*>|\s+)/).filter(s => s !== '');
+    const stripItemIds = (html) => html.replace(/\sdata-list-item-id="[^"]*"/g, '');
+    const sameArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+    // matchA[i] = index in b that a[i] is paired with in a longest common
+    // subsequence, or -1.
+    function lcsMatch(a, b) {
+        const n = a.length, m = b.length;
+        const match = new Array(n).fill(-1);
+        let s = 0;
+        while (s < n && s < m && a[s] === b[s]) { match[s] = s; s++; }
+        let ea = n, eb = m;
+        while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; match[ea] = eb; }
+        const N = ea - s, M = eb - s;
+        if (N === 0 || M === 0) return match;
+        if (N * M > MAX_CELLS) throw new Error('too large to merge');
+        const w = M + 1;
+        const t = new Uint16Array((N + 1) * w);
+        for (let i = N - 1; i >= 0; i--) {
+            for (let j = M - 1; j >= 0; j--) {
+                t[i * w + j] = a[s + i] === b[s + j]
+                    ? t[(i + 1) * w + j + 1] + 1
+                    : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+            }
+        }
+        let i = 0, j = 0;
+        while (i < N && j < M) {
+            if (a[s + i] === b[s + j]) { match[s + i] = s + j; i++; j++; }
+            else if (t[(i + 1) * w + j] >= t[i * w + j + 1]) i++;
+            else j++;
+        }
+        return match;
+    }
+
+    function diff3(base, local, remote, resolve) {
+        const mL = lcsMatch(base, local);
+        const mR = lcsMatch(base, remote);
+        const out = [];
+        let bi = 0, li = 0, ri = 0;
+        const hunk = (b, l, r) => {
+            const B = base.slice(bi, b), L = local.slice(li, l), R = remote.slice(ri, r);
+            if (sameArr(L, B)) out.push(...R);
+            else if (sameArr(R, B) || sameArr(L, R)) out.push(...L);
+            else out.push(...resolve(B, L, R));
+        };
+        for (let b = 0; b < base.length; b++) {
+            if (mL[b] < 0 || mR[b] < 0 || mL[b] < li || mR[b] < ri) continue;
+            hunk(b, mL[b], mR[b]);
+            out.push(base[b]);
+            bi = b + 1; li = mL[b] + 1; ri = mR[b] + 1;
+        }
+        hunk(base.length, local.length, remote.length);
+        return out;
+    }
+
+    const CONFLICT = new Error('conflict');
+    function mergeWords(base, local, remote) {
+        try {
+            return diff3(splitWords(base), splitWords(local), splitWords(remote), () => { throw CONFLICT; }).join('');
+        } catch (err) {
+            if (err === CONFLICT) return null;
+            throw err;
+        }
+    }
+
+    // Both sides changed the same stretch: an edit beats a deletion; two
+    // different edits try a word-level merge, and failing that keep both.
+    function resolveBlocks(B, L, R) {
+        if (L.length === 0) return R;
+        if (R.length === 0) return L;
+        const words = mergeWords(B.join(''), L.join(''), R.join(''));
+        if (words !== null) return [words];
+        return [...R, stripItemIds(L.join(''))];
+    }
+
+    function isBalanced(html) {
+        const stack = [];
+        const re = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*?(\/?)>/g;
+        let m;
+        while ((m = re.exec(html))) {
+            const tag = m[2].toLowerCase();
+            if (VOID_TAGS.has(tag) || m[3]) continue;
+            if (!m[1]) stack.push(tag);
+            else if (stack.pop() !== tag) return false;
+        }
+        return stack.length === 0;
+    }
+
+    // base may be null/undefined (never synced before): then the parts both
+    // sides still share stand in for it, which merges as a union - nothing
+    // from either side is dropped.
+    function mergeHtml(base, local, remote) {
+        if (local === remote) return local;
+        if (typeof base === 'string') {
+            if (local === base) return remote;
+            if (remote === base) return local;
+        }
+        try {
+            const L = splitBlocks(local), R = splitBlocks(remote);
+            let B;
+            if (typeof base === 'string') B = splitBlocks(base);
+            else {
+                const m = lcsMatch(L, R);
+                B = L.filter((_, i) => m[i] >= 0);
+            }
+            const merged = diff3(B, L, R, resolveBlocks).join('');
+            return isBalanced(merged) ? merged : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    // Tabs are {id, name, content}. Returns the merged list plus any tabs that
+    // had to be split off as conflict copies (already included in tabs).
+    function mergeTabs(baseTabs, localTabs, remoteTabs, makeId) {
+        const index = (arr) => new Map((arr || []).map(t => [t.id, t]));
+        const bm = index(baseTabs), lm = index(localTabs), rm = index(remoteTabs);
+        const out = [];
+        const conflicts = [];
+        (remoteTabs || []).forEach((r) => {
+            const l = lm.get(r.id), b = bm.get(r.id);
+            if (!l) {
+                // Deleted on this device: honour it unless the other side edited it since.
+                if (b && b.content === r.content) return;
+                out.push(r);
+                return;
+            }
+            const name = (b && l.name !== b.name) ? l.name : r.name;
+            const content = mergeHtml(b ? b.content : null, l.content, r.content);
+            if (content === null) {
+                out.push({ id: r.id, name, content: r.content });
+                conflicts.push({ id: makeId(), name: `${l.name} (conflict copy)`, content: l.content });
+            } else {
+                out.push({ id: r.id, name, content });
+            }
+        });
+        (localTabs || []).forEach((l) => {
+            if (rm.has(l.id)) return;
+            const b = bm.get(l.id);
+            // Deleted elsewhere: honour it unless this device edited it since.
+            if (b && b.content === l.content) return;
+            out.push(l);
+        });
+        conflicts.forEach(c => out.push(c));
+        return { tabs: out, conflicts };
+    }
+
+    return { mergeHtml, mergeTabs, splitBlocks };
+})();
+
 class FlowchartViewer {
     constructor() {
         // Shared with computeIndentedContour/updateStickyAncestors/renderFlowchart so
@@ -788,7 +956,8 @@ class FlowchartViewer {
         localStorage.removeItem('cloud-sync-id');
         localStorage.removeItem('cloud-sync-known-remote-at');
         localStorage.removeItem('flowchart-global-notes-known-remote-at');
-        this._lastPushedGlobalNotesJson = null;
+        localStorage.removeItem('flowchart-global-notes-base');
+        localStorage.removeItem('flowchart-notes-bases');
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
         this._cloudPollTimer = null;
@@ -839,6 +1008,16 @@ class FlowchartViewer {
         this._cloudSyncInFlight = true;
         this.updateCloudSyncStatus('syncing');
         try {
+            // Never write over the cloud blindly: first pull in and merge whatever
+            // other devices have pushed since we last looked, so this device's
+            // (possibly stale) copy builds on theirs instead of replacing it.
+            try {
+                await this.pullGlobalNotes();
+            } catch (err) {
+                console.error('Global notes pull failed:', err);
+            }
+            if (!(await this.cloudPullMain())) return false;
+
             if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
 
             // Strip every embedded image/drawing out of each flowchart's data string
@@ -852,7 +1031,8 @@ class FlowchartViewer {
                 return { title: item.title, data: stripped };
             });
 
-            const updatedAt = Date.now();
+            // Never below the cloud's own timestamp, however far this device's clock is off.
+            const updatedAt = Math.max(Date.now(), (Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0) + 1);
             const dataJson = JSON.stringify({ flowchartList: strippedList });
 
             // Upload whichever images aren't yet confirmed present on the server -
@@ -898,18 +1078,31 @@ class FlowchartViewer {
                 this._cloudSyncInFlight = false;
                 return false;
             }
-            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}`, {
+            // Compare-and-swap: only replace the row if it still has the timestamp we
+            // just merged against. If another device pushed in the meantime, nothing
+            // is written - the retry below merges their change in first.
+            const knownAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
+            const swapFilter = knownAt ? `&updated_at=eq.${knownAt}` : '';
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}${swapFilter}`, {
                 method: 'PATCH',
                 headers: {
                     'apikey': this.cloudApiKey,
                     'Authorization': `Bearer ${this.cloudApiKey}`,
                     'Content-Type': 'application/json',
-                    'Prefer': 'return=minimal'
+                    'Prefer': 'return=representation'
                 },
                 body: serialized
             });
             if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+            if (knownAt) {
+                const written = await res.json();
+                if (!Array.isArray(written) || written.length === 0) {
+                    this._cloudPushTimer = setTimeout(() => this.cloudPush(), 300);
+                    return false;
+                }
+            }
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
+            this.saveNotesBasesFromList(this.flowchartList);
             this._lastPushedDataJson = dataJson;
             this.updateCloudSyncStatus('synced');
             return true;
@@ -932,6 +1125,17 @@ class FlowchartViewer {
             } catch (err) {
                 console.error('Global notes pull failed:', err);
             }
+            return await this.cloudPullMain();
+        } finally {
+            this._cloudSyncInFlight = false;
+        }
+    }
+
+    // The flowchart list half of a pull. Callers hold _cloudSyncInFlight (see
+    // cloudPull and cloudPush) - cloudPush runs this before writing, so a push
+    // always starts from the merged result of whatever other devices did first.
+    async cloudPullMain() {
+        try {
             // Two-step check: first ask for just updated_at (a few bytes) rather than
             // the full row. Every poll used to download the entire data blob - drawings
             // included - just to see if anything had changed, even though almost every
@@ -1011,15 +1215,32 @@ class FlowchartViewer {
                     // the left panel - reopen Notes afterwards if that's where the
                     // person was (e.g. the Notes-first start on a phone).
                     const wasInNotes = this._leftPanelMode === 'notes' && this._notesTabActive;
+
+                    // Notes edited on this device since the last sync are merged into
+                    // the cloud's copy (three-way, per tab) rather than discarded by
+                    // it - snapshot the open flowchart first so its live notes count.
+                    this.saveCurrentFlowchart();
+                    const notesBases = this.loadJSONFromStorage('flowchart-notes-bases', {});
+                    let notesMerged = false;
+                    const listWithNotes = mergedList.map((remoteItem) => {
+                        const localItem = this.flowchartList.find(l => l.title === remoteItem.title);
+                        if (!localItem) return remoteItem;
+                        const result = this.mergeFlowchartNotes(remoteItem, localItem, notesBases[remoteItem.title]);
+                        if (result !== remoteItem) notesMerged = true;
+                        return result;
+                    });
+                    this.saveNotesBasesFromList(remoteList);
+
                     this._applyingRemote = true;
-                    this.flowchartList = mergedList;
+                    this.flowchartList = listWithNotes;
                     this._lastPushedDataJson = JSON.stringify({ flowchartList: mergedList });
                     this.saveFlowchartList();
                     localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
-                    // If anything local-only was kept, the cloud row doesn't have it yet -
-                    // push right away so it isn't at risk of being "lost" again by the
-                    // very next poll before a routine autosave would otherwise push it.
-                    if (mergedList !== remoteList) this.scheduleCloudPush();
+                    // If anything local-only was kept, or local notes were merged in, the
+                    // cloud row doesn't have it yet - push right away so it isn't at risk
+                    // of being "lost" again by the very next poll before a routine
+                    // autosave would otherwise push it.
+                    if (mergedList !== remoteList || notesMerged) this.scheduleCloudPush();
                     if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
                         this.currentSlotIndex = 0;
                     }
@@ -1048,9 +1269,52 @@ class FlowchartViewer {
             console.error('Cloud pull failed:', err);
             this.updateCloudSyncStatus('error', err.message);
             return false;
-        } finally {
-            this._cloudSyncInFlight = false;
         }
+    }
+
+    // ----- Per-flowchart notes merging (see NotesMerge) -----
+    // `flowchart-notes-bases` remembers, per flowchart title, the notes tabs as
+    // the cloud last held them - the common ancestor for the three-way merge.
+    parseFlowchartData(item) {
+        try {
+            const parsed = JSON.parse(item.data || '');
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    saveNotesBasesFromList(list) {
+        const bases = {};
+        (list || []).forEach(item => {
+            const parsed = this.parseFlowchartData(item);
+            if (parsed && Array.isArray(parsed.notesTabs)) bases[item.title] = parsed.notesTabs;
+        });
+        try {
+            localStorage.setItem('flowchart-notes-bases', JSON.stringify(bases));
+        } catch (err) { /* storage full - next sync just merges without a base */ }
+    }
+
+    // Returns remoteItem with its notes tabs (and the images/drawings they
+    // reference) merged with this device's copy; everything else about the
+    // flowchart stays as the cloud has it.
+    mergeFlowchartNotes(remoteItem, localItem, baseTabs) {
+        const remote = this.parseFlowchartData(remoteItem);
+        const local = this.parseFlowchartData(localItem);
+        if (!remote || !local || !Array.isArray(local.notesTabs) || !Array.isArray(remote.notesTabs)) return remoteItem;
+        const localJson = JSON.stringify(local.notesTabs);
+        if (Array.isArray(baseTabs) && JSON.stringify(baseTabs) === localJson) return remoteItem; // nothing edited here
+        if (localJson === JSON.stringify(remote.notesTabs)) return remoteItem;
+        const { tabs } = NotesMerge.mergeTabs(Array.isArray(baseTabs) ? baseTabs : null, local.notesTabs, remote.notesTabs, () => this.nextNotesId('tab'));
+        if (tabs.length === 0) return remoteItem;
+        remote.notesTabs = tabs;
+        if (!tabs.some(t => t.id === remote.activeNotesTabId)) remote.activeNotesTabId = tabs[0].id;
+        ['notesDrawings', 'notesImages'].forEach((key) => {
+            if (local[key] && typeof local[key] === 'object') {
+                remote[key] = Object.assign({}, local[key], remote[key] || {});
+            }
+        });
+        return { title: remoteItem.title, data: JSON.stringify(remote) };
     }
 
     // ===== Global notes cloud sync =====
@@ -1072,26 +1336,72 @@ class FlowchartViewer {
         }, extra || {});
     }
 
+    // Pushes global notes only when they differ from what the cloud last held (the
+    // base), and never blindly: it first merges whatever another device has pushed
+    // since, then writes with a compare-and-swap on the row's timestamp, so two
+    // devices pushing at once can't overwrite each other - the loser re-merges
+    // and tries again.
     async pushGlobalNotes() {
-        const tabs = this.globalNotesTabs;
-        const json = JSON.stringify(tabs);
-        if (json === this._lastPushedGlobalNotesJson) return;
-        const localTs = Number(localStorage.getItem('flowchart-global-notes-updated-at')) || 0;
-        const pristine = tabs.length === 1 && !tabs[0].content;
-        if (pristine && !localTs) return;
-        const ts = localTs || Date.now();
-        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
-            method: 'POST',
-            headers: this.cloudHeaders({
-                'Content-Type': 'application/json',
-                'Prefer': 'resolution=merge-duplicates,return=minimal'
-            }),
-            body: JSON.stringify([{ id: this.globalNotesRowId(), updated_at: ts, data: { tabs } }])
-        });
-        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
-        this._lastPushedGlobalNotesJson = json;
-        localStorage.setItem('flowchart-global-notes-updated-at', String(ts));
-        localStorage.setItem('flowchart-global-notes-known-remote-at', String(ts));
+        const rowId = encodeURIComponent(this.globalNotesRowId());
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const tabs = this.globalNotesTabs;
+            const json = JSON.stringify(tabs);
+            const base = this.loadJSONFromStorage('flowchart-global-notes-base', null);
+            if (Array.isArray(base) && JSON.stringify(base) === json) return;
+            const pristine = tabs.length === 1 && !tabs[0].content;
+            if (!Array.isArray(base) && pristine) return;
+
+            const headRes = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${rowId}&select=updated_at`, {
+                headers: this.cloudHeaders({ 'Accept': 'application/json' })
+            });
+            if (!headRes.ok) throw new Error(`Supabase API error ${headRes.status}: ${await headRes.text()}`);
+            const headRow = (await headRes.json())[0];
+            const knownTs = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
+
+            if (headRow && (Number(headRow.updated_at) || 0) !== knownTs) {
+                // Someone pushed since we last looked - merge theirs in, then re-check.
+                await this.pullGlobalNotes();
+                const nowKnown = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
+                if (nowKnown !== (Number(headRow.updated_at) || 0)) {
+                    this.scheduleCloudPush();
+                    return;
+                }
+                continue;
+            }
+
+            const ts = Math.max(Date.now(), knownTs + 1);
+            let res;
+            if (!headRow) {
+                res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
+                    method: 'POST',
+                    headers: this.cloudHeaders({
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    }),
+                    body: JSON.stringify([{ id: this.globalNotesRowId(), updated_at: ts, data: { tabs } }])
+                });
+                // Another device created the row first - go round again and merge.
+                if (res.status === 409) continue;
+            } else {
+                res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${rowId}&updated_at=eq.${knownTs}`, {
+                    method: 'PATCH',
+                    headers: this.cloudHeaders({
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=representation'
+                    }),
+                    body: JSON.stringify({ updated_at: ts, data: { tabs } })
+                });
+            }
+            if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+            if (headRow) {
+                const written = await res.json();
+                if (!Array.isArray(written) || written.length === 0) continue; // lost the race
+            }
+            localStorage.setItem('flowchart-global-notes-base', json);
+            localStorage.setItem('flowchart-global-notes-known-remote-at', String(ts));
+            return;
+        }
+        this.scheduleCloudPush();
     }
 
     async pullGlobalNotes() {
@@ -1111,43 +1421,44 @@ class FlowchartViewer {
         });
         if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
         const row = (await res.json())[0];
-        const remoteTabs = row && row.data && row.data.tabs;
-        if (!Array.isArray(remoteTabs) || remoteTabs.length === 0) return;
+        const rawRemoteTabs = row && row.data && row.data.tabs;
+        if (!Array.isArray(rawRemoteTabs) || rawRemoteTabs.length === 0) return;
+        const remoteTabs = this.sanitizeNotesTabs(rawRemoteTabs);
 
         // Don't swap the text out while the person is actively typing in it (the next
         // poll retries); if the note is merely open/focused, it's updated in place.
         const typingNow = Date.now() - (this._lastNotesTypingAt || 0) < 3000;
         if (this._activeNotesScope === 'global' && this.notesEditor && this.notesEditor.ui.focusTracker.isFocused && typingNow) return;
 
-        const localTs = Number(localStorage.getItem('flowchart-global-notes-updated-at')) || 0;
+        // Three-way merge: what the cloud held last time we synced (base), what
+        // this device has now, and what the cloud holds now. A device that never
+        // changed a note adopts the cloud's version; one that did keeps its edits
+        // alongside whatever the other device changed - an old copy can never
+        // wipe out newer text.
         const localTabs = this.globalNotesTabs;
         const localPristine = localTabs.length === 1 && !localTabs[0].content;
-        const hasUnsyncedLocal = !localPristine && localTs > knownTs;
-        const neverSynced = !knownTs && !localPristine;
+        const base = this.loadJSONFromStorage('flowchart-global-notes-base', null);
         let merged;
-        if (hasUnsyncedLocal || neverSynced) {
-            const remoteWins = remoteTs >= localTs;
-            const byId = new Map();
-            (remoteWins ? localTabs : remoteTabs).forEach(t => byId.set(t.id, t));
-            (remoteWins ? remoteTabs : localTabs).forEach(t => byId.set(t.id, t));
-            merged = this.sanitizeNotesTabs(Array.from(byId.values()));
+        if (localPristine && !Array.isArray(base)) {
+            merged = remoteTabs;
         } else {
-            merged = this.sanitizeNotesTabs(remoteTabs);
+            merged = NotesMerge.mergeTabs(Array.isArray(base) ? base : null, localTabs, remoteTabs, () => this.nextNotesId('tab')).tabs;
+            if (merged.length === 0) merged = remoteTabs;
+            merged = this.sanitizeNotesTabs(merged);
         }
+        const remoteJson = JSON.stringify(remoteTabs);
 
         this._applyingRemoteGlobalNotes = true;
         try {
             this.globalNotesTabs = merged;
             if (!merged.some(t => t.id === this.activeGlobalNotesTabId)) this.activeGlobalNotesTabId = merged[0].id;
             this._globalNotesJson = JSON.stringify(merged);
-            this._lastPushedGlobalNotesJson = (merged.length === remoteTabs.length && JSON.stringify(merged) === JSON.stringify(this.sanitizeNotesTabs(remoteTabs)))
-                ? this._globalNotesJson : null;
             this.saveGlobalNotesTabs();
         } finally {
             this._applyingRemoteGlobalNotes = false;
         }
+        localStorage.setItem('flowchart-global-notes-base', remoteJson);
         localStorage.setItem('flowchart-global-notes-known-remote-at', String(remoteTs));
-        localStorage.setItem('flowchart-global-notes-updated-at', String(Math.max(remoteTs, hasUnsyncedLocal || neverSynced ? Date.now() : 0)));
 
         if (this._activeNotesScope === 'global' && this.notesEditor) {
             const ed = this.notesEditor;
@@ -1167,11 +1478,18 @@ class FlowchartViewer {
                 } catch (err) { /* the text got shorter - leave the caret where it landed */ }
             }
         }
+        // Nothing of this device's own was merged in: whatever shape the editor
+        // normalized the HTML to is the baseline, so that isn't pushed back as an edit.
+        if (JSON.stringify(merged) === remoteJson) {
+            localStorage.setItem('flowchart-global-notes-base', JSON.stringify(this.globalNotesTabs));
+        }
         this.renderNotesTabBar();
         if (this._notesPaneEditors && this._notesPaneEditors.size) {
             merged.forEach(t => this.syncNotesPanesShowingTab('global', t.id, t.content));
         }
-        if (merged.length !== remoteTabs.length || this._lastPushedGlobalNotesJson === null) this.scheduleCloudPush();
+        // The merge brought in something the cloud doesn't have yet (this device's
+        // own edits) - send it back.
+        if (JSON.stringify(merged) !== remoteJson) this.scheduleCloudPush();
     }
 
     // Helper methods for leaf node and green node detection
@@ -4881,19 +5199,9 @@ class FlowchartViewer {
     // rather than following you to another computer.
     saveGlobalNotesTabs() {
         const json = JSON.stringify(this.globalNotesTabs);
-        // Stamps "last edited" only when the tabs' actual content changed (not
-        // when just the active tab/scope did) so Cloud Sync's last-write-wins
-        // comparison (see pullGlobalNotes/pushGlobalNotes) reflects real edits.
-        if (json !== this._globalNotesJson) {
-            this._globalNotesJson = json;
-            if (!this._applyingRemoteGlobalNotes) {
-                // Never lower than the version already in the cloud, even if this
-                // device's clock runs behind another's - otherwise the edit would
-                // look older than what it replaces and other devices would ignore it.
-                const known = Number(localStorage.getItem('flowchart-global-notes-known-remote-at')) || 0;
-                localStorage.setItem('flowchart-global-notes-updated-at', String(Math.max(Date.now(), known + 1)));
-            }
-        }
+        // What counts as "changed since the cloud's version" is decided by
+        // comparing against the saved base in pushGlobalNotes, not by a timestamp.
+        this._globalNotesJson = json;
         localStorage.setItem('flowchart-global-notes-tabs', json);
         localStorage.setItem('flowchart-active-global-notes-tab', this.activeGlobalNotesTabId || '');
         localStorage.setItem('flowchart-active-notes-scope', this._activeNotesScope || 'chart');
