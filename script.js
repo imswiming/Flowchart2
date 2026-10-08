@@ -10730,8 +10730,14 @@ class FlowchartViewer {
         // normally, or filling the whole box for a node with no name of its
         // own (see isPhotoFillNode above). Clicking it opens the full-size
         // lightbox either way.
+        // A photo that fills the whole box (a node with no text) is all there is
+        // to click on, so a click on it selects the node like any other (to edit
+        // its settings); the full-size view is behind the small magnifier in its
+        // corner. A small thumbnail under text keeps click-to-zoom, since the
+        // text above it is there to select the node by.
         node.filter(d => Boolean(d.data._nodePhotoUrl))
             .append('image')
+            .attr('class', 'node-photo')
             .attr('href', d => d.data._nodePhotoUrl)
             .attr('width', d => isPhotoFillNode(d) ? NODE_WIDTH : PHOTO_W)
             .attr('height', d => isPhotoFillNode(d) ? PHOTO_FILL_HEIGHT : PHOTO_H)
@@ -10742,12 +10748,39 @@ class FlowchartViewer {
             // shared clip path set up alongside the SVG itself).
             .attr('clip-path', d => isPhotoFillNode(d) ? 'url(#node-photo-fill-clip)' : null)
             .attr('preserveAspectRatio', 'xMidYMid slice')
+            .style('cursor', d => isPhotoFillNode(d) ? null : 'zoom-in')
+            .on('click', (event, d) => {
+                if (isPhotoFillNode(d)) return; // bubbles up to the node's own click
+                event.stopPropagation();
+                this.openNotesImageLightbox(d.data._nodePhotoUrl);
+            })
+            .on('mousedown', (event, d) => {
+                if (!isPhotoFillNode(d)) event.stopPropagation();
+            });
+
+        const zoomBtn = node.filter(d => Boolean(d.data._nodePhotoUrl) && isPhotoFillNode(d))
+            .append('g')
+            .attr('class', 'node-photo-zoom')
+            .attr('transform', d => `translate(${NODE_WIDTH / 2 - 13},${boxTop(d) + 13})`)
             .style('cursor', 'zoom-in')
             .on('click', (event, d) => {
                 event.stopPropagation();
                 this.openNotesImageLightbox(d.data._nodePhotoUrl);
             })
             .on('mousedown', (event) => event.stopPropagation());
+        zoomBtn.append('circle')
+            .attr('r', 10)
+            .attr('fill', 'rgba(0,0,0,0.55)')
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 1);
+        zoomBtn.append('text')
+            .attr('text-anchor', 'middle')
+            .attr('y', 5)
+            .attr('font-size', 13)
+            .attr('fill', '#fff')
+            .attr('font-weight', 'normal')
+            .style('pointer-events', 'none')
+            .text('\u{1F50D}');
 
         const collapseArrowOrientation = this.orientation;
         node.each(function(d) {
