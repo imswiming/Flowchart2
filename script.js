@@ -10350,8 +10350,12 @@ class FlowchartViewer {
             // otherwise, with "hide placeholders" on, editing a node and picking that
             // color would yank it off the canvas out from under the person mid-edit.
             const editingData = this.nodeBeingEdited ? this.nodeBeingEdited.data : null;
+            // A node carrying a photo or drawing is content, never a hideable stub -
+            // otherwise "Empty" on it would make it vanish, picture and all, as soon as
+            // its edit popup closed.
             return d.children.filter(child =>
                 !this.isPlaceholderNodeData(child) || child === editingData || child === this._pendingEditData
+                || Boolean(child._nodePhotoUrl)
             );
         };
         const root = d3.hierarchy(this.rootData, childrenAccessor);
