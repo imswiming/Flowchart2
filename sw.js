@@ -8,12 +8,13 @@
 //   too, but re-checked with the server in the background each time (always
 //   revalidated - GitHub Pages lets browsers reuse a file for 10 minutes, which
 //   used to make this "refresh" just fetch the same stale copy again) and the
-//   cache updated. When a file really changed, open pages are told so they can
-//   offer a reload (see index.html).
+//   cache updated, so the next visit runs the new version. Nothing is shown
+//   about it; "Reload latest version" in the Cloud Sync popup (index.html)
+//   forces it immediately.
 // Only this site's own files are touched - cloud sync calls and anything else
 // go straight to the network.
 
-const CACHE_NAME = 'flowchart-v3';
+const CACHE_NAME = 'flowchart-v4';
 
 const IMMUTABLE = [
     'd3.v7.min.js',
@@ -60,7 +61,14 @@ self.addEventListener('activate', (event) => {
 
 const isImmutable = (url) => IMMUTABLE.some(path => url.pathname.endsWith('/' + path) || url.pathname === '/' + path);
 
-const versionOf = (res) => (res && (res.headers.get('etag') || res.headers.get('last-modified'))) || '';
+// One cache entry per file however the page asked for it (?v=... and the like),
+// so what gets served and what gets refreshed are always the same entry.
+const keyOf = (req) => {
+    const u = new URL(req.url);
+    u.search = '';
+    u.hash = '';
+    return u.href;
+};
 
 self.addEventListener('fetch', (event) => {
     const req = event.request;
@@ -85,13 +93,10 @@ self.addEventListener('fetch', (event) => {
 
     event.respondWith(
         caches.open(CACHE_NAME).then(async (cache) => {
-            const hit = await cache.match(req, { ignoreSearch: true });
+            const key = keyOf(req);
+            const hit = await cache.match(key);
             const refresh = fetch(req.url, { cache: 'no-cache' }).then((res) => {
-                if (res && res.ok) {
-                    const changed = hit && versionOf(hit) && versionOf(res) && versionOf(hit) !== versionOf(res);
-                    cache.put(req, res.clone());
-                    if (changed) notifyClients({ type: 'app-updated' });
-                }
+                if (res && res.ok) cache.put(key, res.clone());
                 return res;
             }).catch(() => hit);
             // Keep the worker alive until the background refresh finishes.
