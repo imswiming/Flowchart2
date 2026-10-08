@@ -10761,25 +10761,25 @@ class FlowchartViewer {
         const zoomBtn = node.filter(d => Boolean(d.data._nodePhotoUrl) && isPhotoFillNode(d))
             .append('g')
             .attr('class', 'node-photo-zoom')
-            .attr('transform', d => `translate(${NODE_WIDTH / 2 - 13},${boxTop(d) + 13})`)
+            .attr('transform', d => `translate(${NODE_WIDTH / 2 - 17},${boxTop(d) + 17})`)
             .style('cursor', 'zoom-in')
             .on('click', (event, d) => {
                 event.stopPropagation();
                 this.openNotesImageLightbox(d.data._nodePhotoUrl);
             })
             .on('mousedown', (event) => event.stopPropagation());
+        // Just the glyph, no backing disc; the transparent circle is only there
+        // so the whole area around it is clickable.
         zoomBtn.append('circle')
-            .attr('r', 10)
-            .attr('fill', 'rgba(0,0,0,0.55)')
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 1);
+            .attr('r', 15)
+            .attr('fill', 'transparent');
         zoomBtn.append('text')
             .attr('text-anchor', 'middle')
-            .attr('y', 5)
-            .attr('font-size', 13)
-            .attr('fill', '#fff')
+            .attr('y', 8)
+            .attr('font-size', 24)
             .attr('font-weight', 'normal')
             .style('pointer-events', 'none')
+            .style('filter', 'drop-shadow(0 0 2px rgba(0,0,0,0.9))')
             .text('\u{1F50D}');
 
         const collapseArrowOrientation = this.orientation;
