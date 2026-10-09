@@ -4,6 +4,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
+  <!-- Installable web app: once added to the home screen from the browser's
+       "Install app" option it opens in its own window with no address bar. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1a1e27">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <title>Flowchart Editor</title>
   <link rel="stylesheet" href="style.css">
   <!-- d3 and CKEditor are served from this site (not a third-party CDN) and
@@ -373,12 +381,6 @@
             <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
             <div class="reset-view-btn" id="help-btn" title="Help">? Help</div>
           </div>
-          <div id="cloud-sync-status" style="display:none; align-items:center; justify-content:flex-end; gap:8px; font-size:12px; color:var(--text); margin-top:2px;">
-            <span id="cloud-usage-mini" style="display:none; width:64px; height:8px; border-radius:4px; background:rgba(128,128,128,0.35); overflow:hidden; cursor:pointer; flex-shrink:0;" title="Cloud storage used">
-              <span id="cloud-usage-mini-fill" style="display:block; height:100%; width:0; background:#00a67e; transition:width .3s, background .3s;"></span>
-            </span>
-            <span id="cloud-sync-status-text" style="opacity:0.75;"></span>
-          </div>
 
           <!-- Move connection controls row -->
           <div id="connection-controls-row"
@@ -399,6 +401,15 @@
             <!-- Delete Node button removed -->
           </div>
         </div>
+      </div>
+
+      <!-- Sync status + storage bar: bottom left of the flowchart view, beside the
+           left column (positioned in style.css) -->
+      <div id="cloud-sync-status" style="display:none; align-items:center; justify-content:flex-end; gap:8px; font-size:12px; color:var(--text); margin-top:2px;">
+        <span id="cloud-usage-mini" style="display:none; width:64px; height:8px; border-radius:4px; background:rgba(128,128,128,0.35); overflow:hidden; cursor:pointer; flex-shrink:0;" title="Cloud storage used">
+          <span id="cloud-usage-mini-fill" style="display:block; height:100%; width:0; background:#00a67e; transition:width .3s, background .3s;"></span>
+        </span>
+        <span id="cloud-sync-status-text" style="opacity:0.75;"></span>
       </div>
     </div>
 

@@ -1502,7 +1502,7 @@ body {
 .reset-view-controls {
     position: absolute;
     right: 20px;
-    bottom: 20px;
+    bottom: 0;
     z-index: 101;
     display: flex;
     flex-direction: column;
@@ -2603,5 +2603,82 @@ input[type="range"]::-moz-range-progress {
 
     #cloud-sync-status > * {
         pointer-events: auto;
+    }
+}
+
+
+/* Sync status ("Synced <time>") bottom left of the flowchart view, right beside
+   the left column, with the storage bar to the right of the text. */
+#cloud-sync-status {
+    position: absolute;
+    left: 12px;
+    bottom: 8px;
+    margin: 0 !important;
+    flex-direction: row-reverse;
+    z-index: 101;
+    pointer-events: none;
+}
+
+#cloud-sync-status > * {
+    pointer-events: auto;
+}
+
+/* A long unbroken link pasted into a checklist line used to jump to the line
+   below the checkbox before starting (the browser moves a too-long word to a
+   fresh line, then breaks it) - making the line a row with the text beside the
+   checkbox lets it start on the checkbox's line and wrap from there. */
+#notes-editor-wrap .ck.ck-content .todo-list__label,
+.notes-editor-wrap-el .ck.ck-content .todo-list__label {
+    display: flex !important;
+    align-items: flex-start;
+}
+
+#notes-editor-wrap .ck.ck-content .todo-list__label__description,
+.notes-editor-wrap-el .ck.ck-content .todo-list__label__description {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* Close (x) beside the Show button while the tab header is hidden for editing. */
+.notes-toolbar-close-btn {
+    display: none;
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 15px;
+    line-height: 1;
+    padding: 4px 9px;
+    cursor: pointer;
+}
+
+body.notes-header-folded .notes-toolbar-close-btn {
+    display: inline-block;
+}
+
+/* Phone: panning the chart down hides the top buttons until the next swipe up
+   (see the zoom handler in setupZoom). */
+@media (max-width: 600px) {
+    .hamburger-menu,
+    .hamburger-dropdown,
+    .zoom-controls {
+        transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+
+    .chart-buttons-hidden .hamburger-menu,
+    .chart-buttons-hidden .hamburger-dropdown,
+    .chart-buttons-hidden .zoom-controls {
+        transform: translateY(-160%);
+        opacity: 0;
+        pointer-events: none;
+    }
+}
+
+/* Desktop: leave room at the bottom left for the sync status, so the bottom
+   buttons wrap onto another row instead of sliding over it. */
+@media (min-width: 601px) {
+    .reset-view-controls {
+        max-width: calc(100% - 270px);
     }
 }

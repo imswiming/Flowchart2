@@ -2132,6 +2132,37 @@ class FlowchartViewer {
         };
     }
 
+    // Phone: dragging the chart down (the view moving down under the finger)
+    // slides the top buttons out of the way; dragging back up brings them back.
+    // Only straight pans count - pinch-zooming and programmatic moves (Reset
+    // View, centering on a node) just show them again.
+    updateChartButtonsForPan(event) {
+        const panel = this.flowchartPanel;
+        if (!panel) return;
+        const t = event.transform;
+        const last = this._lastPanTransform;
+        this._lastPanTransform = { y: t.y, k: t.k };
+        const mobile = window.matchMedia('(max-width: 600px)').matches;
+        if (!mobile || !event.sourceEvent || !last || last.k !== t.k) {
+            this._panDelta = 0;
+            if (!mobile || !event.sourceEvent) panel.classList.remove('chart-buttons-hidden');
+            return;
+        }
+        const dy = t.y - last.y;
+        // Direction flipped: start counting afresh.
+        if (dy !== 0 && Math.sign(dy) !== Math.sign(this._panDelta || 0)) this._panDelta = 0;
+        this._panDelta = (this._panDelta || 0) + dy;
+        if (this._panDelta > 14) {
+            panel.classList.add('chart-buttons-hidden');
+            const dd = document.getElementById('hamburger-dropdown');
+            const hb = document.getElementById('hamburger-menu');
+            if (dd) dd.classList.remove('open');
+            if (hb) hb.classList.remove('active');
+        } else if (this._panDelta < -14) {
+            panel.classList.remove('chart-buttons-hidden');
+        }
+    }
+
     setupZoom(svg, g) {
         if (!this._zoomBehavior) {
             this._zoomBehavior = d3.zoom()
@@ -2155,6 +2186,7 @@ class FlowchartViewer {
                     }
                 })
                 .on('zoom', (event) => {
+                    this.updateChartButtonsForPan(event);
                     this.transform = event.transform;
                     const flowGroup = d3.select('#flowchart g').node();
                     if (flowGroup) {
@@ -7147,10 +7179,28 @@ class FlowchartViewer {
         if (!zoom || !show || !header) return;
         const inDoc = document.body.classList.contains('notes-doc-scroll');
         const row = document.querySelector('#notes-panel-header-row .notes-toolbar-row');
+        // An x to the left of Show (only visible while the tab header is
+        // hidden for editing - see the CSS) that closes the Notes panel, since
+        // the header's own close button is hidden along with it.
+        if (!this._notesCloseBtn) {
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'notes-toolbar-close-btn';
+            x.title = 'Close Notes';
+            x.textContent = '\u2715';
+            x.addEventListener('click', () => {
+                this.unfoldNotesSection();
+                const close = document.getElementById('reflection-panel-close');
+                if (close) close.click();
+            });
+            this._notesCloseBtn = x;
+        }
         if (inDoc && row) {
             row.prepend(zoom);
             row.prepend(show);
+            row.prepend(this._notesCloseBtn);
         } else {
+            this._notesCloseBtn.remove();
             const tabs = this.leftPanelTabsContainer;
             if (tabs && tabs.parentNode === header) {
                 tabs.after(show);
