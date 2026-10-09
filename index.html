@@ -521,6 +521,21 @@ create policy "allow all" on flowchart_sync
           <button id="cloud-usage-refresh-btn" type="button"
             style="font-size:12px; padding:2px 8px; border:1px solid #aaa; border-radius:4px; background:#f8f8f8; cursor:pointer; white-space:nowrap;">Refresh</button>
         </div>
+        <details id="cloud-usage-sql" style="display:none; margin-top:6px; font-size:12px;">
+          <summary style="cursor:pointer; color:#0b5ed7;">Get the exact figure</summary>
+          <div style="margin-top:4px; line-height:1.4;">
+            In Supabase, open the <b>SQL Editor</b>, paste this and click <b>Run</b> (once), then press Refresh:
+            <pre id="cloud-usage-sql-code" style="white-space:pre-wrap; background:#f4f4f4; border:1px solid #ddd; border-radius:4px; padding:6px; margin:4px 0; font-size:11px;">create or replace function get_db_size()
+returns bigint
+language sql
+security definer
+set search_path = ''
+as $$ select pg_database_size(current_database()) $$;
+grant execute on function get_db_size() to anon;</pre>
+            <button id="cloud-usage-copy-btn" type="button"
+              style="font-size:12px; padding:2px 8px; border:1px solid #aaa; border-radius:4px; background:#f8f8f8; cursor:pointer;">Copy SQL</button>
+          </div>
+        </details>
       </div>
       <div style="margin-top:10px; padding-top:10px; border-top:1px solid #ddd; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <button id="reload-latest-btn" type="button"

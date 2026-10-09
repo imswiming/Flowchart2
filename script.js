@@ -287,6 +287,25 @@ class FlowchartViewer {
         this.cloudUsageBox = document.getElementById('cloud-usage');
         const usageRefreshBtn = document.getElementById('cloud-usage-refresh-btn');
         if (usageRefreshBtn) usageRefreshBtn.addEventListener('click', () => this.refreshCloudUsage(true));
+        const usageCopyBtn = document.getElementById('cloud-usage-copy-btn');
+        if (usageCopyBtn) {
+            usageCopyBtn.addEventListener('click', async () => {
+                const code = document.getElementById('cloud-usage-sql-code');
+                try {
+                    await navigator.clipboard.writeText(code.textContent);
+                    usageCopyBtn.textContent = 'Copied';
+                } catch (err) {
+                    // No clipboard access: select the text so it can be copied by hand.
+                    const range = document.createRange();
+                    range.selectNodeContents(code);
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    usageCopyBtn.textContent = 'Press Ctrl+C';
+                }
+                setTimeout(() => { usageCopyBtn.textContent = 'Copy SQL'; }, 2000);
+            });
+        }
         this.cloudSyncStatusBadge = document.getElementById('cloud-sync-status');
         this.cloudProjectUrl = (localStorage.getItem('cloud-sync-project-url') || '').replace(/\/+$/, '');
         this.cloudApiKey = localStorage.getItem('cloud-sync-api-key') || '';
@@ -948,11 +967,14 @@ class FlowchartViewer {
         this.refreshCloudUsage(false);
     }
 
-    // How much of the Supabase free tier's database (500 MB) this app's rows take
-    // up. The API key can't ask Postgres for table sizes, so this adds up the size
-    // of every row's stored JSON - an estimate (Postgres also keeps indexes and
-    // overhead, and compresses some values), re-measured at most every 10 minutes
-    // unless Refresh is pressed, since it has to read all the rows.
+    // How much of the Supabase free tier's database (500 MB) is used. If the
+    // one-off get_db_size() function has been added in Supabase (see the SQL shown
+    // in the popup), the database is asked for its real size - everything in it,
+    // and cheap to ask. Without it the API key can't see sizes, so this falls back
+    // to adding up the size of every row's stored JSON in this app's table: an
+    // estimate (Postgres also keeps indexes and overhead), and it has to read all
+    // the rows, so it's re-measured at most every 10 minutes unless Refresh is
+    // pressed.
     async refreshCloudUsage(force) {
         const box = this.cloudUsageBox;
         if (!box) return;
@@ -968,17 +990,22 @@ class FlowchartViewer {
         const fmt = (bytes) => bytes >= 1024 * 1024 * 1024 ? (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'
             : bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
             : Math.max(1, Math.round(bytes / 1024)) + ' KB';
-        const show = (bytes, rows, at) => {
+        const sqlHelp = document.getElementById('cloud-usage-sql');
+        const show = (bytes, rows, at, exact) => {
             const pct = Math.min(100, bytes / QUOTA_BYTES * 100);
             barEl.style.width = Math.max(pct, bytes > 0 ? 1 : 0) + '%';
             barEl.style.background = pct >= 90 ? '#d9362b' : pct >= 70 ? '#e8a317' : '#00a67e';
             textEl.textContent = `${fmt(bytes)} of ${fmt(QUOTA_BYTES)} (${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%)`;
-            noteEl.textContent = `Estimate from ${rows} stored item${rows === 1 ? '' : 's'}, measured ${new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Free plan limit.`;
+            const when = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            noteEl.textContent = exact
+                ? `Exact size of the whole database, measured ${when}. Free plan limit.`
+                : `Estimate from this app's ${rows} stored item${rows === 1 ? '' : 's'} only, measured ${when}. Free plan limit.`;
+            if (sqlHelp) sqlHelp.style.display = exact ? 'none' : 'block';
         };
         box.style.display = 'block';
         const last = this._cloudUsage;
         if (!force && last && Date.now() - last.at < 10 * 60 * 1000) {
-            show(last.bytes, last.rows, last.at);
+            show(last.bytes, last.rows, last.at, last.exact);
             return;
         }
         if (this._cloudUsageBusy) return;
@@ -986,6 +1013,23 @@ class FlowchartViewer {
         refreshBtn.disabled = true;
         textEl.textContent = 'Measuring...';
         try {
+            // The exact size, if the database has the helper function.
+            try {
+                const rpc = await fetch(`${this.cloudProjectUrl}/rest/v1/rpc/get_db_size`, {
+                    method: 'POST',
+                    headers: this.cloudHeaders({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
+                    body: '{}'
+                });
+                if (rpc.ok) {
+                    const size = Number(await rpc.json());
+                    if (Number.isFinite(size) && size >= 0) {
+                        this._cloudUsage = { bytes: size, rows: 0, at: Date.now(), exact: true };
+                        show(size, 0, this._cloudUsage.at, true);
+                        return;
+                    }
+                }
+            } catch (err) { /* no helper function - estimate below */ }
+
             let bytes = 0;
             let rows = 0;
             const PAGE = 40;
@@ -1001,8 +1045,8 @@ class FlowchartViewer {
                 rows += page.length;
                 if (page.length < PAGE) break;
             }
-            this._cloudUsage = { bytes, rows, at: Date.now() };
-            show(bytes, rows, this._cloudUsage.at);
+            this._cloudUsage = { bytes, rows, at: Date.now(), exact: false };
+            show(bytes, rows, this._cloudUsage.at, false);
         } catch (err) {
             console.error('Could not measure cloud storage:', err);
             textEl.textContent = 'Couldn\'t measure';
