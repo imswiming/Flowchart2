@@ -4662,6 +4662,14 @@ class FlowchartViewer {
             const domRoot = this.notesEditor.editing.view.getDomRoot();
             if (domRoot) domRoot.blur();
         }
+        // Bringing the tab header back pushes the text down and the keyboard
+        // closing resizes the page - the browser answers with scroll
+        // adjustments, which the scroll-driven hide would read as the person
+        // scrolling down and slide the whole menu away. Keep the menu put.
+        if (document.body.classList.contains('notes-doc-scroll')) {
+            this.showNotesMenu();
+            this.lockNotesMenu(1500);
+        }
     }
 
     // ===== PUGH MATRIX =====
@@ -5880,9 +5888,13 @@ class FlowchartViewer {
         };
 
         row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
-        // Mobile only (CSS) - desktop has Ctrl+Z / Ctrl+Y.
-        row.appendChild(makeBtn('undo', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
-        row.appendChild(makeBtn('redo', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
+        // Pushed to the bottom right of the toolbar (see the CSS): undo and redo
+        // (mobile only - desktop has Ctrl+Z / Ctrl+Y), and on a phone the
+        // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
+        const tail = document.createElement('div');
+        tail.className = 'notes-toolbar-tail';
+        tail.appendChild(makeBtn('undo', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
+        tail.appendChild(makeBtn('redo', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
         row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
@@ -5896,6 +5908,7 @@ class FlowchartViewer {
 
         row.appendChild(makeBtn('outdent', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
         row.appendChild(makeBtn('indent', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
+        row.appendChild(tail);
 
         return row;
     }
@@ -5912,11 +5925,6 @@ class FlowchartViewer {
         this.notesPanelBody.appendChild(topMenu);
         const header = document.createElement('div');
         header.id = 'notes-panel-header-row';
-        const label = document.createElement('div');
-        label.id = 'notes-panel-label';
-        label.textContent = 'Notes';
-        header.appendChild(label);
-
         header.appendChild(this.buildNotesToolbar());
 
         // Full-screen + split-pane editing is desktop-only - there's no room on a
@@ -6802,6 +6810,21 @@ class FlowchartViewer {
                     });
                 };
                 editor.model.document.on('change:data', applyFolds, { priority: 'low' });
+
+                // Enter at the end of a folded title: open it, so the new line
+                // that Enter adds underneath is visible (and not swallowed by
+                // the fold).
+                editor.editing.view.document.on('enter', () => {
+                    const sel = editor.model.document.selection;
+                    if (!sel.isCollapsed) return;
+                    const pos = sel.getFirstPosition();
+                    const block = pos && pos.parent;
+                    if (block && block.is('element', 'heading4') && block.getAttribute('folded') && pos.isAtEnd) {
+                        editor.model.enqueueChange({ isUndoable: false }, (writer) => {
+                            writer.removeAttribute('folded', block);
+                        });
+                    }
+                }, { priority: 'highest' });
                 editor.once('ready', () => {
                     applyFolds();
                     // Tapping the arrow drawn before a Title (see the h4::before
@@ -7196,7 +7219,9 @@ class FlowchartViewer {
             this._notesCloseBtn = x;
         }
         if (inDoc && row) {
-            row.prepend(zoom);
+            const tail = row.querySelector('.notes-toolbar-tail');
+            if (tail) tail.appendChild(zoom);
+            else row.appendChild(zoom);
             row.prepend(show);
             row.prepend(this._notesCloseBtn);
         } else {

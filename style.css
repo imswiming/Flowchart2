@@ -2682,3 +2682,13 @@ body.notes-header-folded .notes-toolbar-close-btn {
         max-width: calc(100% - 270px);
     }
 }
+
+
+/* Undo/redo (mobile) and the zoom control sit together at the bottom right of
+   the text edit menu. */
+.notes-toolbar-tail {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
