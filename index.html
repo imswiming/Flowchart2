@@ -373,7 +373,12 @@
             <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
             <div class="reset-view-btn" id="help-btn" title="Help">? Help</div>
           </div>
-          <div id="cloud-sync-status" style="display:none; font-size:12px; color:var(--text); opacity:0.75; margin-top:2px; text-align:right;"></div>
+          <div id="cloud-sync-status" style="display:none; align-items:center; justify-content:flex-end; gap:8px; font-size:12px; color:var(--text); margin-top:2px;">
+            <span id="cloud-usage-mini" style="display:none; width:64px; height:8px; border-radius:4px; background:rgba(128,128,128,0.35); overflow:hidden; cursor:pointer; flex-shrink:0;" title="Cloud storage used">
+              <span id="cloud-usage-mini-fill" style="display:block; height:100%; width:0; background:#00a67e; transition:width .3s, background .3s;"></span>
+            </span>
+            <span id="cloud-sync-status-text" style="opacity:0.75;"></span>
+          </div>
 
           <!-- Move connection controls row -->
           <div id="connection-controls-row"

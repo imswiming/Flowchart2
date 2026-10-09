@@ -307,6 +307,9 @@ class FlowchartViewer {
             });
         }
         this.cloudSyncStatusBadge = document.getElementById('cloud-sync-status');
+        this.cloudSyncStatusText = document.getElementById('cloud-sync-status-text');
+        this.cloudUsageMini = document.getElementById('cloud-usage-mini');
+        if (this.cloudUsageMini) this.cloudUsageMini.addEventListener('click', () => this.showCloudSyncPopup());
         this.cloudProjectUrl = (localStorage.getItem('cloud-sync-project-url') || '').replace(/\/+$/, '');
         this.cloudApiKey = localStorage.getItem('cloud-sync-api-key') || '';
         this.cloudSyncId = localStorage.getItem('cloud-sync-id') || '';
@@ -920,6 +923,13 @@ class FlowchartViewer {
             this.startCloudPolling();
             // Pick up anything saved from another device shortly after boot.
             setTimeout(() => this.cloudPull(), 800);
+            // Fill in the storage bar next to the sync status once things have
+            // settled, then keep it current - only while the exact size is
+            // available, since the estimate means reading every row.
+            setTimeout(() => this.refreshCloudUsage(false), 3000);
+            setInterval(() => {
+                if (!document.hidden && this._cloudUsage && this._cloudUsage.exact) this.refreshCloudUsage(false);
+            }, 10 * 60 * 1000 + 5000);
         }
     }
 
@@ -949,12 +959,13 @@ class FlowchartViewer {
             badge.style.display = 'none';
             return;
         }
-        badge.style.display = 'block';
+        badge.style.display = 'flex';
+        const label = this.cloudSyncStatusText || badge;
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        if (state === 'syncing') badge.textContent = '☁ Syncing...';
-        else if (state === 'synced') badge.textContent = `☁ Synced ${time}`;
-        else if (state === 'error') badge.textContent = `☁ Sync error${message ? ': ' + message : ''}`;
-        else badge.textContent = '☁ Cloud sync on';
+        if (state === 'syncing') label.textContent = '☁ Syncing...';
+        else if (state === 'synced') label.textContent = `☁ Synced ${time}`;
+        else if (state === 'error') label.textContent = `☁ Sync error${message ? ': ' + message : ''}`;
+        else label.textContent = '☁ Cloud sync on';
     }
 
     showCloudSyncPopup() {
@@ -1001,6 +1012,14 @@ class FlowchartViewer {
                 ? `Exact size of the whole database, measured ${when}. Free plan limit.`
                 : `Estimate from this app's ${rows} stored item${rows === 1 ? '' : 's'} only, measured ${when}. Free plan limit.`;
             if (sqlHelp) sqlHelp.style.display = exact ? 'none' : 'block';
+            const mini = this.cloudUsageMini;
+            const miniFill = document.getElementById('cloud-usage-mini-fill');
+            if (mini && miniFill) {
+                mini.style.display = 'block';
+                miniFill.style.width = Math.max(pct, bytes > 0 ? 3 : 0) + '%';
+                miniFill.style.background = barEl.style.background;
+                mini.title = `Cloud storage: ${textEl.textContent}${exact ? '' : ' (estimate)'} - click for details`;
+            }
         };
         box.style.display = 'block';
         const last = this._cloudUsage;
@@ -1107,6 +1126,8 @@ class FlowchartViewer {
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
         this._cloudPollTimer = null;
+        this._cloudUsage = null;
+        if (this.cloudUsageMini) this.cloudUsageMini.style.display = 'none';
         if (this.cloudSyncUrlInput) this.cloudSyncUrlInput.value = '';
         if (this.cloudSyncKeyInput) this.cloudSyncKeyInput.value = '';
         if (this.cloudSyncBinInput) this.cloudSyncBinInput.value = '';
