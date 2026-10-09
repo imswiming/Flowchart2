@@ -2587,3 +2587,21 @@ input[type="range"]::-moz-range-progress {
     outline: 2px solid var(--accent);
     cursor: grabbing;
 }
+
+/* Phone: the sync status sits at the bottom left of the flowchart view, with the
+   storage bar to the right of it (on desktop the bar is to its left, bottom right). */
+@media (max-width: 600px) {
+    #cloud-sync-status {
+        position: fixed;
+        left: 10px;
+        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        margin: 0 !important;
+        flex-direction: row-reverse;
+        z-index: 50;
+        pointer-events: none;
+    }
+
+    #cloud-sync-status > * {
+        pointer-events: auto;
+    }
+}
