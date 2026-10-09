@@ -478,7 +478,7 @@
 
     <!-- Cloud Sync popup -->
     <div id="cloud-sync-popup"
-      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
+      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; color:#222; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
       <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (Supabase)</div>
       <div style="margin-bottom:10px; line-height:1.4;">
         Free tier, generous limits. Create a project at <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">supabase.com/dashboard</a>,
@@ -508,6 +508,20 @@ create policy "allow all" on flowchart_sync
           style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Sync</button>
       </div>
       <div id="cloud-sync-popup-status" style="min-height:18px; margin-bottom:8px; font-size:13px;"></div>
+      <div id="cloud-usage" style="display:none; margin:4px 0 10px; font-size:13px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+          <span style="font-weight:bold;">Storage used</span>
+          <span id="cloud-usage-text" style="color:#444;"></span>
+        </div>
+        <div style="height:12px; background:#e6e6e6; border-radius:6px; overflow:hidden;">
+          <div id="cloud-usage-bar" style="height:100%; width:0; background:#00a67e; border-radius:6px; transition:width .3s, background .3s;"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; gap:8px;">
+          <span id="cloud-usage-note" style="font-size:11px; color:#777;"></span>
+          <button id="cloud-usage-refresh-btn" type="button"
+            style="font-size:12px; padding:2px 8px; border:1px solid #aaa; border-radius:4px; background:#f8f8f8; cursor:pointer; white-space:nowrap;">Refresh</button>
+        </div>
+      </div>
       <div style="margin-top:10px; padding-top:10px; border-top:1px solid #ddd; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <button id="reload-latest-btn" type="button"
           style="font-size:13px; padding:6px 12px; border:1px solid #aaa; border-radius:5px; background:#e8f0ff; cursor:pointer;">Reload latest version</button>

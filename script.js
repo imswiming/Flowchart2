@@ -284,6 +284,9 @@ class FlowchartViewer {
         this.cloudSyncDisconnectBtn = document.getElementById('cloud-sync-disconnect-btn');
         this.closeCloudSyncBtn = document.getElementById('close-cloud-sync-btn');
         this.cloudSyncPopupStatus = document.getElementById('cloud-sync-popup-status');
+        this.cloudUsageBox = document.getElementById('cloud-usage');
+        const usageRefreshBtn = document.getElementById('cloud-usage-refresh-btn');
+        if (usageRefreshBtn) usageRefreshBtn.addEventListener('click', () => this.refreshCloudUsage(true));
         this.cloudSyncStatusBadge = document.getElementById('cloud-sync-status');
         this.cloudProjectUrl = (localStorage.getItem('cloud-sync-project-url') || '').replace(/\/+$/, '');
         this.cloudApiKey = localStorage.getItem('cloud-sync-api-key') || '';
@@ -942,6 +945,72 @@ class FlowchartViewer {
         this.cloudSyncBinInput.value = this.cloudSyncId || '';
         this.setCloudPopupStatus(this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId ? 'Connected.' : '');
         this.cloudSyncPopup.style.display = 'block';
+        this.refreshCloudUsage(false);
+    }
+
+    // How much of the Supabase free tier's database (500 MB) this app's rows take
+    // up. The API key can't ask Postgres for table sizes, so this adds up the size
+    // of every row's stored JSON - an estimate (Postgres also keeps indexes and
+    // overhead, and compresses some values), re-measured at most every 10 minutes
+    // unless Refresh is pressed, since it has to read all the rows.
+    async refreshCloudUsage(force) {
+        const box = this.cloudUsageBox;
+        if (!box) return;
+        if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) {
+            box.style.display = 'none';
+            return;
+        }
+        const QUOTA_BYTES = 500 * 1024 * 1024;
+        const textEl = document.getElementById('cloud-usage-text');
+        const barEl = document.getElementById('cloud-usage-bar');
+        const noteEl = document.getElementById('cloud-usage-note');
+        const refreshBtn = document.getElementById('cloud-usage-refresh-btn');
+        const fmt = (bytes) => bytes >= 1024 * 1024 * 1024 ? (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+            : bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+            : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+        const show = (bytes, rows, at) => {
+            const pct = Math.min(100, bytes / QUOTA_BYTES * 100);
+            barEl.style.width = Math.max(pct, bytes > 0 ? 1 : 0) + '%';
+            barEl.style.background = pct >= 90 ? '#d9362b' : pct >= 70 ? '#e8a317' : '#00a67e';
+            textEl.textContent = `${fmt(bytes)} of ${fmt(QUOTA_BYTES)} (${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%)`;
+            noteEl.textContent = `Estimate from ${rows} stored item${rows === 1 ? '' : 's'}, measured ${new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Free plan limit.`;
+        };
+        box.style.display = 'block';
+        const last = this._cloudUsage;
+        if (!force && last && Date.now() - last.at < 10 * 60 * 1000) {
+            show(last.bytes, last.rows, last.at);
+            return;
+        }
+        if (this._cloudUsageBusy) return;
+        this._cloudUsageBusy = true;
+        refreshBtn.disabled = true;
+        textEl.textContent = 'Measuring...';
+        try {
+            let bytes = 0;
+            let rows = 0;
+            const PAGE = 40;
+            for (let offset = 0; ; offset += PAGE) {
+                const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?select=id,data&order=id&limit=${PAGE}&offset=${offset}`, {
+                    headers: this.cloudHeaders({ 'Accept': 'application/json' })
+                });
+                if (!res.ok) throw new Error(`Supabase API error ${res.status}`);
+                const page = await res.json();
+                page.forEach((row) => {
+                    bytes += (row.id || '').length + JSON.stringify(row.data === undefined ? null : row.data).length + 32;
+                });
+                rows += page.length;
+                if (page.length < PAGE) break;
+            }
+            this._cloudUsage = { bytes, rows, at: Date.now() };
+            show(bytes, rows, this._cloudUsage.at);
+        } catch (err) {
+            console.error('Could not measure cloud storage:', err);
+            textEl.textContent = 'Couldn\'t measure';
+            noteEl.textContent = 'Check the connection and press Refresh.';
+        } finally {
+            this._cloudUsageBusy = false;
+            refreshBtn.disabled = false;
+        }
     }
 
     saveCloudSyncSettings() {
