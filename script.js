@@ -671,6 +671,8 @@ class FlowchartViewer {
             resizeRenderTimer = setTimeout(rerenderForResize, 250);
         });
 
+        this.setupNodeImagePaste();
+
         // Keyboard shortcuts for undo/redo and delete
         document.addEventListener('keydown', (e) => {
             // Handle Delete key always (even when an input is focused) to remove selected node
@@ -7224,6 +7226,53 @@ class FlowchartViewer {
     // navigator.clipboard.read() (which this button click satisfies) and a secure
     // context (https, or localhost) - browsers block clipboard image reads
     // otherwise.
+    // Makes a node a picture-only node: its text is cleared (it ends up looking like
+    // the "Empty" colour, with the picture filling the box) and the picture set.
+    // Its children are left alone. Used by the camera button and by Ctrl+V.
+    setNodePhotoOnly(d, dataUrl) {
+        const data = d.data;
+        this.pushUndo();
+        data.name = '';
+        data.color = this.getPlaceholderColor();
+        delete data._isPlaceholder;
+        data._nodePhotoUrl = dataUrl;
+        // If this node's edit popup is open, its text box must not still show (and
+        // later save back) the old text.
+        if (this.nodeBeingEdited && this.nodeBeingEdited.data === data && this.nodeEditInput) {
+            this.nodeEditInput.value = '';
+            this.resizeNodeEditInput();
+        }
+        this.ensureRightmostPlaceholderNodes(this.rootData);
+        this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+        if (this.resyncMorphRows()) this.renderMorphPanel();
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
+    // Ctrl+V with an image on the clipboard while a node is selected (or its edit
+    // popup is open): the node becomes a picture-only node. Text on the clipboard,
+    // or a paste into the Notes editor or any other field, is left alone.
+    setupNodeImagePaste() {
+        document.addEventListener('paste', (e) => {
+            const target = e.target;
+            const editable = target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+            if (editable && target !== this.nodeEditInput) return;
+            const node = this.nodeBeingEdited || this.selectedNode;
+            if (!node || !node.data) return;
+            const files = e.clipboardData ? Array.from(e.clipboardData.files || []) : [];
+            const blob = files.find(f => f.type && f.type.startsWith('image/'));
+            if (!blob) return;
+            e.preventDefault();
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const dataUrl = await this.compressImageDataUrl(reader.result);
+                this.setNodePhotoOnly(node, dataUrl);
+                this.showNotification('Photo added to node.');
+            };
+            reader.readAsDataURL(blob);
+        });
+    }
+
     async captureNodePhotoFromClipboard(d) {
         if (!navigator.clipboard || !navigator.clipboard.read) {
             this.showNotification('Clipboard image access isn\'t available in this browser/context.');
@@ -7242,10 +7291,7 @@ class FlowchartViewer {
                     reader.readAsDataURL(blob);
                 });
                 const dataUrl = await this.compressImageDataUrl(rawDataUrl);
-                this.pushUndo();
-                d.data._nodePhotoUrl = dataUrl;
-                this.renderFlowchart(this.rootData);
-                this.autosave();
+                this.setNodePhotoOnly(d, dataUrl);
                 this.showNotification('Photo added to node.');
                 return;
             }
