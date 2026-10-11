@@ -168,6 +168,324 @@ const NotesMerge = (() => {
 
 // Line icons for the Notes toolbar (24x24, drawn in currentColor - see
 // .notes-icon-btn in style.css).
+// ===== Three-way merge for everything that isn't notes text =====
+// Same idea as NotesMerge, for the flowchart itself: given what the cloud held at the
+// last sync (base), what this device has now (local) and what the cloud holds now
+// (remote), keep every change either side made instead of one copy replacing the other.
+//  - Nodes are matched by a stable id (`_id`, added to every node when it is saved),
+//    so adding, removing, renaming, recolouring, moving and re-ordering nodes on two
+//    devices combine. A node one side deleted is only dropped if the other side didn't
+//    touch it; if both changed the same thing, this device's change wins.
+//  - Matrices, connections and the other fields are merged field by field; lists of
+//    items with ids (matrix tabs, columns, rows, criteria, ideas) are merged by id.
+// Everything is plain JSON in, plain JSON out.
+const FlowchartMerge = (() => {
+    const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+    const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+    // Key-order-independent text form, so equal values compare equal.
+    const stable = (v) => {
+        if (v === undefined) return 'undefined';
+        if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+        if (isObj(v)) return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+        return JSON.stringify(v);
+    };
+    const eq = (a, b) => stable(a) === stable(b);
+
+    // The order two copies of a list should end up in: follow this device's order if
+    // it re-ordered or added to the list, otherwise the cloud's; anything only the
+    // other copy has is slotted in after the item that preceded it there.
+    const mergeOrder = (baseKeys, localKeys, remoteKeys, finalSet) => {
+        const primary = stable(localKeys) === stable(baseKeys || []) ? remoteKeys : localKeys;
+        const secondary = primary === localKeys ? remoteKeys : localKeys;
+        const out = primary.filter(k => finalSet.has(k));
+        const placed = new Set(out);
+        secondary.forEach((k, i) => {
+            if (placed.has(k) || !finalSet.has(k)) return;
+            let at = 0;
+            for (let j = i - 1; j >= 0; j--) {
+                const idx = out.indexOf(secondary[j]);
+                if (idx !== -1) { at = idx + 1; break; }
+            }
+            out.splice(at, 0, k);
+            placed.add(k);
+        });
+        finalSet.forEach((k) => {
+            if (!placed.has(k)) { out.push(k); placed.add(k); }
+        });
+        return out;
+    };
+
+    const keyOfEl = el => ((isObj(el) && typeof el.id === 'string' && el.id) ? 'id:' + el.id : 'v:' + stable(el));
+
+    // Lists: items with an id are matched by it, anything else by its value (so a
+    // plain list of strings or connections behaves like a set).
+    const mergeArray = (b, l, r) => {
+        const toMap = (arr) => {
+            const m = new Map();
+            (arr || []).forEach((el) => { const k = keyOfEl(el); if (!m.has(k)) m.set(k, el); });
+            return m;
+        };
+        const B = toMap(b);
+        const L = toMap(l);
+        const R = toMap(r);
+        const final = new Set();
+        new Set([...B.keys(), ...L.keys(), ...R.keys()]).forEach((k) => {
+            const inB = B.has(k);
+            const inL = L.has(k);
+            const inR = R.has(k);
+            if (inL && inR) final.add(k);
+            else if (inL) { if (!inB || stable(L.get(k)) !== stable(B.get(k))) final.add(k); }
+            else if (inR) { if (!inB || stable(R.get(k)) !== stable(B.get(k))) final.add(k); }
+        });
+        return mergeOrder([...B.keys()], [...L.keys()], [...R.keys()], final).map((k) => {
+            if (L.has(k) && R.has(k)) return mergeValue(B.get(k), L.get(k), R.get(k));
+            return clone(L.has(k) ? L.get(k) : R.get(k));
+        });
+    };
+
+    // `atomic`: don't look inside objects/lists - whichever side changed it wins
+    // (this device's if both did).
+    const mergeValue = (b, l, r, atomic) => {
+        if (eq(l, r)) return clone(l);
+        if (l === undefined) return (b !== undefined && eq(b, r)) ? undefined : clone(r);
+        if (r === undefined) return (b !== undefined && eq(b, l)) ? undefined : clone(l);
+        if (b !== undefined && eq(b, l)) return clone(r);
+        if (b !== undefined && eq(b, r)) return clone(l);
+        if (!atomic) {
+            if (isObj(l) && isObj(r)) {
+                const bo = isObj(b) ? b : {};
+                const out = {};
+                new Set([...Object.keys(r), ...Object.keys(l)]).forEach((k) => {
+                    const v = mergeValue(bo[k], l[k], r[k]);
+                    if (v !== undefined) out[k] = v;
+                });
+                return out;
+            }
+            if (Array.isArray(l) && Array.isArray(r)) return mergeArray(Array.isArray(b) ? b : [], l, r);
+        }
+        return clone(l);
+    };
+
+    // ----- the node tree -----
+    const placeholderLike = n => Boolean(n && n._isPlaceholder && !n._nodePhotoUrl);
+
+    // The automatic "empty slot" at the end of every row is regenerated on load, so
+    // it takes no part in merging (two devices' copies of it must not pile up).
+    const stripTrailingPlaceholders = (n) => {
+        if (!n || !Array.isArray(n.children)) return;
+        n.children.forEach(stripTrailingPlaceholders);
+        while (n.children.length) {
+            const last = n.children[n.children.length - 1];
+            if (placeholderLike(last) && !(last.children && last.children.length)) n.children.pop();
+            else break;
+        }
+        if (!n.children.length) delete n.children;
+    };
+
+    const randomId = () => 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    // Gives every node without an id one (and a repeated id - from a copied node - a
+    // fresh one). A tree where nothing has an id yet (saved before ids existed) gets
+    // ids worked out from each node's position, so two devices holding the same old
+    // tree arrive at the same ids rather than treating each other's nodes as new.
+    const ensureIds = (root) => {
+        if (!root || typeof root !== 'object') return;
+        const nodes = [];
+        const walk = (n, path) => {
+            nodes.push({ n, path });
+            (n.children || []).forEach((c, i) => { if (c && typeof c === 'object') walk(c, path.concat(i)); });
+        };
+        walk(root, []);
+        const anyId = nodes.some(({ n }) => typeof n._id === 'string' && n._id);
+        if (root._isPlaceholder) root._id = '__root__';
+        const used = new Set();
+        nodes.forEach(({ n }) => {
+            if (typeof n._id !== 'string' || !n._id) { delete n._id; return; }
+            if (used.has(n._id)) delete n._id; else used.add(n._id);
+        });
+        nodes.forEach(({ n, path }) => {
+            if (n._id) return;
+            let id = anyId ? randomId() : 'L' + path.join('.');
+            while (used.has(id)) id = randomId();
+            n._id = id;
+            used.add(id);
+        });
+    };
+
+    const NODE_KEY_ORDER = ['name', 'color', '_collapsed', '_isPlaceholder', '_nodePhotoUrl', '_reflectionAnswers', '_id'];
+
+    const indexTree = (root) => {
+        const map = new Map();
+        const walk = (n, parentId) => {
+            const fields = {};
+            Object.keys(n).forEach((k) => { if (k !== 'children' && k !== '_id') fields[k] = n[k]; });
+            const kids = (n.children || []).filter(c => c && typeof c === 'object');
+            map.set(n._id, { fields, parent: parentId, childIds: kids.map(c => c._id) });
+            kids.forEach(c => walk(c, n._id));
+        };
+        if (root) walk(root, null);
+        return map;
+    };
+
+    const mergeNodeFields = (bf, lf, rf) => {
+        if (!lf) return clone(rf);
+        if (!rf) return clone(lf);
+        const out = {};
+        new Set([...Object.keys(rf), ...Object.keys(lf)]).forEach((k) => {
+            const bv = bf ? bf[k] : undefined;
+            let v;
+            if (k === '_reflectionAnswers' && Array.isArray(lf[k]) && Array.isArray(rf[k])) {
+                // One answer per question, by position.
+                const bArr = Array.isArray(bv) ? bv : [];
+                v = [];
+                for (let i = 0; i < Math.max(lf[k].length, rf[k].length); i++) {
+                    const x = mergeValue(bArr[i], lf[k][i], rf[k][i], true);
+                    v.push(x === undefined ? '' : x);
+                }
+            } else {
+                v = mergeValue(bv, lf[k], rf[k], true);
+            }
+            if (v !== undefined) out[k] = v;
+        });
+        return out;
+    };
+
+    // Returns the merged tree, or null if the three trees can't be lined up.
+    const mergeTrees = (baseRoot, localRoot, remoteRoot) => {
+        const prep = (t) => {
+            if (!t || typeof t !== 'object') return null;
+            const c = clone(t);
+            stripTrailingPlaceholders(c);
+            ensureIds(c);
+            return c;
+        };
+        const b = prep(baseRoot);
+        const l = prep(localRoot);
+        const r = prep(remoteRoot);
+        if (!l || !r || l._id !== r._id) return null;
+        const B = indexTree(b);
+        const L = indexTree(l);
+        const R = indexTree(r);
+        const rootId = l._id;
+
+        // Which nodes survive.
+        const untouched = (side, id) => {
+            const bn = B.get(id);
+            const sn = side.get(id);
+            return Boolean(bn && sn && bn.parent === sn.parent
+                && stable(bn.fields) === stable(sn.fields) && stable(bn.childIds) === stable(sn.childIds));
+        };
+        const final = new Set([rootId]);
+        new Set([...B.keys(), ...L.keys(), ...R.keys()]).forEach((id) => {
+            if (id === rootId) return;
+            const inB = B.has(id);
+            const inL = L.has(id);
+            const inR = R.has(id);
+            if (inL && inR) final.add(id);
+            else if (inL) { if (!inB || !untouched(L, id)) final.add(id); }
+            else if (inR) { if (!inB || !untouched(R, id)) final.add(id); }
+        });
+
+        // Where each survivor sits: a move on one side only is honoured; moved on both
+        // sides to different places, this device's move wins. A parent that didn't
+        // survive is replaced by the nearest ancestor that did.
+        const parentOf = new Map();
+        final.forEach((id) => {
+            if (id === rootId) return;
+            const lp = L.has(id) ? L.get(id).parent : undefined;
+            const rp = R.has(id) ? R.get(id).parent : undefined;
+            const bp = B.has(id) ? B.get(id).parent : undefined;
+            let p;
+            if (lp !== undefined && rp !== undefined) {
+                if (lp === rp) p = lp;
+                else if (lp === bp) p = rp;
+                else if (rp === bp) p = lp;
+                else p = lp;
+            } else {
+                p = lp !== undefined ? lp : rp;
+            }
+            let guard = 0;
+            while (p !== undefined && p !== null && !final.has(p) && guard++ < 100000) {
+                const up = L.has(p) ? L.get(p).parent : (R.has(p) ? R.get(p).parent : (B.has(p) ? B.get(p).parent : null));
+                p = up;
+            }
+            parentOf.set(id, final.has(p) ? p : rootId);
+        });
+        // Two devices moving nodes into each other would make a loop - cut it.
+        final.forEach((id) => {
+            const seen = new Set();
+            let cur = id;
+            while (cur !== rootId && cur !== undefined) {
+                if (seen.has(cur)) { parentOf.set(cur, rootId); break; }
+                seen.add(cur);
+                cur = parentOf.get(cur);
+            }
+        });
+
+        const childrenOf = new Map();
+        final.forEach((id) => {
+            if (id === rootId) return;
+            const p = parentOf.get(id);
+            if (!childrenOf.has(p)) childrenOf.set(p, new Set());
+            childrenOf.get(p).add(id);
+        });
+
+        const build = (id) => {
+            const fields = mergeNodeFields(
+                B.has(id) ? B.get(id).fields : undefined,
+                L.has(id) ? L.get(id).fields : undefined,
+                R.has(id) ? R.get(id).fields : undefined
+            );
+            fields._id = id;
+            const node = {};
+            NODE_KEY_ORDER.forEach((k) => { if (fields[k] !== undefined) node[k] = fields[k]; });
+            Object.keys(fields).forEach((k) => { if (!(k in node)) node[k] = fields[k]; });
+            const set = childrenOf.get(id);
+            if (set && set.size) {
+                const order = mergeOrder(
+                    B.has(id) ? B.get(id).childIds : [],
+                    L.has(id) ? L.get(id).childIds : [],
+                    R.has(id) ? R.get(id).childIds : [],
+                    set
+                );
+                node.children = order.map(build);
+            }
+            return node;
+        };
+        return build(rootId);
+    };
+
+    // A whole flowchart's saved data (already parsed). skipKeys: taken from the cloud
+    // as they are (notes are merged separately); localKeys: this device's own view
+    // state (pan/zoom), never taken from another device.
+    const mergeData = (b, l, r, { skipKeys = [], localKeys = [] } = {}) => {
+        const out = {};
+        new Set([...Object.keys(r), ...Object.keys(l)]).forEach((k) => {
+            if (skipKeys.includes(k)) {
+                const v = r[k] !== undefined ? r[k] : l[k];
+                if (v !== undefined) out[k] = clone(v);
+                return;
+            }
+            if (localKeys.includes(k)) {
+                const v = l[k] !== undefined ? l[k] : r[k];
+                if (v !== undefined) out[k] = clone(v);
+                return;
+            }
+            if (k === 'tree') {
+                const merged = mergeTrees(b && b.tree, l.tree, r.tree);
+                if (merged) out.tree = merged;
+                else out.tree = clone(eq(b && b.tree, l.tree) ? r.tree : l.tree);
+                return;
+            }
+            const v = mergeValue(b ? b[k] : undefined, l[k], r[k]);
+            if (v !== undefined) out[k] = v;
+        });
+        return out;
+    };
+
+    return { mergeOrder, mergeValue, mergeTrees, mergeData, ensureIds, stable };
+})();
+
 const NOTES_ICONS = (() => {
     const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
     return {
@@ -189,6 +507,8 @@ const NOTES_ICONS = (() => {
         move: svg('<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>'),
     };
 })();
+
+const isPlainObjectForMerge = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 class FlowchartViewer {
     constructor() {
@@ -1123,6 +1443,7 @@ class FlowchartViewer {
         localStorage.removeItem('flowchart-global-notes-base');
         localStorage.removeItem('flowchart-global-notes-media-base');
         localStorage.removeItem('flowchart-notes-bases');
+        localStorage.removeItem('cloud-sync-base-list');
         clearTimeout(this._cloudPushTimer);
         clearInterval(this._cloudPollTimer);
         this._cloudPollTimer = null;
@@ -1269,6 +1590,7 @@ class FlowchartViewer {
                 }
             }
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
+            this.saveSyncBase(strippedList);
             this.saveNotesBasesFromList(this.flowchartList);
             this._lastPushedDataJson = dataJson;
             this.updateCloudSyncStatus('synced');
@@ -1354,69 +1676,74 @@ class FlowchartViewer {
                         });
                     }
 
-                    // A flowchart made on this device that was never pushed yet (e.g.
-                    // right after connecting cloud sync for the first time, before the
-                    // very first push has had a chance to run) would otherwise just
-                    // vanish here, silently overwritten by the incoming remote list -
-                    // titles are the only identity flowchartList items have, so a local
-                    // title missing from the remote list is treated as "not yet synced"
-                    // and the person is asked what to do with it, rather than the app
-                    // guessing on their behalf.
-                    const localOnlyItems = this.flowchartList.filter(local =>
-                        !remoteList.some(r => r.title === local.title)
-                    );
-                    let mergedList = remoteList;
-                    if (localOnlyItems.length > 0) {
-                        const plural = localOnlyItems.length > 1;
-                        const names = localOnlyItems.map(i => `"${i.title}"`).join(', ');
-                        const addThem = confirm(
-                            `${localOnlyItems.length} flowchart${plural ? 's' : ''} on this device ` +
-                            `${plural ? "aren't" : "isn't"} in the cloud list yet: ${names}.\n\n` +
-                            `Click OK to add ${plural ? 'them' : 'it'} to the cloud, or Cancel to discard ` +
-                            `${plural ? 'them' : 'it'} and use the cloud's list instead.`
-                        );
-                        if (addThem) mergedList = remoteList.concat(localOnlyItems);
-                    }
-
                     // Applying a remote update reloads the flowchart, which closes
                     // the left panel - reopen Notes afterwards if that's where the
                     // person was (e.g. the Notes-first start on a phone).
                     const wasInNotes = this._leftPanelMode === 'notes' && this._notesTabActive;
 
-                    // Notes edited on this device since the last sync are merged into
-                    // the cloud's copy (three-way, per tab) rather than discarded by
-                    // it - snapshot the open flowchart first so its live notes count.
+                    // Snapshot the open flowchart so its live state counts as this
+                    // device's copy.
                     this.saveCurrentFlowchart();
-                    const notesBases = this.loadJSONFromStorage('flowchart-notes-bases', {});
-                    let notesMerged = false;
-                    const listWithNotes = mergedList.map((remoteItem) => {
-                        const localItem = this.flowchartList.find(l => l.title === remoteItem.title);
-                        if (!localItem) return remoteItem;
-                        const result = this.mergeFlowchartNotes(remoteItem, localItem, notesBases[remoteItem.title]);
-                        if (result !== remoteItem) notesMerged = true;
-                        return result;
-                    });
+                    const currentItem = this.flowchartList[this.currentSlotIndex];
+                    const currentTitle = currentItem ? currentItem.title : null;
+                    const currentBefore = currentItem ? this.stripImagesFromDataString(currentItem.data || '').stripped : null;
+
+                    // Without a record of what the cloud held at the last sync (the
+                    // first sync after this was added), a flowchart that's only on this
+                    // device can't be told apart from one deleted elsewhere, so ask.
+                    const base = this.loadSyncBase();
+                    let keepLocalOnly = true;
+                    if (!base) {
+                        const localOnlyItems = this.flowchartList.filter(local =>
+                            !remoteList.some(r => r.title === local.title)
+                        );
+                        if (localOnlyItems.length > 0) {
+                            const plural = localOnlyItems.length > 1;
+                            const names = localOnlyItems.map(i => `"${i.title}"`).join(', ');
+                            keepLocalOnly = confirm(
+                                `${localOnlyItems.length} flowchart${plural ? 's' : ''} on this device ` +
+                                `${plural ? "aren't" : "isn't"} in the cloud list yet: ${names}.\n\n` +
+                                `Click OK to add ${plural ? 'them' : 'it'} to the cloud, or Cancel to discard ` +
+                                `${plural ? 'them' : 'it'} and use the cloud's list instead.`
+                            );
+                        }
+                    }
+
+                    // Whatever was changed here since the last sync is merged with the
+                    // cloud's copy (three-way: what the cloud held then, this device
+                    // now, the cloud now) instead of the cloud's list replacing it.
+                    const merged = this.mergeFlowchartLists(base, this.flowchartList, remoteList, { keepLocalOnly });
                     this.saveNotesBasesFromList(remoteList);
+                    this.saveSyncBase(remoteList);
 
                     this._applyingRemote = true;
-                    this.flowchartList = listWithNotes;
-                    this._lastPushedDataJson = JSON.stringify({ flowchartList: mergedList });
+                    this.flowchartList = merged.list;
+                    this._lastPushedDataJson = JSON.stringify({ flowchartList: remoteList.map(i => ({ title: i.title, data: i.data })) });
                     this.saveFlowchartList();
                     localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
-                    // If anything local-only was kept, or local notes were merged in, the
-                    // cloud row doesn't have it yet - push right away so it isn't at risk
-                    // of being "lost" again by the very next poll before a routine
-                    // autosave would otherwise push it.
-                    if (mergedList !== remoteList || notesMerged) this.scheduleCloudPush();
-                    if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) {
-                        this.currentSlotIndex = 0;
-                    }
+                    // If this device's own changes were merged in, the cloud row doesn't
+                    // have them yet - push right away so they aren't at risk of being
+                    // "lost" again by the very next poll before a routine autosave
+                    // would otherwise push them.
+                    if (merged.changedFromRemote) this.scheduleCloudPush();
+                    // Stay on the same flowchart even if the list order changed.
+                    let keepIndex = currentTitle === null ? -1 : this.flowchartList.findIndex(i => i.title === currentTitle);
+                    if (keepIndex !== -1) this.currentSlotIndex = keepIndex;
+                    else if (this.currentSlotIndex === null || this.currentSlotIndex >= this.flowchartList.length) this.currentSlotIndex = 0;
+                    // Nothing about the open flowchart changed (the cloud's edits were
+                    // to other flowcharts): leave what's on screen alone.
+                    const currentAfter = keepIndex !== -1 ? this.stripImagesFromDataString(this.flowchartList[keepIndex].data || '').stripped : null;
+                    const openChartUnchanged = keepIndex !== -1 && currentAfter === currentBefore;
                     // Only fetch the images/drawings actually referenced by the
                     // flowchart about to be opened - the rest of the list may
                     // reference plenty more, but there's no reason to pull those
                     // bytes down until (if ever) that other flowchart is opened too.
-                    await this.rehydrateFlowchartImages(this.currentSlotIndex);
-                    this.loadFlowchartFromList(this.currentSlotIndex);
+                    if (openChartUnchanged) {
+                        this.saveActiveFlowchartIndex();
+                    } else {
+                        await this.rehydrateFlowchartImages(this.currentSlotIndex);
+                        this.loadFlowchartFromList(this.currentSlotIndex);
+                    }
 
                     if (Object.keys(oldRankSessions).length > 0 && this.pughMatrix && Array.isArray(this.pughMatrix.criteria)) {
                         this.pughMatrix.criteria.forEach(c => {
@@ -1426,7 +1753,7 @@ class FlowchartViewer {
                     }
 
                     this._applyingRemote = false;
-                    if (wasInNotes) this.openNotesPanel();
+                    if (wasInNotes && !openChartUnchanged) this.openNotesPanel();
                     this.showNotification('Synced latest changes from another device.');
                 }
             }
@@ -1436,6 +1763,110 @@ class FlowchartViewer {
             console.error('Cloud pull failed:', err);
             this.updateCloudSyncStatus('error', err.message);
             return false;
+        }
+    }
+
+    // ----- Merging the flowchart list (see FlowchartMerge) -----
+    // `cloud-sync-base-list` is the list as the cloud last held it (image-free, so
+    // small) - the common ancestor for the three-way merge.
+    loadSyncBase() {
+        try {
+            const v = JSON.parse(localStorage.getItem('cloud-sync-base-list') || 'null');
+            return Array.isArray(v) ? v : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    saveSyncBase(list) {
+        try {
+            localStorage.setItem('cloud-sync-base-list', JSON.stringify((list || []).map(i => ({ title: i.title, data: i.data }))));
+        } catch (err) {
+            // Storage full: without a base the next sync still merges, just without
+            // being able to tell a deletion from something never added.
+            try { localStorage.removeItem('cloud-sync-base-list'); } catch (e) { /* ignore */ }
+        }
+    }
+
+    // Flowcharts are matched by title. One added here or there is kept; one removed
+    // on a side is dropped only if the other side left it untouched; the rest are
+    // merged flowchart by flowchart (mergeFlowchartItem). Returns the new list and
+    // whether it differs from the cloud's (i.e. has something to push).
+    mergeFlowchartLists(baseList, localList, remoteList, { keepLocalOnly = true } = {}) {
+        const hasBase = Array.isArray(baseList);
+        const toMap = (list) => {
+            const m = new Map();
+            (list || []).forEach((it) => { if (it && typeof it.title === 'string' && !m.has(it.title)) m.set(it.title, it); });
+            return m;
+        };
+        const B = toMap(baseList);
+        const L = toMap(localList);
+        const R = toMap(remoteList);
+
+        // Compare without the (large) embedded pictures: their hashes stand in for them.
+        const localImages = {};
+        const localStripped = new Map();
+        L.forEach((it, title) => {
+            const { stripped, imageMap } = this.stripImagesFromDataString(it.data || '');
+            Object.assign(localImages, imageMap);
+            localStripped.set(title, stripped);
+        });
+        const changedSinceBase = (title, data) => !B.has(title) || (B.get(title).data || '') !== data;
+
+        const final = new Set();
+        new Set([...B.keys(), ...L.keys(), ...R.keys()]).forEach((title) => {
+            const inB = B.has(title);
+            const inL = L.has(title);
+            const inR = R.has(title);
+            if (inL && inR) final.add(title);
+            else if (inL) {
+                if (!hasBase) { if (keepLocalOnly) final.add(title); }
+                else if (!inB || changedSinceBase(title, localStripped.get(title))) final.add(title);
+            } else if (inR) {
+                if (!hasBase || !inB || changedSinceBase(title, R.get(title).data || '')) final.add(title);
+            }
+        });
+
+        const notesBases = this.loadJSONFromStorage('flowchart-notes-bases', {});
+        const order = FlowchartMerge.mergeOrder([...B.keys()], [...L.keys()], [...R.keys()], final);
+        const list = order.map((title) => {
+            if (L.has(title) && R.has(title)) {
+                return this.mergeFlowchartItem(B.get(title), L.get(title), localStripped.get(title), R.get(title), localImages, notesBases[title]);
+            }
+            if (L.has(title)) return L.get(title);
+            return { title, data: R.get(title).data };
+        });
+
+        const stripList = items => JSON.stringify(items.map(i => ({ title: i.title, data: this.stripImagesFromDataString(i.data || '').stripped })));
+        const remoteJson = JSON.stringify((remoteList || []).map(i => ({ title: i.title, data: i.data })));
+        return { list, changedFromRemote: stripList(list) !== remoteJson };
+    }
+
+    // One flowchart present on both sides. localStripped is localItem's data with
+    // pictures swapped for their hashes, like the cloud's copy.
+    mergeFlowchartItem(baseItem, localItem, localStripped, remoteItem, localImages, baseNotesTabs) {
+        const remoteData = remoteItem.data || '';
+        const baseData = baseItem ? (baseItem.data || '') : null;
+        if (localStripped === remoteData) return localItem;
+        if (baseData !== null && localStripped === baseData) return { title: remoteItem.title, data: remoteData }; // nothing edited here
+        if (baseData !== null && remoteData === baseData) return localItem; // nothing changed in the cloud
+        try {
+            const local = JSON.parse(localStripped);
+            const remote = JSON.parse(remoteData);
+            const baseObj = baseData !== null ? JSON.parse(baseData) : null;
+            if (!isPlainObjectForMerge(local) || !isPlainObjectForMerge(remote)) throw new Error('not an object');
+            const mergedObj = FlowchartMerge.mergeData(isPlainObjectForMerge(baseObj) ? baseObj : null, local, remote, {
+                skipKeys: ['notesTabs', 'activeNotesTabId', 'notesPinned', 'notesDrawings', 'notesImages'],
+                localKeys: ['transform']
+            });
+            // Notes text has its own, finer merge.
+            let item = this.mergeFlowchartNotes({ title: remoteItem.title, data: JSON.stringify(mergedObj, null, 2) }, localItem, baseNotesTabs);
+            // Put back the pictures this device already has in full.
+            item = { title: item.title, data: this.rehydrateImagesInDataString(item.data, localImages) };
+            return item;
+        } catch (err) {
+            console.error('Could not merge flowchart "' + remoteItem.title + '", keeping the cloud copy (plus notes):', err);
+            return this.mergeFlowchartNotes(remoteItem, localItem, baseNotesTabs);
         }
     }
 
@@ -3453,7 +3884,7 @@ class FlowchartViewer {
 
         const nodeCopy = {};
         for (const key in d.data) {
-            if (key === 'children') continue;
+            if (key === 'children' || key === '_id') continue;
             nodeCopy[key] = JSON.parse(JSON.stringify(d.data[key]));
         }
 
@@ -9875,8 +10306,11 @@ class FlowchartViewer {
     }
 
     exportAsJSON() {
+        // Every node gets a stable id the first time it's saved - that's what lets
+        // two devices' edits to the same flowchart be merged (see FlowchartMerge).
+        FlowchartMerge.ensureIds(this.rootData);
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _id } = node;
             const out = { name };
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
@@ -9885,6 +10319,7 @@ class FlowchartViewer {
             if (Array.isArray(_reflectionAnswers) && _reflectionAnswers.some(a => a && a.trim())) {
                 out._reflectionAnswers = _reflectionAnswers;
             }
+            if (_id) out._id = _id;
             if (children) out.children = children.map(stripParents);
             return out;
         }
