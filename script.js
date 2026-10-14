@@ -562,6 +562,8 @@ class FlowchartViewer {
         // the same across every chart and across browser sessions.
         this.arrangementBtn = document.getElementById('arrangement-btn');
         this.hamburgerArrangementBtn = document.getElementById('hamburger-arrangement');
+        this.foldAllBtn = document.getElementById('fold-all-btn');
+        this.hamburgerFoldAllBtn = document.getElementById('hamburger-fold-all');
         this.arrangement = localStorage.getItem('flowchart-arrangement') === 'indented' ? 'indented' : 'centered';
         this.undoBtn = document.getElementById('undo-btn');
         this.redoBtn = document.getElementById('redo-btn');
@@ -868,6 +870,16 @@ class FlowchartViewer {
         this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
         if (this.arrangementBtn) {
             this.arrangementBtn.addEventListener('click', () => this.toggleArrangement());
+        }
+        if (this.foldAllBtn) this.foldAllBtn.addEventListener('click', () => this.toggleFoldAllNodes());
+        if (this.hamburgerFoldAllBtn) {
+            this.hamburgerFoldAllBtn.addEventListener('click', () => {
+                this.toggleFoldAllNodes();
+                const dd = document.getElementById('hamburger-dropdown');
+                const hb = document.getElementById('hamburger-menu');
+                if (dd) dd.classList.remove('open');
+                if (hb) hb.classList.remove('active');
+            });
         }
         if (this.hamburgerArrangementBtn) {
             this.hamburgerArrangementBtn.addEventListener('click', () => this.toggleArrangement());
@@ -2563,8 +2575,9 @@ class FlowchartViewer {
         };
     }
 
-    // Phone: dragging the chart down (the view moving down under the finger)
-    // slides the top buttons out of the way; dragging back up brings them back.
+    // Phone: dragging the chart up (the view moving up under the finger, as when
+    // scrolling down a page) slides the top buttons out of the way; dragging back
+    // down brings them back.
     // Only straight pans count - pinch-zooming and programmatic moves (Reset
     // View, centering on a node) just show them again.
     updateChartButtonsForPan(event) {
@@ -2583,13 +2596,13 @@ class FlowchartViewer {
         // Direction flipped: start counting afresh.
         if (dy !== 0 && Math.sign(dy) !== Math.sign(this._panDelta || 0)) this._panDelta = 0;
         this._panDelta = (this._panDelta || 0) + dy;
-        if (this._panDelta > 14) {
+        if (this._panDelta < -14) {
             panel.classList.add('chart-buttons-hidden');
             const dd = document.getElementById('hamburger-dropdown');
             const hb = document.getElementById('hamburger-menu');
             if (dd) dd.classList.remove('open');
             if (hb) hb.classList.remove('active');
-        } else if (this._panDelta < -14) {
+        } else if (this._panDelta > 14) {
             panel.classList.remove('chart-buttons-hidden');
         }
     }
@@ -2790,6 +2803,62 @@ class FlowchartViewer {
         this.updateArrangementButtonLabels();
         this.renderFlowchart(this.rootData);
         this.autosave();
+    }
+
+    // Every branch that can be folded: nodes with children, below the real root (the
+    // invisible wrapper above it and the root itself stay open, so folding all
+    // leaves the first level visible as an overview).
+    getFoldableNodes() {
+        const out = [];
+        const walk = (n, depth) => {
+            if (!n || typeof n !== 'object') return;
+            const kids = (n.children || []).filter(c => c && typeof c === 'object');
+            const skipDepth = this.rootData && this.rootData._isPlaceholder ? 1 : 0;
+            if (kids.length && depth > skipDepth) out.push(n);
+            kids.forEach(c => walk(c, depth + 1));
+        };
+        walk(this.rootData, 0);
+        return out;
+    }
+
+    // One button for both directions: while anything is still open it folds
+    // everything, and once everything is folded it unfolds everything.
+    toggleFoldAllNodes() {
+        const foldable = this.getFoldableNodes();
+        const anyOpen = foldable.some(n => !n._collapsed);
+        if (foldable.length === 0 && !this.hasAnyCollapsedNode()) return;
+        this.pushUndo();
+        if (anyOpen) {
+            foldable.forEach((n) => { n._collapsed = true; });
+        } else {
+            const clear = (n) => {
+                if (!n || typeof n !== 'object') return;
+                delete n._collapsed;
+                (n.children || []).forEach(clear);
+            };
+            clear(this.rootData);
+        }
+        this.selectedNode = null;
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+    }
+
+    hasAnyCollapsedNode() {
+        let found = false;
+        const walk = (n) => {
+            if (found || !n || typeof n !== 'object') return;
+            if (n._collapsed) { found = true; return; }
+            (n.children || []).forEach(walk);
+        };
+        walk(this.rootData);
+        return found;
+    }
+
+    updateFoldAllLabels() {
+        const anyOpen = this.getFoldableNodes().some(n => !n._collapsed);
+        const label = anyOpen || !this.hasAnyCollapsedNode() ? '⊟ Fold All' : '⊞ Unfold All';
+        if (this.foldAllBtn) this.foldAllBtn.textContent = label;
+        if (this.hamburgerFoldAllBtn) this.hamburgerFoldAllBtn.textContent = label;
     }
 
     updateArrangementButtonLabels() {
@@ -4751,16 +4820,6 @@ class FlowchartViewer {
             this.notesUnfoldBtn.addEventListener('click', () => this.unfoldNotesSection());
         }
 
-        const desktopControlsFoldBtn = document.getElementById('desktop-controls-fold-btn');
-        const desktopControls = document.querySelector('.desktop-controls');
-        if (desktopControlsFoldBtn && desktopControls) {
-            desktopControlsFoldBtn.addEventListener('click', () => {
-                this._desktopControlsFolded = !this._desktopControlsFolded;
-                desktopControls.style.display = this._desktopControlsFolded ? 'none' : 'flex';
-                desktopControlsFoldBtn.innerHTML = this._desktopControlsFolded ? '&#9652;' : '&#9662;';
-            });
-        }
-
         if (this.reflectionPanelResizeHandle) {
             let dragging = false;
             let startX = 0;
@@ -5751,6 +5810,14 @@ class FlowchartViewer {
         }
         if (this.leftPanelTabNotes) {
             this.leftPanelTabNotes.classList.toggle('active', this._leftPanelMode === 'notes');
+        }
+        // On a phone the pills scroll sideways - bring the open one into view.
+        const pillStrip = document.getElementById('left-panel-tabs');
+        const activePill = pillStrip && pillStrip.querySelector('.left-panel-tab.active');
+        if (activePill && pillStrip.scrollWidth > pillStrip.clientWidth) {
+            const sr = pillStrip.getBoundingClientRect();
+            const pr = activePill.getBoundingClientRect();
+            pillStrip.scrollLeft += (pr.left - sr.left) - (pillStrip.clientWidth - pr.width) / 2;
         }
         if (this.reflectionPanelBody) {
             this.reflectionPanelBody.style.display = this._leftPanelMode === 'questions' ? 'flex' : 'none';
@@ -7377,6 +7444,59 @@ class FlowchartViewer {
 
             const list = document.createElement('div');
             list.className = 'notes-list-items';
+            // Hold the handle (a quarter second), then drag the row up or down to
+            // a new place among the others; letting go saves the new order.
+            const attachGrab = (handle, row) => {
+                let timer = null;
+                let armed = false;
+                let start = null;
+                const rowsOf = () => Array.from(list.querySelectorAll('.notes-list-item[data-drag-key]'));
+                const finish = (e, commit) => {
+                    clearTimeout(timer);
+                    if (!armed) { start = null; return; }
+                    armed = false;
+                    start = null;
+                    row.classList.remove('dragging');
+                    try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* not captured */ }
+                    if (commit && cfg.onReorder) cfg.onReorder(rowsOf().map(r => r.dataset.dragKey));
+                };
+                handle.addEventListener('pointerdown', (e) => {
+                    if (e.button !== undefined && e.button !== 0) return;
+                    start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+                    clearTimeout(timer);
+                    timer = setTimeout(() => {
+                        armed = true;
+                        row.classList.add('dragging');
+                        try { handle.setPointerCapture(start.id); } catch (err) { /* synthetic pointer */ }
+                        if (navigator.vibrate) navigator.vibrate(15);
+                    }, 250);
+                });
+                handle.addEventListener('pointermove', (e) => {
+                    if (!start) return;
+                    if (!armed) {
+                        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
+                            clearTimeout(timer);
+                            start = null;
+                        }
+                        return;
+                    }
+                    e.preventDefault();
+                    const rows = rowsOf();
+                    const hit = rows.find((r) => {
+                        if (r === row) return false;
+                        const b = r.getBoundingClientRect();
+                        return e.clientY >= b.top && e.clientY <= b.bottom;
+                    });
+                    if (hit) {
+                        if (rows.indexOf(row) > rows.indexOf(hit)) hit.before(row);
+                        else hit.after(row);
+                    }
+                });
+                handle.addEventListener('pointerup', (e) => finish(e, true));
+                handle.addEventListener('pointercancel', (e) => finish(e, false));
+                handle.addEventListener('contextmenu', (e) => e.preventDefault());
+            };
+
             // Rebuilt on every keystroke in the search box (see below); the box
             // itself is never rebuilt so it keeps focus while typing.
             const fillList = () => {
@@ -7402,6 +7522,17 @@ class FlowchartViewer {
                 }
                 const row = document.createElement('div');
                 row.className = 'notes-list-item' + (item.active ? ' active' : '');
+                if (item.dragKey && !q) {
+                    row.dataset.dragKey = item.dragKey;
+                    const grab = document.createElement('button');
+                    grab.type = 'button';
+                    grab.className = 'notes-list-grab';
+                    grab.textContent = '\u2261';
+                    grab.title = 'Hold, then drag to reorder the tabs';
+                    grab.setAttribute('aria-label', 'Hold and drag to reorder');
+                    attachGrab(grab, row);
+                    row.appendChild(grab);
+                }
                 const main = document.createElement('button');
                 main.type = 'button';
                 main.className = 'notes-list-main';
@@ -7487,18 +7618,30 @@ class FlowchartViewer {
         };
         this.showNotesListPopup(({ close, refresh }) => {
             // Global notes first, then this flowchart's - each group A-Z.
+            // The notes shown as tabs come first, in tab order, with a handle to
+            // reorder them; the rest follow A-Z.
             const byName = (a, b) => (a.tab.name || '').toLowerCase().localeCompare((b.tab.name || '').toLowerCase());
+            const tabbed = this.getPinnedNotes();
+            const isTabbed = (scope, id) => tabbed.some(e => e.scope === scope && e.tab.id === id);
             const all = [
-                ...this.globalNotesTabs.map(tab => ({ scope: 'global', tab })).sort(byName),
-                ...this.notesTabs.map(tab => ({ scope: 'chart', tab })).sort(byName),
+                ...tabbed.map(e => ({ ...e, tabbed: true })),
+                ...this.globalNotesTabs.filter(tab => !isTabbed('global', tab.id)).map(tab => ({ scope: 'global', tab })).sort(byName),
+                ...this.notesTabs.filter(tab => !isTabbed('chart', tab.id)).map(tab => ({ scope: 'chart', tab })).sort(byName),
             ];
             return {
                 title: mode.add ? 'Add a tab - choose a note' : (mode.tabKey ? 'Show which note in this tab?' : 'Notes'),
                 searchable: true,
                 searchPlaceholder: 'Search note names and text...',
-                items: all.map(({ scope, tab }) => ({
+                onReorder: (keys) => {
+                    this.notesPinned = keys;
+                    this.renderNotesTabBar();
+                    this.autosave();
+                },
+                items: all.map(({ scope, tab, tabbed: inTabs }) => ({
                     label: tab.name || 'Untitled',
-                    group: scope === 'global' ? 'Global notes' : 'This flowchart',
+                    sub: inTabs ? (scope === 'global' ? 'Global note' : 'This flowchart') : '',
+                    dragKey: inTabs ? `${scope}:${tab.id}` : null,
+                    group: inTabs ? 'Tabs (hold \u2261 and drag to reorder)' : (scope === 'global' ? 'Global notes' : 'This flowchart'),
                     contentText: (tab.content || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
                     active: scope === this._activeNotesScope && tab.id === this.getActiveNotesTabId(scope),
                     onClick: () => { pick(scope, tab.id); close(); },
@@ -7702,15 +7845,21 @@ class FlowchartViewer {
         document.addEventListener('touchend', () => { touchStart = null; }, { passive: true });
 
         let lastY = window.scrollY;
+        let runY = 0; // how far the page has gone in the current direction
         window.addEventListener('scroll', () => {
             const y = window.scrollY;
             const dy = y - lastY;
             lastY = y;
             if (!document.body.classList.contains('notes-doc-scroll')) return;
-            if (Date.now() < (this._notesMenuLockUntil || 0)) return;
-            if (y < 60) { this.showNotesMenu(); return; }
-            if (dy > 6) this.hideNotesMenu();
-            else if (dy < -6) this.showNotesMenu();
+            if (Date.now() < (this._notesMenuLockUntil || 0)) { runY = 0; return; }
+            if (y < 60) { runY = 0; this.showNotesMenu(); return; }
+            if (dy === 0) return;
+            // Added up per direction, so a slow scroll (a pixel or two per event)
+            // counts the same as a quick flick.
+            if (Math.sign(dy) !== Math.sign(runY)) runY = 0;
+            runY += dy;
+            if (runY > 14) this.hideNotesMenu();
+            else if (runY < -14) this.showNotesMenu();
         }, { passive: true });
     }
 
@@ -7750,6 +7899,25 @@ class FlowchartViewer {
     // Shared by the embedded editor and every full-screen pane: wires up
     // everything that reacts to what the caret/typing is doing.
     wireNotesEditorFeedback(editor, isEmbedded) {
+        // Typing a lowercase letter at the very start of a line (paragraph, list
+        // item, checklist item or title) types it as a capital instead.
+        editor.editing.view.document.on('insertText', (evt, data) => {
+            const text = data.text;
+            if (typeof text !== 'string' || !text.length) return;
+            // A whole word can arrive at once (phone keyboards): only its first
+            // letter is the start of the line.
+            const first = text.charAt(0);
+            const upper = first.toUpperCase();
+            if (upper === first || upper.length !== 1) return;
+            const pos = editor.model.document.selection.getFirstPosition();
+            if (!pos || !pos.isAtStart) return;
+            data.text = upper + text.slice(1);
+        }, { priority: 'high' });
+        // Phone keyboards that type letter by letter (so the above never sees them)
+        // capitalise by themselves when asked to.
+        editor.editing.view.change((writer) => {
+            writer.setAttribute('autocapitalize', 'sentences', editor.editing.view.document.getRoot());
+        });
         // Ticking a checklist box while not already editing shouldn't start
         // editing: a press on the checkbox would normally focus the text (which
         // pops the on-screen keyboard open). Cancelling that press, before
@@ -10967,6 +11135,7 @@ class FlowchartViewer {
     }
 
     renderFlowchart(data, options = {}) {
+        this.updateFoldAllLabels();
         const self = this;
         const { fitView = false, keepTransform = false } = options;
         if (fitView) {

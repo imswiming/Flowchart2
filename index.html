@@ -3,7 +3,8 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
+  <meta name="color-scheme" content="dark">
   <!-- Installable web app: once added to the home screen from the browser's
        "Install app" option it opens in its own window with no address bar. -->
   <link rel="manifest" href="manifest.webmanifest">
@@ -338,6 +339,7 @@
         <button class="menu-item" id="hamburger-reset-view">⟲ Reset View</button>
         <button class="menu-item" id="hamburger-orientation">↕ Top-Down</button>
         <button class="menu-item" id="hamburger-arrangement">📐 Centered Layout</button>
+        <button class="menu-item" id="hamburger-fold-all">⊟ Fold All</button>
         <button class="menu-item" id="hamburger-export">⬇ Export All</button>
         <button class="menu-item" id="hamburger-import">⬆ Import All</button>
         <button class="menu-item" id="hamburger-ai-export">🤖 Export to AI</button>
@@ -361,7 +363,6 @@
       </div>
 
       <div class="reset-view-controls">
-        <button id="desktop-controls-fold-btn" title="Show/hide toolbar buttons">&#9662;</button>
         <div style="display: flex; flex-direction: column; gap: 4px;">
           <!-- Desktop controls (hidden on mobile) -->
           <div class="desktop-controls" style="display: flex; gap: 8px; flex-wrap: wrap-reverse; justify-content: flex-end;">
@@ -370,6 +371,7 @@
             <div class="reset-view-btn" id="reset-view">Reset View</div>
             <div class="reset-view-btn" id="orientation-btn">↕ Top-Down</div>
             <div class="reset-view-btn" id="arrangement-btn">📐 Centered Layout</div>
+            <div class="reset-view-btn" id="fold-all-btn" title="Fold or unfold every branch">⊟ Fold All</div>
             <div class="reset-view-btn" id="export-btn">Export All</div>
             <div class="reset-view-btn" id="import-btn">Import All</div>
             <div class="reset-view-btn" id="ai-export-btn" style="background:#00a67e;color:white;">🤖 Export to AI</div>
