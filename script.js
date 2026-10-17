@@ -7299,23 +7299,37 @@ class FlowchartViewer {
                 // only covers the brief pre-interactive window before that.
                 const getApp = () => editor.notesApp || editor.config.get('noteMediaMarkerApp');
 
+                // An *inline* object: it sits inside a paragraph, bullet, checklist
+                // line or title like a big character, so the caret can be put in
+                // front of or behind it, text can share its line, Enter moves it
+                // down, Backspace joins it back up, and it can be cut and pasted
+                // into any bullet. (It used to be a block of its own, which the
+                // caret could never get beside.)
                 editor.model.schema.register('noteMediaMarker', {
-                    isObject: true,
-                    allowWhere: '$block',
+                    inheritAllFrom: '$inlineObject',
                     allowAttributes: ['mediaType', 'mediaId'],
                 });
 
+                // Saved notes keep the plain-text [[image:id]] / [[drawing:id]]
+                // markers, wherever they sit in a line. They're swapped for a tiny
+                // placeholder element on the way into the editor and back to the
+                // exact same text on the way out, so the saved format (and what
+                // already-saved notes and Cloud Sync hold) doesn't change.
+                const MARKER_RE = /\[\[(image|drawing):([a-zA-Z0-9_-]+)\]\]/g;
+                const WRAPPED_RE = /<span data-note-media="(?:image|drawing)" data-id="[^"]*">(\[\[(?:image|drawing):[a-zA-Z0-9_-]+\]\])<\/span>/g;
+                const processor = editor.data.processor;
+                const origToView = processor.toView.bind(processor);
+                const origToData = processor.toData.bind(processor);
+                processor.toView = (data) => origToView(
+                    String(data).replace(WRAPPED_RE, '$1').replace(MARKER_RE, '<span data-note-media="$1" data-id="$2"></span>'));
+                processor.toData = (viewFragment) => origToData(viewFragment).replace(WRAPPED_RE, '$1');
+
                 editor.conversion.for('upcast').elementToElement({
-                    view: { name: 'p' },
-                    model: (viewElement, { writer }) => {
-                        const text = Array.from(viewElement.getChildren())
-                            .map(c => (c.is && c.is('$text')) ? c.data : '')
-                            .join('');
-                        const m = text.trim().match(/^\[\[(image|drawing):([a-zA-Z0-9_-]+)\]\]$/);
-                        if (!m) return null;
-                        return writer.createElement('noteMediaMarker', { mediaType: m[1], mediaId: m[2] });
-                    },
-                    converterPriority: 'high',
+                    view: { name: 'span', attributes: { 'data-note-media': /^(image|drawing)$/ } },
+                    model: (viewElement, { writer }) => writer.createElement('noteMediaMarker', {
+                        mediaType: viewElement.getAttribute('data-note-media'),
+                        mediaId: viewElement.getAttribute('data-id'),
+                    }),
                 });
 
                 editor.conversion.for('dataDowncast').elementToElement({
@@ -7323,9 +7337,9 @@ class FlowchartViewer {
                     view: (modelElement, { writer }) => {
                         const type = modelElement.getAttribute('mediaType');
                         const id = modelElement.getAttribute('mediaId');
-                        const p = writer.createContainerElement('p');
-                        writer.insert(writer.createPositionAt(p, 0), writer.createText(`[[${type}:${id}]]`));
-                        return p;
+                        const span = writer.createContainerElement('span', { 'data-note-media': type, 'data-id': id });
+                        writer.insert(writer.createPositionAt(span, 0), writer.createText(`[[${type}:${id}]]`));
+                        return span;
                     },
                 });
 
@@ -7335,7 +7349,7 @@ class FlowchartViewer {
                         const type = modelElement.getAttribute('mediaType');
                         const id = modelElement.getAttribute('mediaId');
                         const src = getApp().getNotesMediaSrc(type, id);
-                        const container = writer.createContainerElement('div', {
+                        const container = writer.createContainerElement('span', {
                             class: 'note-media-widget',
                             title: type === 'drawing' ? 'Click to edit drawing' : 'Click to view image',
                         });
@@ -8146,9 +8160,12 @@ class FlowchartViewer {
             if (selected && selected.is('element', 'noteMediaMarker')) {
                 editor.model.change(writer => writer.setSelection(selected, 'after'));
             }
-            const viewFragment = editor.data.processor.toView(`<p>${marker}</p>`);
-            const modelFragment = editor.data.toModel(viewFragment);
-            editor.model.insertContent(modelFragment);
+            // Inline at the caret (inside whatever line/bullet it's in), with the
+            // caret left right after the picture.
+            editor.model.change((writer) => {
+                const el = writer.createElement('noteMediaMarker', { mediaType: type, mediaId: id });
+                editor.model.insertObject(el, null, null, { setSelection: 'after' });
+            });
             // The editingDowncast conversion that runs as *part of* insertContent
             // (see getNoteMediaMarkerPlugin) is unreliable about actually seeing
             // this.notesImages[id] (set a line above, in every caller, before this
@@ -8158,7 +8175,8 @@ class FlowchartViewer {
             // reaches past the conversion pipeline entirely and sets the actual
             // DOM attribute directly, using the same src this function already
             // has in scope - a blunter fix, but a deterministic one.
-            const insertedElement = editor.model.document.selection.getSelectedElement();
+            const caretAt = editor.model.document.selection.getFirstPosition();
+            const insertedElement = caretAt && caretAt.nodeBefore;
             if (insertedElement && insertedElement.is('element', 'noteMediaMarker')) {
                 const viewElement = editor.editing.mapper.toViewElement(insertedElement);
                 const domElement = viewElement && editor.editing.view.domConverter.mapViewToDom(viewElement);
@@ -9708,9 +9726,9 @@ class FlowchartViewer {
             // doesn't end up with a dead "[[drawing:...]]" line pointing at nothing.
             const marker = `[[drawing:${state.editingId}]]`;
             const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const markerRe = new RegExp(`<p>\\s*${escapedMarker}\\s*</p>`);
+            const markerRe = new RegExp(`(?:<p>\\s*${escapedMarker}\\s*</p>)|${escapedMarker}`, 'g');
             this.getNotesTabsList(scope).forEach((tab) => {
-                if (typeof tab.content === 'string' && markerRe.test(tab.content)) {
+                if (typeof tab.content === 'string' && tab.content.includes(marker)) {
                     tab.content = tab.content.replace(markerRe, '');
                     this.syncNotesPanesShowingTab(scope, tab.id, tab.content);
                 }
