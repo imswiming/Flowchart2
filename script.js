@@ -5129,7 +5129,6 @@ class FlowchartViewer {
         if (this._leftPanelMode === 'notes') {
             this._notesFolded = true;
             document.body.classList.add('notes-header-folded');
-            if (this.notesUnfoldBtn) this.notesUnfoldBtn.style.display = 'inline-flex';
             return;
         }
         this._notesFolded = true;
@@ -7972,10 +7971,6 @@ class FlowchartViewer {
             const tail = row.querySelector('.notes-toolbar-tail');
             if (tail) tail.appendChild(zoom);
             else row.appendChild(zoom);
-            // While the tab header is hidden for editing, the Show arrow sits on
-            // the undo/redo/zoom row, at its right end.
-            if (tail) tail.appendChild(show);
-            else row.prepend(show);
         } else {
             const tabs = this.leftPanelTabsContainer;
             if (tabs && tabs.parentNode === header) {
@@ -8035,8 +8030,14 @@ class FlowchartViewer {
             // counts the same as a quick flick.
             if (Math.sign(dy) !== Math.sign(runY)) runY = 0;
             runY += dy;
-            if (runY > 14) this.hideNotesMenu();
-            else if (runY < -14) this.showNotesMenu();
+            if (runY > 14) {
+                this.hideNotesMenu();
+            } else if (runY < -14) {
+                this.showNotesMenu();
+                // Scrolling back up also brings back the Questions / Pugh Matrix /
+                // Morph Matrix / Notes pills that were hidden while editing.
+                if (this._notesFolded) this.unfoldNotesSection();
+            }
         }, { passive: true });
     }
 

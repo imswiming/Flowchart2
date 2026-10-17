@@ -2719,3 +2719,9 @@ input[type="range"]::-moz-range-progress {
 .notes-toolbar-tail #notes-unfold-btn {
     margin-left: auto;
 }
+
+/* The Show pill is gone: the hidden tab header comes back when the page is
+   scrolled up (see setupNotesAutoHideMenu). */
+#notes-unfold-btn {
+    display: none !important;
+}
