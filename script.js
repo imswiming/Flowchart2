@@ -7498,14 +7498,33 @@ class FlowchartViewer {
                     // rule in style.css) folds/unfolds it.
                     const dom = editor.editing.view.getDomRoot();
                     if (!dom) return;
+                    // The fold/unfold zone is much bigger than the little arrow itself,
+                    // and bigger still on a phone, where a fingertip can't hit a
+                    // 15px glyph: it reaches well to the right of the arrow (over the
+                    // first letters of the title), a good way out to the left (into
+                    // the margin), and a little above and below the title's line.
                     const arrowTitle = (e) => {
-                        const h = e.target && e.target.closest ? e.target.closest('h4') : null;
-                        if (!h || !dom.contains(h)) return null;
-                        const rect = h.getBoundingClientRect();
-                        const zoom = h.offsetWidth ? rect.width / h.offsetWidth : 1;
-                        const fontSize = parseFloat(getComputedStyle(h).fontSize) || 30;
-                        if (e.clientX - rect.left > fontSize * 1.3 * zoom) return null;
-                        return h;
+                        if (!e.target || !dom.contains(e.target)) return null;
+                        if (e.target.closest && e.target.closest('.note-media-widget')) return null;
+                        const phone = window.matchMedia('(max-width: 600px)').matches;
+                        let best = null;
+                        dom.querySelectorAll('h4').forEach((h) => {
+                            const rect = h.getBoundingClientRect();
+                            const zoom = h.offsetWidth ? rect.width / h.offsetWidth : 1;
+                            const fontSize = parseFloat(getComputedStyle(h).fontSize) || 30;
+                            const reachRight = fontSize * (phone ? 2.2 : 1.3) * zoom;
+                            const reachLeft = (phone ? 36 : 14) * zoom;
+                            // More room above than below: the line under a title is the
+                            // note's own text, which a tap there should still reach.
+                            const padUp = (phone ? 10 : 2) * zoom;
+                            const padDown = (phone ? 3 : 1) * zoom;
+                            if (e.clientX < rect.left - reachLeft || e.clientX > rect.left + reachRight) return;
+                            const exact = e.clientY >= rect.top && e.clientY <= rect.bottom;
+                            const near = e.clientY >= rect.top - padUp && e.clientY <= rect.bottom + padDown;
+                            if (exact) best = h;
+                            else if (near && !best) best = h;
+                        });
+                        return best;
                     };
                     // Pressing the arrow must not focus the text (that is what pops
                     // the on-screen keyboard open) - cancelled before CKEditor sees
