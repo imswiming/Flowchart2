@@ -6213,17 +6213,31 @@ class FlowchartViewer {
         this.autosave();
     }
 
-    // Hold a tab (about a quarter second) and drag it to a new spot among the
-    // other tabs; letting go saves the new order. A quick tap, or a finger that
-    // moves before the hold registers (i.e. a scroll), is left alone.
+    // Drag a tab pill straight away (no hold needed): it follows the finger or
+    // mouse, and the other tabs slide aside in real time to make room until
+    // you let go, which saves the new order. A plain tap (or a wobble under a
+    // few pixels) is still just a tap.
     attachNotesTabDrag(tabEl, bar) {
-        let timer = null;
         let armed = false;
         let start = null;
         let grab = null;
-
         let lastEvent = null;
-        const onWindowMove = (e) => { if (e !== lastEvent) tabEl.dispatchEvent(new PointerEvent('pointermove', e)); };
+        let lastSwapAt = 0;
+
+        const pinnedTabs = () => Array.from(bar.querySelectorAll('.matrix-tab[data-key]:not(.notes-tab-temp)'));
+
+        // Where a tab sits in the layout, ignoring any slide animation still
+        // running on it - hit-testing against the animated position makes tabs
+        // swap back and forth while they're still moving.
+        const layoutRect = (t) => {
+            const p = t.offsetParent || document.body;
+            const pr = p.getBoundingClientRect();
+            const left = pr.left + p.clientLeft + t.offsetLeft - p.scrollLeft;
+            const top = pr.top + p.clientTop + t.offsetTop - p.scrollTop;
+            return { left, top, right: left + t.offsetWidth, bottom: top + t.offsetHeight, width: t.offsetWidth, height: t.offsetHeight };
+        };
+
+        const onWindowMove = (e) => handleMove(e);
         const onWindowUp = (e) => finish(e, true);
         const onWindowCancel = (e) => finish(e, false);
         const detachWindow = () => {
@@ -6233,17 +6247,17 @@ class FlowchartViewer {
         };
 
         const finish = (e, commit) => {
-            clearTimeout(timer);
             detachWindow();
             if (!armed) { start = null; return; }
             armed = false;
             start = null;
             tabEl.classList.remove('dragging');
             tabEl.style.transform = '';
+            pinnedTabs().forEach((t) => { t.style.transition = ''; t.style.transform = ''; });
             try { tabEl.releasePointerCapture(e.pointerId); } catch (err) { /* not captured */ }
             this._notesTabDragEndedAt = Date.now();
             if (commit) {
-                const order = Array.from(bar.querySelectorAll('.matrix-tab[data-key]:not(.notes-tab-temp)')).map(t => t.dataset.key);
+                const order = pinnedTabs().map(t => t.dataset.key);
                 if (this.notesPinned === null || order.join('|') !== this.notesPinned.join('|')) {
                     this.notesPinned = order;
                     this.autosave();
@@ -6252,48 +6266,51 @@ class FlowchartViewer {
             this.renderNotesTabBar();
         };
 
+        const arm = () => {
+            armed = true;
+            const r = tabEl.getBoundingClientRect();
+            grab = { x: start.x - r.left, y: start.y - r.top };
+            tabEl.classList.add('dragging');
+            try { tabEl.setPointerCapture(start.id); } catch (err) { /* synthetic pointer */ }
+        };
+
         tabEl.addEventListener('pointerdown', (e) => {
             if (e.button !== undefined && e.button !== 0) return;
             if (e.target.closest('.matrix-tab-delete-btn')) return;
             start = { x: e.clientX, y: e.clientY, id: e.pointerId };
-            clearTimeout(timer);
-            timer = setTimeout(() => {
-                armed = true;
-                const r = tabEl.getBoundingClientRect();
-                grab = { x: start.x - r.left, y: start.y - r.top };
-                tabEl.classList.add('dragging');
-                try { tabEl.setPointerCapture(start.id); } catch (err) { /* synthetic pointer */ }
-                window.addEventListener('pointermove', onWindowMove);
-                window.addEventListener('pointerup', onWindowUp);
-                window.addEventListener('pointercancel', onWindowCancel);
-                if (navigator.vibrate) navigator.vibrate(15);
-            }, 250);
+            // Follow the pointer across the whole window from here on - a mouse
+            // that moves off the pill (or a quick jump) is still this drag.
+            window.addEventListener('pointermove', onWindowMove);
+            window.addEventListener('pointerup', onWindowUp);
+            window.addEventListener('pointercancel', onWindowCancel);
         });
 
-        tabEl.addEventListener('pointermove', (e) => {
-            lastEvent = e;
+        const handleMove = (e) => {
             if (!start) return;
             if (!armed) {
-                // Moved before the hold registered: it's a scroll/swipe, not a drag.
-                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
-                    clearTimeout(timer);
-                    start = null;
-                }
-                return;
+                // Becomes a drag once the pointer has really moved.
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+                arm();
             }
             e.preventDefault();
-            // Reorder live: swap with whichever other tab the pointer is over.
-            const others = Array.from(bar.querySelectorAll('.matrix-tab[data-key]:not(.notes-tab-temp)')).filter(t => t !== tabEl);
+
+            // The tab under the pointer trades places with the dragged one, by the
+            // others moving around it (the dragged tab itself is never taken out of
+            // the page - that makes the browser drop the finger). Judged on the
+            // layout, with a dead zone near each tab's edges and a short pause
+            // between swaps so the row doesn't flicker.
+            const others = pinnedTabs().filter(t => t !== tabEl);
             tabEl.style.transform = '';
-            const hit = others.find((t) => {
-                const r = t.getBoundingClientRect();
-                return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+            const now = Date.now();
+            const hit = now - lastSwapAt < 90 ? null : others.find((t) => {
+                const r = layoutRect(t);
+                const padX = r.width * 0.2;
+                return e.clientX >= r.left + padX && e.clientX <= r.right - padX &&
+                    e.clientY >= r.top && e.clientY <= r.bottom;
             });
             if (hit) {
-                // Re-order by moving the *other* tabs around the dragged one:
-                // taking the dragged tab itself out of the page and putting it
-                // back makes the browser drop its hold on the finger, and the
-                // drag would freeze right after the first swap.
+                lastSwapAt = now;
+                const before = new Map(others.map(t => [t, t.getBoundingClientRect()]));
                 const kids = Array.from(bar.children);
                 const mine = kids.indexOf(tabEl);
                 const theirs = kids.indexOf(hit);
@@ -6303,14 +6320,27 @@ class FlowchartViewer {
                 } else {
                     kids.slice(mine + 1, theirs + 1).forEach(el => tabEl.before(el));
                 }
+                // Slide every tab that moved from where it was drawn to its new spot.
+                others.forEach((t) => { t.style.transition = 'none'; t.style.transform = ''; });
+                others.forEach((t) => {
+                    const from = before.get(t);
+                    const to = t.getBoundingClientRect();
+                    const dx = from.left - to.left;
+                    const dy = from.top - to.top;
+                    if (!dx && !dy) return;
+                    t.style.transform = `translate(${dx}px, ${dy}px)`;
+                    requestAnimationFrame(() => requestAnimationFrame(() => {
+                        t.style.transition = 'transform 160ms ease';
+                        t.style.transform = '';
+                    }));
+                });
             }
-            // Follow the finger/cursor.
+
+            // The dragged tab follows the finger/cursor directly.
             const r = tabEl.getBoundingClientRect();
             tabEl.style.transform = `translate(${e.clientX - grab.x - r.left}px, ${e.clientY - grab.y - r.top}px)`;
-        });
+        };
 
-        tabEl.addEventListener('pointerup', (e) => finish(e, true));
-        tabEl.addEventListener('pointercancel', (e) => finish(e, false));
         // Long-press would otherwise open the browser's context menu.
         tabEl.addEventListener('contextmenu', (e) => e.preventDefault());
     }
@@ -7909,9 +7939,10 @@ class FlowchartViewer {
             const tail = row.querySelector('.notes-toolbar-tail');
             if (tail) tail.appendChild(zoom);
             else row.appendChild(zoom);
-            // While the tab header is hidden for editing, the Show arrow takes the
-            // first spot in the toolbar.
-            row.prepend(show);
+            // While the tab header is hidden for editing, the Show arrow sits on
+            // the undo/redo/zoom row, at its right end.
+            if (tail) tail.appendChild(show);
+            else row.prepend(show);
         } else {
             const tabs = this.leftPanelTabsContainer;
             if (tabs && tabs.parentNode === header) {

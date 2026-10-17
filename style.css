@@ -2714,3 +2714,8 @@ input[type="range"]::-moz-range-progress {
         justify-content: flex-start;
     }
 }
+
+/* The Show arrow ends the undo / redo / zoom row, at its right. */
+.notes-toolbar-tail #notes-unfold-btn {
+    margin-left: auto;
+}
