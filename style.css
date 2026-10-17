@@ -2725,3 +2725,20 @@ input[type="range"]::-moz-range-progress {
 #notes-unfold-btn {
     display: none !important;
 }
+
+/* Phone: no zoom in Notes. The -/100%/+ control is hidden while the Notes tab is
+   open, and Notes is always shown at normal size whatever zoom the other tabs
+   were last set to. */
+@media (max-width: 600px) {
+    body.notes-doc-scroll #left-panel-zoom-controls {
+        display: none;
+    }
+
+    body.notes-doc-scroll #notes-panel-body {
+        zoom: 1;
+    }
+
+    body.notes-doc-scroll #notes-top-menu {
+        top: var(--lp-header-h, 0px);
+    }
+}

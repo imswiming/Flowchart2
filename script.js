@@ -7984,20 +7984,15 @@ class FlowchartViewer {
         const show = this.notesUnfoldBtn;
         const header = document.getElementById('reflection-panel-header');
         if (!zoom || !show || !header) return;
-        const inDoc = document.body.classList.contains('notes-doc-scroll');
-        const row = document.querySelector('#notes-panel-header-row .notes-toolbar-row');
-        if (inDoc && row) {
-            const tail = row.querySelector('.notes-toolbar-tail');
-            if (tail) tail.appendChild(zoom);
-            else row.appendChild(zoom);
+        // The zoom control used to be moved into the Notes toolbar on a phone; it
+        // isn't there any more (the Notes tab has no zoom on a phone - see the
+        // CSS), so it just stays in the tab header.
+        const tabs = this.leftPanelTabsContainer;
+        if (tabs && tabs.parentNode === header) {
+            tabs.after(show);
+            show.after(zoom);
         } else {
-            const tabs = this.leftPanelTabsContainer;
-            if (tabs && tabs.parentNode === header) {
-                tabs.after(show);
-                show.after(zoom);
-            } else {
-                header.prepend(show, zoom);
-            }
+            header.prepend(show, zoom);
         }
     }
 
