@@ -2669,23 +2669,6 @@ input[type="range"]::-moz-range-progress {
     overflow-wrap: anywhere;
 }
 
-/* Close (x) beside the Show button while the tab header is hidden for editing. */
-.notes-toolbar-close-btn {
-    display: none;
-    background: var(--control-bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    font-size: 15px;
-    line-height: 1;
-    padding: 4px 9px;
-    cursor: pointer;
-}
-
-body.notes-header-folded .notes-toolbar-close-btn {
-    display: inline-block;
-}
-
 /* Phone: panning the chart up hides the top buttons until the next swipe down
    (see the zoom handler in setupZoom). */
 @media (max-width: 600px) {
@@ -2720,4 +2703,14 @@ body.notes-header-folded .notes-toolbar-close-btn {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+/* Phone: undo, redo and the zoom control sit together on a row of their own at
+   the bottom of the text edit menu, left aligned. */
+@media (max-width: 600px) {
+    .notes-toolbar-tail {
+        margin-left: 0;
+        flex: 0 0 100%;
+        justify-content: flex-start;
+    }
 }

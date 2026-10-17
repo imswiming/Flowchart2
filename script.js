@@ -494,7 +494,7 @@ const NOTES_ICONS = (() => {
         redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
         drawing: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.3-.9-.5-1.3-.3-.4-.4-.8-.4-1.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7" r="1"/><circle cx="15.5" cy="7.5" r="1"/>'),
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
-        clearDone: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><path d="M4 15l5 5M9 15l-5 5"/><path d="M13 18h8"/>'),
+        clearDone: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
         highlight: svg('<path d="M9 11l7.5-7.5 4 4L13 15z"/><path d="M9 11l-5 5v4h4l5-5"/><path d="M14.5 5.5l4 4"/>'),
         foldAll: svg('<path d="M7 20l5-5 5 5"/><path d="M7 4l5 5 5-5"/>'),
@@ -6038,9 +6038,84 @@ class FlowchartViewer {
         return this.getNotesMediaMap(type, 'global')[id] ? 'global' : null;
     }
 
-    addNotesTab(scope) {
+    // A box asking for a note's name: the keyboard capitalizes each word as it's
+    // typed, and the name is capitalized the same way when it's accepted (so it
+    // comes out right however it was entered). Resolves to the name, or null if
+    // cancelled.
+    capitalizeNoteName(name) {
+        return (name || '').trim().replace(/(^|\s)(\S)/g, (m, space, ch) => space + ch.toUpperCase());
+    }
+
+    showNameDialog(title, initial = '') {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            Object.assign(overlay.style, {
+                position: 'fixed', inset: '0', zIndex: 10000, background: 'rgba(0,0,0,0.5)',
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '14vh',
+            });
+            const box = document.createElement('form');
+            Object.assign(box.style, {
+                background: 'var(--panel-bg, #222833)', color: 'var(--text, #fff)', borderRadius: '8px',
+                padding: '18px', width: 'min(360px, 90vw)', boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+                display: 'flex', flexDirection: 'column', gap: '12px',
+            });
+            const label = document.createElement('div');
+            label.textContent = title;
+            label.style.fontWeight = 'bold';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = initial;
+            input.setAttribute('autocapitalize', 'words');
+            input.setAttribute('autocomplete', 'off');
+            input.setAttribute('enterkeyhint', 'done');
+            input.spellcheck = false;
+            Object.assign(input.style, {
+                font: 'inherit', fontSize: '16px', padding: '8px 10px', borderRadius: '6px',
+                border: '1px solid var(--border, #555)', background: 'var(--control-bg, #333)',
+                color: 'var(--text, #fff)', boxSizing: 'border-box', width: '100%',
+            });
+            // Capitalize as it's typed, wherever the keyboard doesn't already.
+            input.addEventListener('input', () => {
+                const at = input.selectionStart;
+                const fixed = input.value.replace(/(^|\s)(\S)/g, (m, space, ch) => space + ch.toUpperCase());
+                if (fixed !== input.value) {
+                    input.value = fixed;
+                    try { input.setSelectionRange(at, at); } catch (err) { /* not supported */ }
+                }
+            });
+            const row = document.createElement('div');
+            Object.assign(row.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px' });
+            const mk = (text, primary) => {
+                const b = document.createElement('button');
+                b.type = primary ? 'submit' : 'button';
+                b.textContent = text;
+                Object.assign(b.style, {
+                    borderRadius: '5px', padding: '7px 16px', cursor: 'pointer', fontSize: '14px',
+                    border: primary ? 'none' : '1px solid var(--border, #555)',
+                    background: primary ? 'var(--accent, #00a67e)' : 'var(--control-bg, #333)',
+                    color: primary ? '#fff' : 'var(--text, #fff)',
+                });
+                return b;
+            };
+            const cancel = mk('Cancel', false);
+            const ok = mk('OK', true);
+            const finish = (value) => { overlay.remove(); resolve(value); };
+            cancel.addEventListener('click', () => finish(null));
+            box.addEventListener('submit', (e) => { e.preventDefault(); finish(this.capitalizeNoteName(input.value)); });
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
+            input.addEventListener('keydown', (e) => { if (e.key === 'Escape') finish(null); });
+            row.append(cancel, ok);
+            box.append(label, input, row);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            input.focus();
+            input.select();
+        });
+    }
+
+    addNotesTab(scope, name) {
         const list = this.getNotesTabsList(scope);
-        const tab = this.getDefaultNotesTab(`${scope === 'global' ? 'Global' : 'Notes'} ${list.length + 1}`);
+        const tab = this.getDefaultNotesTab((name && name.trim()) || `${scope === 'global' ? 'Global' : 'Notes'} ${list.length + 1}`);
         list.push(tab);
         this._activeNotesScope = scope;
         this.setActiveNotesTabId(scope, tab.id);
@@ -6147,10 +6222,22 @@ class FlowchartViewer {
         let start = null;
         let grab = null;
 
+        let lastEvent = null;
+        const onWindowMove = (e) => { if (e !== lastEvent) tabEl.dispatchEvent(new PointerEvent('pointermove', e)); };
+        const onWindowUp = (e) => finish(e, true);
+        const onWindowCancel = (e) => finish(e, false);
+        const detachWindow = () => {
+            window.removeEventListener('pointermove', onWindowMove);
+            window.removeEventListener('pointerup', onWindowUp);
+            window.removeEventListener('pointercancel', onWindowCancel);
+        };
+
         const finish = (e, commit) => {
             clearTimeout(timer);
+            detachWindow();
             if (!armed) { start = null; return; }
             armed = false;
+            start = null;
             tabEl.classList.remove('dragging');
             tabEl.style.transform = '';
             try { tabEl.releasePointerCapture(e.pointerId); } catch (err) { /* not captured */ }
@@ -6176,11 +6263,15 @@ class FlowchartViewer {
                 grab = { x: start.x - r.left, y: start.y - r.top };
                 tabEl.classList.add('dragging');
                 try { tabEl.setPointerCapture(start.id); } catch (err) { /* synthetic pointer */ }
+                window.addEventListener('pointermove', onWindowMove);
+                window.addEventListener('pointerup', onWindowUp);
+                window.addEventListener('pointercancel', onWindowCancel);
                 if (navigator.vibrate) navigator.vibrate(15);
             }, 250);
         });
 
         tabEl.addEventListener('pointermove', (e) => {
+            lastEvent = e;
             if (!start) return;
             if (!armed) {
                 // Moved before the hold registered: it's a scroll/swipe, not a drag.
@@ -6199,10 +6290,19 @@ class FlowchartViewer {
                 return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
             });
             if (hit) {
-                const mine = Array.from(bar.children).indexOf(tabEl);
-                const theirs = Array.from(bar.children).indexOf(hit);
-                if (mine > theirs) hit.before(tabEl);
-                else hit.after(tabEl);
+                // Re-order by moving the *other* tabs around the dragged one:
+                // taking the dragged tab itself out of the page and putting it
+                // back makes the browser drop its hold on the finger, and the
+                // drag would freeze right after the first swap.
+                const kids = Array.from(bar.children);
+                const mine = kids.indexOf(tabEl);
+                const theirs = kids.indexOf(hit);
+                if (mine > theirs) {
+                    let ref = tabEl;
+                    kids.slice(theirs, mine).forEach((el) => { ref.after(el); ref = el; });
+                } else {
+                    kids.slice(mine + 1, theirs + 1).forEach(el => tabEl.before(el));
+                }
             }
             // Follow the finger/cursor.
             const r = tabEl.getBoundingClientRect();
@@ -7678,8 +7778,8 @@ class FlowchartViewer {
                         },
                         {
                             label: '✎', title: 'Rename',
-                            onClick: () => {
-                                const name = window.prompt('Rename note', tab.name || '');
+                            onClick: async () => {
+                                const name = await this.showNameDialog('Rename note', tab.name || '');
                                 if (name === null) return;
                                 this.renameNotesTab(scope, tab.id, name);
                                 this.renderNotesTabBar();
@@ -7700,16 +7800,20 @@ class FlowchartViewer {
                 footer: [
                     {
                         label: '+ New global note',
-                        onClick: () => {
-                            this.addNotesTab('global');
+                        onClick: async () => {
+                            const name = await this.showNameDialog('Name the new global note');
+                            if (name === null) return;
+                            this.addNotesTab('global', name);
                             if (assigning) pick('global', this.getActiveNotesTabId('global'));
                             close();
                         }
                     },
                     {
                         label: '+ New note (this flowchart)',
-                        onClick: () => {
-                            this.addNotesTab('chart');
+                        onClick: async () => {
+                            const name = await this.showNameDialog('Name the new note');
+                            if (name === null) return;
+                            this.addNotesTab('chart', name);
                             if (assigning) pick('chart', this.getActiveNotesTabId('chart'));
                             close();
                         }
@@ -7801,30 +7905,14 @@ class FlowchartViewer {
         if (!zoom || !show || !header) return;
         const inDoc = document.body.classList.contains('notes-doc-scroll');
         const row = document.querySelector('#notes-panel-header-row .notes-toolbar-row');
-        // An x to the left of Show (only visible while the tab header is
-        // hidden for editing - see the CSS) that closes the Notes panel, since
-        // the header's own close button is hidden along with it.
-        if (!this._notesCloseBtn) {
-            const x = document.createElement('button');
-            x.type = 'button';
-            x.className = 'notes-toolbar-close-btn';
-            x.title = 'Close Notes';
-            x.textContent = '\u2715';
-            x.addEventListener('click', () => {
-                this.unfoldNotesSection();
-                const close = document.getElementById('reflection-panel-close');
-                if (close) close.click();
-            });
-            this._notesCloseBtn = x;
-        }
         if (inDoc && row) {
             const tail = row.querySelector('.notes-toolbar-tail');
             if (tail) tail.appendChild(zoom);
             else row.appendChild(zoom);
+            // While the tab header is hidden for editing, the Show arrow takes the
+            // first spot in the toolbar.
             row.prepend(show);
-            row.prepend(this._notesCloseBtn);
         } else {
-            this._notesCloseBtn.remove();
             const tabs = this.leftPanelTabsContainer;
             if (tabs && tabs.parentNode === header) {
                 tabs.after(show);
