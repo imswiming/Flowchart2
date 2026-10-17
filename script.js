@@ -8238,6 +8238,35 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // Where a picture goes when it's pasted, taken from the camera button, or
+    // drawn from a node's drawing button: an EMPTY node (no text) takes it
+    // whole - the picture fills the node - while a node that has text gets it
+    // as a new picture-only child underneath, so the text isn't lost.
+    // Accepts a node as drawn (d3 node) or its raw data. Returns 'node' or 'child'.
+    addPictureToNode(nodeOrData, dataUrl) {
+        const d = (nodeOrData && nodeOrData.data) ? nodeOrData : { data: nodeOrData };
+        const data = d.data;
+        const hasText = (data.name || '').trim() !== '' && !this.isPlaceholderNodeData(data);
+        if (!hasText) {
+            this.setNodePhotoOnly(d, dataUrl);
+            return 'node';
+        }
+        this.pushUndo();
+        if (!Array.isArray(data.children)) data.children = [];
+        data._collapsed = false;
+        const child = { name: '', color: this.getPlaceholderColor(), _nodePhotoUrl: dataUrl };
+        // Before the trailing empty placeholder (kept at the far end), like a normal new child.
+        const lastPlaceholder = data.children.reduce((last, c, i) => (this.isPlaceholderNodeData(c) ? i : last), -1);
+        if (lastPlaceholder !== -1) data.children.splice(lastPlaceholder, 0, child);
+        else data.children.push(child);
+        this.ensureRightmostPlaceholderNodes(this.rootData);
+        this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+        if (this.resyncMorphRows()) this.renderMorphPanel();
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+        return 'child';
+    }
+
     // Ctrl+V with an image on the clipboard while a node is selected (or its edit
     // popup is open): the node becomes a picture-only node. Text on the clipboard,
     // or a paste into the Notes editor or any other field, is left alone.
@@ -8255,8 +8284,8 @@ class FlowchartViewer {
             const reader = new FileReader();
             reader.onload = async () => {
                 const dataUrl = await this.compressImageDataUrl(reader.result);
-                this.setNodePhotoOnly(node, dataUrl);
-                this.showNotification('Photo added to node.');
+                const where = this.addPictureToNode(node, dataUrl);
+                this.showNotification(where === 'child' ? 'Photo added as a child of the node.' : 'Photo added to node.');
             };
             reader.readAsDataURL(blob);
         });
@@ -8280,8 +8309,8 @@ class FlowchartViewer {
                     reader.readAsDataURL(blob);
                 });
                 const dataUrl = await this.compressImageDataUrl(rawDataUrl);
-                this.setNodePhotoOnly(d, dataUrl);
-                this.showNotification('Photo added to node.');
+                const where = this.addPictureToNode(d, dataUrl);
+                this.showNotification(where === 'child' ? 'Photo added as a child of the node.' : 'Photo added to node.');
                 return;
             }
             this.showNotification('No image found on the clipboard - copy an image first.');
@@ -9604,12 +9633,13 @@ class FlowchartViewer {
             const dataUrl = await this.compressImageDataUrl(this.drawingCanvas.toDataURL('image/png'));
 
             if (state.nodeTarget) {
-                this.pushUndo();
-                state.nodeTarget._nodePhotoUrl = dataUrl;
+                const target = state.nodeTarget;
                 state.nodeTarget = null;
-                this.renderFlowchart(this.rootData);
-                this.autosave();
                 this.drawingOverlay.style.display = 'none';
+                // Empty node: the drawing fills it. A node with text: the drawing
+                // becomes a new child of it (see addPictureToNode).
+                const where = this.addPictureToNode({ data: target }, dataUrl);
+                this.showNotification(where === 'child' ? 'Drawing added as a child of the node.' : 'Drawing added to node.');
                 return;
             }
 
