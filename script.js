@@ -6533,8 +6533,9 @@ class FlowchartViewer {
         row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
-        row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-title-ctrl', () => this.foldAllTitles(true)));
-        row.appendChild(makeBtn('unfoldAll', 'Unfold all titles', 'notes-title-ctrl', () => this.foldAllTitles(false)));
+        // One button: folds every title, or - once they're all folded - unfolds
+        // them; its icon shows which it will do (see updateNotesTitleControls).
+        row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-title-ctrl notes-fold-toggle-btn', () => this.toggleAllTitleFolds()));
 
         row.appendChild(makeBtn('outdent', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
         row.appendChild(makeBtn('indent', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
@@ -7562,6 +7563,24 @@ class FlowchartViewer {
         const { editor } = this.getActiveNotesTarget();
         const title = this.getTitleOfSelection(editor);
         document.querySelectorAll('.notes-title-ctrl').forEach(b => b.classList.toggle('show', !!title));
+        const allFolded = this.areAllTitlesFolded(editor);
+        const label = allFolded ? 'Unfold all titles' : 'Fold all titles';
+        document.querySelectorAll('.notes-fold-toggle-btn').forEach((b) => {
+            b.innerHTML = NOTES_ICONS[allFolded ? 'unfoldAll' : 'foldAll'];
+            b.title = label;
+            b.setAttribute('aria-label', label);
+        });
+    }
+
+    areAllTitlesFolded(editor) {
+        if (!editor) return false;
+        const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+        return titles.length > 0 && titles.every(t => t.getAttribute('folded'));
+    }
+
+    toggleAllTitleFolds() {
+        const { editor } = this.getActiveNotesTarget();
+        this.foldAllTitles(!this.areAllTitlesFolded(editor));
     }
 
     // ---- Generic list popup, used by the mobile note picker and the Titles
