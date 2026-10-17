@@ -494,6 +494,7 @@ const NOTES_ICONS = (() => {
         redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
         drawing: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.3-.9-.5-1.3-.3-.4-.4-.8-.4-1.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7" r="1"/><circle cx="15.5" cy="7.5" r="1"/>'),
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
+        clearDone: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><path d="M4 15l5 5M9 15l-5 5"/><path d="M13 18h8"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
         highlight: svg('<path d="M9 11l7.5-7.5 4 4L13 15z"/><path d="M9 11l-5 5v4h4l5-5"/><path d="M14.5 5.5l4 4"/>'),
         foldAll: svg('<path d="M7 20l5-5 5 5"/><path d="M7 4l5 5 5-5"/>'),
@@ -6397,6 +6398,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
+        row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - make the selected (or current) lines a bold title', '', () => this.toggleNotesTitle()));
         row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
@@ -6743,6 +6745,29 @@ class FlowchartViewer {
                 this.autosave();
             }
         }, 2000);
+    }
+
+    // Deletes every ticked (crossed-out) checklist line in the open note - only
+    // those lines; unticked items, plain text and any items nested under a
+    // removed one are kept. An Undo prompt appears for a few seconds.
+    removeCheckedChecklistLines() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const root = editor.model.document.getRoot();
+        const checked = Array.from(root.getChildren())
+            .filter(b => b.getAttribute('listType') === 'todo' && b.getAttribute('todoListChecked'));
+        if (!checked.length) {
+            this.showNotification('No checked lines to remove in this note.');
+            return;
+        }
+        editor.model.change((writer) => {
+            checked.forEach(b => writer.remove(b));
+            if (root.isEmpty) writer.insertElement('paragraph', root, 0);
+        });
+        const n = checked.length;
+        this.showUndoToast(`Removed ${n} checked line${n === 1 ? '' : 's'}`, () => {
+            editor.execute('undo');
+        });
     }
 
     undoNotesEdit() {
