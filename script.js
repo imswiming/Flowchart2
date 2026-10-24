@@ -11638,15 +11638,27 @@ class FlowchartViewer {
                         return;
                     }
                     event.stopPropagation();
-                    this.centerNodeOnMobile(d, () => {
-                        this.showNodeEditPopup(d);
-                        this.selectNode(d);
-                        this.refreshRadialButtons();
-                    });
+                    // Delayed rather than run immediately: the edit popup it opens is
+                    // centered on the panel, not anchored to the node, so for any node
+                    // that happens to sit near that center it can open right on top of
+                    // the node and swallow the second click of a double-click before
+                    // the browser ever fires 'dblclick' below - silently breaking the
+                    // fold/unfold toggle. Waiting out the double-click window first,
+                    // and bailing if one arrives (cleared in the dblclick handler),
+                    // keeps the popup from ever getting in its own way.
+                    clearTimeout(this._nodeClickTimer);
+                    this._nodeClickTimer = setTimeout(() => {
+                        this.centerNodeOnMobile(d, () => {
+                            this.showNodeEditPopup(d);
+                            this.selectNode(d);
+                            this.refreshRadialButtons();
+                        });
+                    }, 250);
                 }
             })
             .on('dblclick', (event, d) => {
                 event.stopPropagation();
+                clearTimeout(this._nodeClickTimer);
                 if (d && d.data && d.data.children && d.data.children.length > 0) {
                     this.toggleNodeCollapse(d);
                 }
