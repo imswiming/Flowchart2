@@ -565,7 +565,14 @@ class FlowchartViewer {
         this.hamburgerArrangementBtn = document.getElementById('hamburger-arrangement');
         this.foldAllBtn = document.getElementById('fold-all-btn');
         this.hamburgerFoldAllBtn = document.getElementById('hamburger-fold-all');
-        this.arrangement = localStorage.getItem('flowchart-arrangement') === 'indented' ? 'indented' : 'centered';
+        // Indented layout is the default. One time only, a device that had
+        // been left on Centered is moved over to it (it can still be switched
+        // back with the layout button, and that choice is then kept).
+        if (!localStorage.getItem('flowchart-arrangement-indented-default')) {
+            localStorage.setItem('flowchart-arrangement', 'indented');
+            localStorage.setItem('flowchart-arrangement-indented-default', '1');
+        }
+        this.arrangement = localStorage.getItem('flowchart-arrangement') === 'centered' ? 'centered' : 'indented';
         this.undoBtn = document.getElementById('undo-btn');
         this.redoBtn = document.getElementById('redo-btn');
         this.exportBtn = document.getElementById('export-btn');
@@ -860,6 +867,7 @@ class FlowchartViewer {
         this.currentSlotIndex = null;
         this.flowchartList = [];
         this.loadFlowchartList();
+        this.rehydrateAllFromImageDb().catch(err => console.error('Could not read saved pictures:', err));
 
         // Set up event listeners
         if (this.topUndoBtn) this.topUndoBtn.addEventListener('click', () => this.undo());
@@ -919,6 +927,9 @@ class FlowchartViewer {
         const hideHelp = () => { if (this.helpPopup) this.helpPopup.style.display = 'none'; };
         if (this.helpBtn) this.helpBtn.addEventListener('click', showHelp);
         if (this.topHelpBtn) this.topHelpBtn.addEventListener('click', showHelp);
+        // Phone: the top-right ? is replaced by Reset View (Help moved into the menu).
+        const topResetViewBtn = document.getElementById('top-reset-view-btn');
+        if (topResetViewBtn) topResetViewBtn.addEventListener('click', () => this.resetView());
         if (this.closeHelpBtn) this.closeHelpBtn.addEventListener('click', hideHelp);
         if (this.helpPopup) {
             this.helpPopup.addEventListener('click', (e) => {
@@ -1080,6 +1091,11 @@ class FlowchartViewer {
                 this.flowchartList = JSON.parse(saved);
                 // Ensure each entry has a title and data
                 this.flowchartList = this.flowchartList.filter(item => item && item.data);
+                // The saved list holds small picture references (see
+                // saveFlowchartList); put back any picture already known this session.
+                if (this._imageCache) {
+                    this.flowchartList.forEach((it) => { it.data = this.rehydrateImagesInDataString(it.data, this._imageCache); });
+                }
             } catch (e) {
                 this.flowchartList = [];
             }
@@ -1088,9 +1104,134 @@ class FlowchartViewer {
         }
     }
 
-    // Save flowchart list to localStorage
+    // Where the pictures live on this device. localStorage holds only about 5 MB
+    // in total (less on some phones), and a handful of photos and drawings
+    // inside the flowchart list blew through it - "setting the value of
+    // flowchart-list exceeded the quota". So the list saved to localStorage has
+    // each picture swapped for a small "@img:<hash>" reference (the same form
+    // Cloud Sync uses), and the pictures themselves are kept in IndexedDB, which
+    // has room for far more. In memory a flowchart still holds its real pictures.
+    openImageDb() {
+        if (this._imageDbPromise) return this._imageDbPromise;
+        this._imageDbPromise = new Promise((resolve) => {
+            if (!window.indexedDB) { resolve(null); return; }
+            try {
+                const req = indexedDB.open('flowchart-images', 1);
+                req.onupgradeneeded = () => req.result.createObjectStore('images');
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+                req.onblocked = () => resolve(null);
+            } catch (err) {
+                resolve(null);
+            }
+        });
+        return this._imageDbPromise;
+    }
+
+    async imageDbPutMany(map) {
+        const db = await this.openImageDb();
+        if (!db) return false;
+        return new Promise((resolve) => {
+            try {
+                const tx = db.transaction('images', 'readwrite');
+                const store = tx.objectStore('images');
+                Object.keys(map).forEach(hash => store.put(map[hash], hash));
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => resolve(false);
+                tx.onabort = () => resolve(false);
+            } catch (err) {
+                resolve(false);
+            }
+        });
+    }
+
+    async imageDbGetMany(hashes) {
+        const found = {};
+        const db = await this.openImageDb();
+        if (!db || hashes.length === 0) return found;
+        return new Promise((resolve) => {
+            const finish = () => {
+                if (!this._imageCache) this._imageCache = {};
+                Object.assign(this._imageCache, found);
+                resolve(found);
+            };
+            try {
+                const tx = db.transaction('images', 'readonly');
+                const store = tx.objectStore('images');
+                hashes.forEach((hash) => {
+                    const req = store.get(hash);
+                    req.onsuccess = () => { if (typeof req.result === 'string') found[hash] = req.result; };
+                });
+                tx.oncomplete = finish;
+                tx.onerror = finish;
+                tx.onabort = finish;
+            } catch (err) {
+                resolve(found);
+            }
+        });
+    }
+
+    // Fills every flowchart's pictures in from this device's image store - called
+    // once at start-up so the whole list behaves exactly as it did when the
+    // pictures were kept in the list itself (exports, cloud pushes, switching).
+    async rehydrateAllFromImageDb() {
+        const all = new Set();
+        this.flowchartList.forEach(it => this.findImageRefsInDataString(it.data).forEach(h => all.add(h)));
+        if (all.size === 0) return;
+        const found = await this.imageDbGetMany(Array.from(all));
+        this.flowchartList.forEach((it) => { it.data = this.rehydrateImagesInDataString(it.data, found); });
+    }
+
+    handleStorageFull() {
+        if (this._storageFullShown) return;
+        this._storageFullShown = true;
+        this.showNotification('This browser is out of storage space, so recent changes may not be saved on this device. Delete large pictures or old flowcharts to free some up.');
+    }
+
+    // Save flowchart list to localStorage (pictures go to IndexedDB - see above)
     saveFlowchartList() {
-        localStorage.setItem('flowchart-list', JSON.stringify(this.flowchartList));
+        this._saveSeq = (this._saveSeq || 0) + 1;
+        const seq = this._saveSeq;
+        if (!this._imageDbKnown) this._imageDbKnown = new Set();
+        const images = {};
+        const slim = this.flowchartList.map((item) => {
+            const { stripped, imageMap } = this.stripImagesFromDataString(item.data || '');
+            Object.assign(images, imageMap);
+            return Object.assign({}, item, { data: stripped });
+        });
+        if (!this._imageCache) this._imageCache = {};
+        Object.assign(this._imageCache, images);
+        const json = JSON.stringify(slim);
+        const fresh = {};
+        let anyFresh = false;
+        Object.keys(images).forEach((hash) => {
+            if (!this._imageDbKnown.has(hash)) { fresh[hash] = images[hash]; anyFresh = true; }
+        });
+        const commit = () => {
+            try {
+                localStorage.setItem('flowchart-list', json);
+            } catch (err) {
+                console.error('Could not save the flowchart list:', err);
+                this.handleStorageFull(err);
+            }
+        };
+        if (!anyFresh) { commit(); return; }
+        // New pictures are written first, then the list that points at them.
+        this.imageDbPutMany(fresh).then((ok) => {
+            if (seq !== this._saveSeq) return; // a newer save has taken over
+            if (ok) {
+                Object.keys(fresh).forEach(h => this._imageDbKnown.add(h));
+                commit();
+            } else {
+                // No IndexedDB here - keep the pictures in the list itself, as before.
+                try {
+                    localStorage.setItem('flowchart-list', JSON.stringify(this.flowchartList));
+                } catch (err) {
+                    console.error('Could not save the flowchart list:', err);
+                    this.handleStorageFull(err);
+                }
+            }
+        });
     }
 
     getPreferredFlowchartIndex() {
@@ -1205,8 +1346,17 @@ class FlowchartViewer {
     async rehydrateFlowchartImages(index) {
         const item = this.flowchartList[index];
         if (!item || !item.data) return;
-        const hashes = Array.from(this.findImageRefsInDataString(item.data));
+        let hashes = Array.from(this.findImageRefsInDataString(item.data));
         if (hashes.length === 0) return;
+        // This device's own picture store first.
+        const local = await this.imageDbGetMany(hashes);
+        if (Object.keys(local).length) {
+            item.data = this.rehydrateImagesInDataString(item.data, local);
+            hashes = Array.from(this.findImageRefsInDataString(item.data));
+            if (hashes.length === 0) return;
+        }
+        // Anything still missing has to come from the cloud, if connected.
+        if (!(this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId)) return;
         if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
         const prefix = `${this.cloudSyncId}::img::`;
         try {
@@ -2423,8 +2573,11 @@ class FlowchartViewer {
         // fetch those first and then re-run this same load once they're back,
         // rather than rendering broken image references.
         const item0 = this.flowchartList[index];
-        if (item0 && item0.data && this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId &&
-            /"@img:/.test(item0.data)) {
+        if (!this._imagesTried) this._imagesTried = new WeakSet();
+        if (item0 && item0.data && /"@img:/.test(item0.data) && !this._imagesTried.has(item0)) {
+            // Tried once per flowchart: if some picture can't be found anywhere,
+            // load it without that picture rather than retrying forever.
+            this._imagesTried.add(item0);
             this.rehydrateFlowchartImages(index).then(() => this.loadFlowchartFromList(index, opts));
             return;
         }

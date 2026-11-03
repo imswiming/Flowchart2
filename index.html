@@ -336,7 +336,6 @@
       <div class="hamburger-dropdown" id="hamburger-dropdown">
         <button class="menu-item" id="hamburger-undo">↩ Undo</button>
         <button class="menu-item" id="hamburger-redo">↪ Redo</button>
-        <button class="menu-item" id="hamburger-reset-view">⟲ Reset View</button>
         <button class="menu-item" id="hamburger-orientation">↕ Top-Down</button>
         <button class="menu-item" id="hamburger-arrangement">📐 Centered Layout</button>
         <button class="menu-item" id="hamburger-fold-all">⊟ Fold All</button>
@@ -349,6 +348,7 @@
         <button class="menu-item" id="hamburger-cloud-sync">☁ Cloud Sync</button>
         <button class="menu-item" id="hamburger-pugh-matrix">📊 Pugh Matrix</button>
         <button class="menu-item" id="hamburger-notes">📝 Notes</button>
+        <button class="menu-item" id="hamburger-help">? Help</button>
       </div>
 
       <div class="zoom-controls">
@@ -359,6 +359,7 @@
         <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
         <div class="zoom-btn" id="top-pugh-matrix-btn" title="Pugh Matrix">📊</div>
         <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
+        <div class="zoom-btn" id="top-reset-view-btn" title="Reset View">⟲</div>
         <div class="zoom-btn" id="top-help-btn" title="Help">?</div>
       </div>
 
@@ -799,7 +800,6 @@ grant execute on function get_db_size() to anon;</pre>
       const mappings = {
         'hamburger-undo': 'undo-btn',
         'hamburger-redo': 'redo-btn',
-        'hamburger-reset-view': 'reset-view',
         'hamburger-export': 'export-btn',
         'hamburger-import': 'import-btn',
         'hamburger-ai-export': 'ai-export-btn',
@@ -807,7 +807,8 @@ grant execute on function get_db_size() to anon;</pre>
         'hamburger-open': 'open-btn',
         'hamburger-cloud-sync': 'cloud-sync-btn',
         'hamburger-pugh-matrix': 'pugh-matrix-btn',
-        'hamburger-notes': 'notes-btn'
+        'hamburger-notes': 'notes-btn',
+        'hamburger-help': 'help-btn'
       };
 
       // For each hamburger item, find the original button and trigger click

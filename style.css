@@ -2742,3 +2742,19 @@ input[type="range"]::-moz-range-progress {
         top: var(--lp-header-h, 0px);
     }
 }
+
+/* Reset View sits in the top-right icon column on a phone, in place of the ?
+   (Help is in the menu there); everywhere else it's the other way round. */
+#top-reset-view-btn {
+    display: none !important;
+}
+
+@media (max-width: 600px) {
+    #top-reset-view-btn {
+        display: flex !important;
+    }
+
+    #top-help-btn {
+        display: none !important;
+    }
+}
