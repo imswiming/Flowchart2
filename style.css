@@ -2758,3 +2758,219 @@ input[type="range"]::-moz-range-progress {
         display: none !important;
     }
 }
+
+/* ===== Cloud Sync menu - same dark theme as the rest of the site ===== */
+.cs-popup {
+    position: absolute;
+    left: 50%;
+    top: 70px;
+    transform: translateX(-50%);
+    z-index: 3000;
+    box-sizing: border-box;
+    width: min(440px, 94vw);
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding: 18px 20px;
+    background: var(--popup-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    font-size: 14px;
+}
+
+.cs-title {
+    font-size: 17px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.cs-text {
+    line-height: 1.45;
+    margin: 0 0 10px;
+}
+
+.cs-text p {
+    margin: 0 0 10px;
+}
+
+.cs-label {
+    display: block;
+    margin: 8px 0 4px;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.cs-input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 15px;
+    color: var(--text);
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.cs-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.cs-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.cs-row .cs-input {
+    flex: 1 1 180px;
+}
+
+.cs-btn {
+    padding: 8px 14px;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.cs-btn:hover {
+    background: var(--control-hover);
+}
+
+.cs-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: bold;
+}
+
+.cs-primary:hover {
+    background: #00bf92;
+}
+
+.cs-danger {
+    color: #ff8a80;
+    border-color: #6b3a3a;
+}
+
+.cs-small-btn {
+    padding: 3px 9px;
+    font-size: 12px;
+}
+
+.cs-status {
+    min-height: 18px;
+    margin: 4px 0 8px;
+    font-size: 13px;
+}
+
+.cs-note {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    background: rgba(255, 193, 7, 0.12);
+    border: 1px solid rgba(255, 193, 7, 0.35);
+    border-radius: 6px;
+}
+
+.cs-muted {
+    color: var(--muted);
+}
+
+.cs-small {
+    font-size: 11px;
+}
+
+.cs-usage {
+    margin: 6px 0 10px;
+    font-size: 13px;
+}
+
+.cs-usage-head,
+.cs-usage-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.cs-usage-head {
+    margin-bottom: 4px;
+}
+
+.cs-usage-foot {
+    margin-top: 4px;
+}
+
+.cs-bar {
+    height: 12px;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+#cloud-usage-bar {
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    transition: width 0.3s, background 0.3s;
+}
+
+.cs-details {
+    margin: 8px 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
+.cs-details > summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.cs-pre {
+    white-space: pre-wrap;
+    margin: 6px 0;
+    padding: 8px;
+    font-size: 11px;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.cs-popup code {
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    font-size: 12px;
+}
+
+.cs-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+    .cs-popup {
+        top: 56px;
+        max-height: calc(100vh - 70px);
+    }
+}

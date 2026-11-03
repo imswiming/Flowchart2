@@ -643,11 +643,14 @@ class FlowchartViewer {
         this.cloudProjectUrl = (localStorage.getItem('cloud-sync-project-url') || '').replace(/\/+$/, '');
         this.cloudApiKey = localStorage.getItem('cloud-sync-api-key') || '';
         this.cloudSyncId = localStorage.getItem('cloud-sync-id') || '';
+        this._cloudAuth = this.loadCloudAuth();
         this._cloudPushTimer = null;
         this._cloudPollTimer = null;
         this._cloudSyncInFlight = false;
         this._applyingRemote = false;
         this.setupCloudSync();
+        // Coming back from the link in the sign-in email.
+        this.handleAuthRedirect().catch(err => console.error('Sign-in link failed:', err));
 
         this.selectedConnection = null;
         this.connectionMoveStep = 10;
@@ -917,6 +920,24 @@ class FlowchartViewer {
         if (this.cloudSyncSaveBtn) this.cloudSyncSaveBtn.addEventListener('click', () => this.saveCloudSyncSettings());
         if (this.cloudSyncCreateBinBtn) this.cloudSyncCreateBinBtn.addEventListener('click', () => this.createCloudBin());
         if (this.cloudSyncDisconnectBtn) this.cloudSyncDisconnectBtn.addEventListener('click', () => this.disconnectCloudSync());
+        // Email sign-in
+        const cloudEl = id => document.getElementById(id);
+        const onClick = (id, fn) => { const e = cloudEl(id); if (e) e.addEventListener('click', fn); };
+        const onEnter = (id, fn) => {
+            const e = cloudEl(id);
+            if (e) e.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fn(); } });
+        };
+        onClick('cloud-send-code-btn', () => this.sendSignInEmail());
+        onClick('cloud-verify-btn', () => this.verifyEmailCode());
+        onEnter('cloud-email-input', () => this.sendSignInEmail());
+        onEnter('cloud-code-input', () => this.verifyEmailCode());
+        onClick('cloud-sign-out-btn', () => this.signOutCloud());
+        onClick('cloud-sync-now-btn', () => {
+            this.setCloudPopupStatus('Syncing...');
+            this.cloudPull().then(() => this.cloudPush()).then((ok) => {
+                this.setCloudPopupStatus(ok ? 'Synced!' : 'The last sync failed - check your connection.', !ok);
+            });
+        });
 
         // Help popup
         this.helpBtn = document.getElementById('help-btn');
@@ -1364,7 +1385,7 @@ class FlowchartViewer {
             const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=in.(${idsFilter})&select=id,data`, {
                 headers: {
                     'apikey': this.cloudApiKey,
-                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Authorization': `Bearer ${this.cloudBearer()}`,
                     'Accept': 'application/json'
                 }
             });
@@ -1432,7 +1453,7 @@ class FlowchartViewer {
     setCloudPopupStatus(text, isError = false) {
         if (!this.cloudSyncPopupStatus) return;
         this.cloudSyncPopupStatus.textContent = text || '';
-        this.cloudSyncPopupStatus.style.color = isError ? '#a00' : '#0a0';
+        this.cloudSyncPopupStatus.style.color = isError ? '#ff8a80' : '#4cd9a8';
     }
 
     updateCloudSyncStatus(state, message) {
@@ -1451,8 +1472,232 @@ class FlowchartViewer {
         else label.textContent = '☁ Cloud sync on';
     }
 
+    // ===== Email sign-in =====
+    // Instead of pasting a project URL, key and Sync ID onto every device, a
+    // person signs in with their email: Supabase emails a confirmation link (and
+    // a code), and their account id becomes the Sync ID, so every device signed
+    // in with the same email shares one set of flowcharts and notes. The project
+    // URL and public key come from cloud-config.js (or, on a device that already
+    // had them, the saved connection). Requests then carry the person's own
+    // sign-in token, and the server (see supabase-setup.sql) lets each account
+    // see only its own rows.
+    getCloudConfig() {
+        const cfg = window.CLOUD_CONFIG || {};
+        const url = String(cfg.url || localStorage.getItem('cloud-sync-project-url') || '').trim().replace(/\/+$/, '');
+        const key = String(cfg.anonKey || localStorage.getItem('cloud-sync-api-key') || '').trim();
+        return { url, key };
+    }
+
+    loadCloudAuth() {
+        try {
+            const a = JSON.parse(localStorage.getItem('cloud-auth') || 'null');
+            return (a && a.access_token && a.refresh_token && a.user && a.user.id) ? a : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    cloudBearer() {
+        return (this._cloudAuth && this._cloudAuth.access_token) || this.cloudApiKey;
+    }
+
+    async cloudAuthFetch(path, { body, token, query } = {}) {
+        const { url, key } = this.getCloudConfig();
+        if (!url || !key) throw new Error('This site is not connected to a Supabase project yet (see Advanced).');
+        const headers = { 'apikey': key, 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${url}/auth/v1/${path}${query || ''}`, {
+            method: body === undefined && path === 'user' ? 'GET' : 'POST',
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.msg || json.error_description || json.message || `Sign-in error ${res.status}`);
+        return json;
+    }
+
+    cloudAuthStatus(text, isError) {
+        this.setCloudPopupStatus(text, isError);
+    }
+
+    async sendSignInEmail() {
+        const input = document.getElementById('cloud-email-input');
+        const email = ((input && input.value) || '').trim().toLowerCase();
+        if (!email || !email.includes('@')) {
+            this.cloudAuthStatus('Enter your email address first.', true);
+            return;
+        }
+        this.cloudAuthStatus('Sending the email...');
+        try {
+            const back = encodeURIComponent(location.origin + location.pathname);
+            await this.cloudAuthFetch('otp', { body: { email, create_user: true }, query: `?redirect_to=${back}` });
+            localStorage.setItem('cloud-last-email', email);
+            this._pendingSignInEmail = email;
+            const step = document.getElementById('cloud-code-step');
+            if (step) step.style.display = 'block';
+            const code = document.getElementById('cloud-code-input');
+            if (code) code.focus();
+            this.cloudAuthStatus('Email sent - open it on this device and tap the link, or type the code here.');
+        } catch (err) {
+            console.error('Sending the sign-in email failed:', err);
+            this.cloudAuthStatus(err.message, true);
+        }
+    }
+
+    async verifyEmailCode() {
+        const email = this._pendingSignInEmail || localStorage.getItem('cloud-last-email') || '';
+        const input = document.getElementById('cloud-code-input');
+        const token = ((input && input.value) || '').replace(/\s+/g, '');
+        if (!email || !token) {
+            this.cloudAuthStatus('Enter the code from the email.', true);
+            return;
+        }
+        this.cloudAuthStatus('Checking the code...');
+        try {
+            const session = await this.cloudAuthFetch('verify', { body: { type: 'email', email, token } });
+            this.completeSignIn(session);
+        } catch (err) {
+            console.error('Sign-in code failed:', err);
+            this.cloudAuthStatus(err.message, true);
+        }
+    }
+
+    // The link in the email brings the person back to the site with the sign-in in
+    // the address bar's #fragment.
+    async handleAuthRedirect() {
+        const hash = location.hash.replace(/^#/, '');
+        if (!hash.includes('access_token=')) return;
+        const p = new URLSearchParams(hash);
+        const access = p.get('access_token');
+        const refresh = p.get('refresh_token');
+        history.replaceState(null, '', location.pathname + location.search);
+        if (!access || !refresh) return;
+        const user = await this.cloudAuthFetch('user', { token: access });
+        this.completeSignIn({
+            access_token: access,
+            refresh_token: refresh,
+            expires_at: Number(p.get('expires_at')) || (Math.floor(Date.now() / 1000) + (Number(p.get('expires_in')) || 3600)),
+            user
+        });
+        this.showCloudSyncPopup();
+    }
+
+    completeSignIn(session) {
+        const { url, key } = this.getCloudConfig();
+        const auth = {
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            expires_at: session.expires_at || (Math.floor(Date.now() / 1000) + (session.expires_in || 3600)),
+            user: { id: session.user.id, email: session.user.email }
+        };
+        // A different account than this device was last synced with: forget the old
+        // account's sync bookmarks so nothing is mistaken for already-synced.
+        if (this.cloudSyncId && this.cloudSyncId !== auth.user.id) {
+            ['cloud-sync-known-remote-at', 'flowchart-global-notes-known-remote-at', 'flowchart-global-notes-base',
+                'flowchart-global-notes-media-base', 'flowchart-notes-bases', 'cloud-sync-base-list'].forEach(k => localStorage.removeItem(k));
+            this._lastPushedDataJson = null;
+            this._uploadedImageHashes = new Set();
+        }
+        this._cloudAuth = auth;
+        localStorage.setItem('cloud-auth', JSON.stringify(auth));
+        this.cloudProjectUrl = url;
+        this.cloudApiKey = key;
+        this.cloudSyncId = auth.user.id;
+        localStorage.setItem('cloud-sync-project-url', url);
+        localStorage.setItem('cloud-sync-api-key', key);
+        localStorage.setItem('cloud-sync-id', auth.user.id);
+        this.startCloudPolling();
+        this.updateCloudAuthUI();
+        this.cloudAuthStatus('Signed in. Syncing...');
+        this.cloudPull().then(() => this.cloudPush()).then((ok) => {
+            this.cloudAuthStatus(ok ? 'Signed in and synced.' : 'Signed in, but the first sync failed - see the setup notes under Advanced.', !ok);
+        });
+    }
+
+    // Swaps in a fresh sign-in token a little before the old one runs out.
+    async ensureCloudToken() {
+        const a = this._cloudAuth;
+        if (!a) return true;
+        if (a.expires_at - 90 > Date.now() / 1000) return true;
+        if (this._tokenRefreshing) return this._tokenRefreshing;
+        this._tokenRefreshing = (async () => {
+            try {
+                const r = await this.cloudAuthFetch('token', { query: '?grant_type=refresh_token', body: { refresh_token: a.refresh_token } });
+                this._cloudAuth = {
+                    access_token: r.access_token,
+                    refresh_token: r.refresh_token || a.refresh_token,
+                    expires_at: r.expires_at || (Math.floor(Date.now() / 1000) + (r.expires_in || 3600)),
+                    user: a.user
+                };
+                localStorage.setItem('cloud-auth', JSON.stringify(this._cloudAuth));
+                return true;
+            } catch (err) {
+                console.error('Could not renew the sign-in:', err);
+                this.updateCloudSyncStatus('error', 'signed out - sign in again');
+                return false;
+            } finally {
+                this._tokenRefreshing = null;
+            }
+        })();
+        return this._tokenRefreshing;
+    }
+
+    async signOutCloud() {
+        const a = this._cloudAuth;
+        if (a) {
+            try { await this.cloudAuthFetch('logout', { token: a.access_token, body: {} }); } catch (err) { /* token already gone */ }
+        }
+        this._cloudAuth = null;
+        localStorage.removeItem('cloud-auth');
+        const cfg = this.getCloudConfig();
+        this.disconnectCloudSync();
+        if (cfg.url) localStorage.setItem('cloud-sync-project-url', cfg.url);
+        if (cfg.key) localStorage.setItem('cloud-sync-api-key', cfg.key);
+        this.cloudAuthStatus('Signed out.');
+        this.updateCloudAuthUI();
+    }
+
+    updateCloudAuthUI() {
+        const signedIn = !!this._cloudAuth;
+        const out = document.getElementById('cloud-auth-signedout');
+        const inn = document.getElementById('cloud-auth-signedin');
+        if (out) out.style.display = signedIn ? 'none' : 'block';
+        if (inn) inn.style.display = signedIn ? 'block' : 'none';
+        const who = document.getElementById('cloud-signed-in-email');
+        if (who) who.textContent = signedIn ? (this._cloudAuth.user.email || '') : '';
+        const email = document.getElementById('cloud-email-input');
+        if (email && !email.value) email.value = localStorage.getItem('cloud-last-email') || '';
+        const legacy = document.getElementById('cloud-legacy-note');
+        if (legacy) legacy.style.display = (!signedIn && this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId) ? 'block' : 'none';
+    }
+
+    // First sign-in for an account: its row doesn't exist yet, so it's created from
+    // what's already on this device (pictures follow on the next push).
+    async createCloudRowForUser() {
+        const list = this.flowchartList.map(item => ({
+            title: item.title,
+            data: this.stripImagesFromDataString(item.data || '').stripped
+        }));
+        const updatedAt = Date.now();
+        const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}`, {
+            method: 'POST',
+            headers: {
+                'apikey': this.cloudApiKey,
+                'Authorization': `Bearer ${this.cloudBearer()}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=ignore-duplicates,return=minimal'
+            },
+            body: JSON.stringify([{ id: this.cloudSyncId, updated_at: updatedAt, data: { flowchartList: list } }])
+        });
+        if (!res.ok) throw new Error(`Supabase API error ${res.status}: ${await res.text()}`);
+        localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
+        this._lastPushedDataJson = null;
+        this.scheduleCloudPush();
+    }
+
     showCloudSyncPopup() {
         if (!this.cloudSyncPopup) return;
+        this.updateCloudAuthUI();
         this.cloudSyncUrlInput.value = this.cloudProjectUrl || '';
         this.cloudSyncKeyInput.value = this.cloudApiKey || '';
         this.cloudSyncBinInput.value = this.cloudSyncId || '';
@@ -1656,6 +1901,11 @@ class FlowchartViewer {
             this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
             return false;
         }
+        if (!(await this.ensureCloudToken())) return false;
+        if (this._cloudSyncInFlight) {
+            this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
+            return false;
+        }
         this._cloudSyncInFlight = true;
         this.updateCloudSyncStatus('syncing');
         try {
@@ -1697,7 +1947,7 @@ class FlowchartViewer {
                     method: 'POST',
                     headers: {
                         'apikey': this.cloudApiKey,
-                        'Authorization': `Bearer ${this.cloudApiKey}`,
+                        'Authorization': `Bearer ${this.cloudBearer()}`,
                         'Content-Type': 'application/json',
                         'Prefer': 'resolution=merge-duplicates,return=minimal'
                     },
@@ -1738,7 +1988,7 @@ class FlowchartViewer {
                 method: 'PATCH',
                 headers: {
                     'apikey': this.cloudApiKey,
-                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Authorization': `Bearer ${this.cloudBearer()}`,
                     'Content-Type': 'application/json',
                     'Prefer': 'return=representation'
                 },
@@ -1770,6 +2020,8 @@ class FlowchartViewer {
     async cloudPull() {
         if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return false;
         if (this._cloudSyncInFlight) return false;
+        if (!(await this.ensureCloudToken())) return false;
+        if (this._cloudSyncInFlight) return false;
         this._cloudSyncInFlight = true;
         try {
             try {
@@ -1797,14 +2049,19 @@ class FlowchartViewer {
             const headRes = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at`, {
                 headers: {
                     'apikey': this.cloudApiKey,
-                    'Authorization': `Bearer ${this.cloudApiKey}`,
+                    'Authorization': `Bearer ${this.cloudBearer()}`,
                     'Accept': 'application/json'
                 }
             });
             if (!headRes.ok) throw new Error(`Supabase API error ${headRes.status}: ${await headRes.text()}`);
             const headRows = await headRes.json();
             const headRow = headRows && headRows[0];
-            if (!headRow) throw new Error('sync row not found - check the Sync ID');
+            if (!headRow) {
+                if (!this._cloudAuth) throw new Error('sync row not found - check the Sync ID');
+                await this.createCloudRowForUser();
+                this.updateCloudSyncStatus('synced');
+                return true;
+            }
             const remoteUpdatedAt = Number(headRow.updated_at) || 0;
             const knownRemoteAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
 
@@ -1812,7 +2069,7 @@ class FlowchartViewer {
                 const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at,data`, {
                     headers: {
                         'apikey': this.cloudApiKey,
-                        'Authorization': `Bearer ${this.cloudApiKey}`,
+                        'Authorization': `Bearer ${this.cloudBearer()}`,
                         'Accept': 'application/json'
                     }
                 });
@@ -2138,7 +2395,7 @@ class FlowchartViewer {
     cloudHeaders(extra) {
         return Object.assign({
             'apikey': this.cloudApiKey,
-            'Authorization': `Bearer ${this.cloudApiKey}`
+            'Authorization': `Bearer ${this.cloudBearer()}`
         }, extra || {});
     }
 

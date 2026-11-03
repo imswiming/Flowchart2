@@ -30,6 +30,7 @@
        runs. -->
   <link rel="stylesheet" href="vendor/ckeditor5/ckeditor5.css">
   <script src="vendor/ckeditor5/ckeditor5.umd.js" defer></script>
+  <script src="cloud-config.js" defer></script>
   <script src="script.js" defer></script>
   <style>
     /* Hamburger menu styles */
@@ -496,80 +497,89 @@
     </div>
 
     <!-- Cloud Sync popup -->
-    <div id="cloud-sync-popup"
-      style="display:none; position:absolute; left:50%; top:80px; transform:translateX(-50%); background:white; color:#222; border:1px solid #ccc; border-radius:8px; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:16px 24px; z-index:3000; font-size:14px; min-width:320px; max-width:min(420px, 92vw);">
-      <div style="margin-bottom:10px; font-weight:bold;">Cloud Sync (Supabase)</div>
-      <div style="margin-bottom:10px; line-height:1.4;">
-        Free tier, generous limits. Create a project at <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">supabase.com/dashboard</a>,
-        then in the SQL Editor run:
-        <pre style="white-space:pre-wrap; background:#f4f4f4; border:1px solid #ddd; border-radius:4px; padding:8px; margin:6px 0; font-size:12px;">create table flowchart_sync (
-  id text primary key,
-  updated_at bigint,
-  data jsonb
-);
-alter table flowchart_sync enable row level security;
-create policy "allow all" on flowchart_sync
-  for all using (true) with check (true);</pre>
-        Then go to <b>Project Settings &gt; API</b>, copy the <b>Project URL</b> and the <b>anon public</b> key below,
-        and click "Create New Sync" once. Enter the same URL, key, and Sync ID on your other devices to sync between them.
+    <div id="cloud-sync-popup" class="cs-popup" style="display:none;">
+      <div class="cs-title">&#9729; Cloud Sync</div>
+
+      <div id="cloud-auth-signedout">
+        <p class="cs-text">Sign in with your email to keep your flowcharts and notes in sync on all your devices. We email you a confirmation link and a code - no passwords or keys to copy around.</p>
+        <div id="cloud-legacy-note" class="cs-note" style="display:none;">This device is connected the old way (project key + Sync ID). Sign in with email to switch; nothing on this device is lost.</div>
+        <label class="cs-label" for="cloud-email-input">Email</label>
+        <div class="cs-row">
+          <input id="cloud-email-input" class="cs-input" type="email" inputmode="email" autocomplete="email" autocapitalize="off" placeholder="you@example.com">
+          <button id="cloud-send-code-btn" class="cs-btn cs-primary" type="button">Send email</button>
+        </div>
+        <div id="cloud-code-step" style="display:none;">
+          <p class="cs-text">Open the email on this device and tap its link, or type the code from it here.</p>
+          <div class="cs-row">
+            <input id="cloud-code-input" class="cs-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Code from the email">
+            <button id="cloud-verify-btn" class="cs-btn cs-primary" type="button">Sign in</button>
+          </div>
+        </div>
       </div>
-      <label style="display:block; margin-bottom:4px; font-weight:bold;">Project URL</label>
-      <input id="cloud-sync-url-input" type="text" placeholder="https://xxxxxxxx.supabase.co"
-        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
-      <label style="display:block; margin-bottom:4px; font-weight:bold;">Anon/Public API Key</label>
-      <input id="cloud-sync-key-input" type="text" placeholder="eyJhbGciOi..."
-        style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa; margin-bottom:10px;">
-      <label style="display:block; margin-bottom:4px; font-weight:bold;">Sync ID</label>
-      <div style="display:flex; gap:6px; margin-bottom:10px;">
-        <input id="cloud-sync-bin-input" type="text" placeholder="Leave blank, then Create New Sync"
-          style="flex:1; box-sizing:border-box; padding:6px 8px; font-size:14px; border-radius:4px; border:1px solid #aaa;">
-        <button id="cloud-sync-create-bin-btn"
-          style="font-size:13px; padding:6px 10px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer; white-space:nowrap;">Create New Sync</button>
+
+      <div id="cloud-auth-signedin" style="display:none;">
+        <p class="cs-text">Signed in as <b id="cloud-signed-in-email"></b></p>
+        <div class="cs-row">
+          <button id="cloud-sync-now-btn" class="cs-btn cs-primary" type="button">Sync now</button>
+          <button id="cloud-sign-out-btn" class="cs-btn cs-danger" type="button">Sign out</button>
+        </div>
       </div>
-      <div id="cloud-sync-popup-status" style="min-height:18px; margin-bottom:8px; font-size:13px;"></div>
-      <div id="cloud-usage" style="display:none; margin:4px 0 10px; font-size:13px;">
-        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-          <span style="font-weight:bold;">Storage used</span>
-          <span id="cloud-usage-text" style="color:#444;"></span>
+
+      <div id="cloud-sync-popup-status" class="cs-status"></div>
+
+      <div id="cloud-usage" class="cs-usage" style="display:none;">
+        <div class="cs-usage-head">
+          <span class="cs-label" style="margin:0;">Storage used</span>
+          <span id="cloud-usage-text" class="cs-muted"></span>
         </div>
-        <div style="height:12px; background:#e6e6e6; border-radius:6px; overflow:hidden;">
-          <div id="cloud-usage-bar" style="height:100%; width:0; background:#00a67e; border-radius:6px; transition:width .3s, background .3s;"></div>
+        <div class="cs-bar"><div id="cloud-usage-bar"></div></div>
+        <div class="cs-usage-foot">
+          <span id="cloud-usage-note" class="cs-muted cs-small"></span>
+          <button id="cloud-usage-refresh-btn" type="button" class="cs-btn cs-small-btn">Refresh</button>
         </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; gap:8px;">
-          <span id="cloud-usage-note" style="font-size:11px; color:#777;"></span>
-          <button id="cloud-usage-refresh-btn" type="button"
-            style="font-size:12px; padding:2px 8px; border:1px solid #aaa; border-radius:4px; background:#f8f8f8; cursor:pointer; white-space:nowrap;">Refresh</button>
-        </div>
-        <details id="cloud-usage-sql" style="display:none; margin-top:6px; font-size:12px;">
-          <summary style="cursor:pointer; color:#0b5ed7;">Get the exact figure</summary>
-          <div style="margin-top:4px; line-height:1.4;">
+        <details id="cloud-usage-sql" class="cs-details" style="display:none;">
+          <summary>Get the exact figure</summary>
+          <div class="cs-text">
             In Supabase, open the <b>SQL Editor</b>, paste this and click <b>Run</b> (once), then press Refresh:
-            <pre id="cloud-usage-sql-code" style="white-space:pre-wrap; background:#f4f4f4; border:1px solid #ddd; border-radius:4px; padding:6px; margin:4px 0; font-size:11px;">create or replace function get_db_size()
+            <pre id="cloud-usage-sql-code" class="cs-pre">create or replace function get_db_size()
 returns bigint
 language sql
 security definer
 set search_path = ''
 as $$ select pg_database_size(current_database()) $$;
-grant execute on function get_db_size() to anon;</pre>
-            <button id="cloud-usage-copy-btn" type="button"
-              style="font-size:12px; padding:2px 8px; border:1px solid #aaa; border-radius:4px; background:#f8f8f8; cursor:pointer;">Copy SQL</button>
+grant execute on function get_db_size() to authenticated;</pre>
+            <button id="cloud-usage-copy-btn" type="button" class="cs-btn cs-small-btn">Copy SQL</button>
           </div>
         </details>
       </div>
-      <div style="margin-top:10px; padding-top:10px; border-top:1px solid #ddd; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <button id="reload-latest-btn" type="button"
-          style="font-size:13px; padding:6px 12px; border:1px solid #aaa; border-radius:5px; background:#e8f0ff; cursor:pointer;">Reload latest version</button>
-        <span style="font-size:12px; color:#666;">Clears this device's saved copy of the app and loads the newest one. Your notes and flowcharts are kept.</span>
-      </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-        <button id="cloud-sync-disconnect-btn"
-          style="font-size:13px; padding:6px 12px; border:1px solid #ffaaaa; border-radius:5px; background:#ffe0e0; color:#a00; cursor:pointer;">Disconnect</button>
-        <div style="display:flex; gap:8px;">
-          <button id="cloud-sync-save-btn"
-            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#e0ffe0; cursor:pointer;">Save & Sync Now</button>
-          <button id="close-cloud-sync-btn"
-            style="font-size:14px; padding:6px 16px; border:1px solid #aaa; border-radius:5px; background:#f8f8f8; cursor:pointer;">Close</button>
+
+      <details id="cloud-advanced" class="cs-details">
+        <summary>Advanced - project connection and setup</summary>
+        <div class="cs-text">
+          <p>Only needed once per project, or on a device that has never been connected. The Project URL and anon key are in Supabase under <b>Project Settings &gt; API</b> (or fill in <code>cloud-config.js</code> once and skip this).</p>
+          <label class="cs-label">Project URL</label>
+          <input id="cloud-sync-url-input" class="cs-input" type="text" placeholder="https://xxxxxxxx.supabase.co">
+          <label class="cs-label">Anon/Public API Key</label>
+          <input id="cloud-sync-key-input" class="cs-input" type="text" placeholder="eyJhbGciOi...">
+          <label class="cs-label">Sync ID (old method)</label>
+          <div class="cs-row">
+            <input id="cloud-sync-bin-input" class="cs-input" type="text" placeholder="Not needed with email sign-in">
+            <button id="cloud-sync-create-bin-btn" class="cs-btn cs-small-btn" type="button">Create New Sync</button>
+          </div>
+          <div class="cs-row" style="margin-top:8px;">
+            <button id="cloud-sync-save-btn" class="cs-btn cs-primary" type="button">Save &amp; Sync Now</button>
+            <button id="cloud-sync-disconnect-btn" class="cs-btn cs-danger" type="button">Disconnect</button>
+          </div>
+          <p>One-time server setup for email sign-in: open <b>supabase-setup.sql</b> (in the app's folder), paste it into the Supabase <b>SQL Editor</b> and Run it. It also lists the three email settings to switch on.</p>
         </div>
+      </details>
+
+      <div class="cs-footer">
+        <button id="reload-latest-btn" type="button" class="cs-btn">Reload latest version</button>
+        <span class="cs-muted cs-small">Clears this device's saved copy of the app and loads the newest one. Your notes and flowcharts are kept.</span>
+      </div>
+      <div class="cs-row" style="justify-content:flex-end; margin-top:12px;">
+        <button id="close-cloud-sync-btn" class="cs-btn" type="button">Close</button>
       </div>
     </div>
 
