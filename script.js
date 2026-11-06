@@ -312,7 +312,7 @@ const FlowchartMerge = (() => {
         });
     };
 
-    const NODE_KEY_ORDER = ['name', 'color', '_collapsed', '_isPlaceholder', '_nodePhotoUrl', '_reflectionAnswers', '_id'];
+    const NODE_KEY_ORDER = ['name', 'color', '_collapsed', '_isPlaceholder', '_nodePhotoUrl', '_nodePhotoIsDrawing', '_reflectionAnswers', '_id'];
 
     const indexTree = (root) => {
         const map = new Map();
@@ -563,6 +563,8 @@ class FlowchartViewer {
         // the same across every chart and across browser sessions.
         this.arrangementBtn = document.getElementById('arrangement-btn');
         this.hamburgerArrangementBtn = document.getElementById('hamburger-arrangement');
+        this.panelDockBtn = document.getElementById('panel-dock-btn');
+        this.hamburgerPanelDockBtn = document.getElementById('hamburger-panel-dock');
         this.foldAllBtn = document.getElementById('fold-all-btn');
         this.hamburgerFoldAllBtn = document.getElementById('hamburger-fold-all');
         // Indented layout is the default. One time only, a device that had
@@ -714,6 +716,9 @@ class FlowchartViewer {
         this._reflectionQuestions = null;
         this._reflectionPanelActive = false;
         this._reflectionPanelWidth = parseInt(localStorage.getItem('reflection-panel-width'), 10) || 340;
+        // Where the left/bottom panel is docked on desktop: 'left' (default) or 'bottom'.
+        this._panelDock = localStorage.getItem('panel-dock') === 'bottom' ? 'bottom' : 'left';
+        this._panelBottomHeight = parseInt(localStorage.getItem('reflection-panel-height'), 10) || 0;
         this.setupReflectionPanel();
 
         // Pugh Matrix: lives in the same left-hand panel as the reflection questions,
@@ -882,6 +887,16 @@ class FlowchartViewer {
         this.hamburgerOrientationBtn.addEventListener('click', () => this.toggleOrientation());
         if (this.arrangementBtn) {
             this.arrangementBtn.addEventListener('click', () => this.toggleArrangement());
+        }
+        if (this.panelDockBtn) this.panelDockBtn.addEventListener('click', () => this.togglePanelDock());
+        if (this.hamburgerPanelDockBtn) {
+            this.hamburgerPanelDockBtn.addEventListener('click', () => {
+                this.togglePanelDock();
+                const dd = document.getElementById('hamburger-dropdown');
+                const hb = document.getElementById('hamburger-menu');
+                if (dd) dd.classList.remove('open');
+                if (hb) hb.classList.remove('active');
+            });
         }
         if (this.foldAllBtn) this.foldAllBtn.addEventListener('click', () => this.toggleFoldAllNodes());
         if (this.hamburgerFoldAllBtn) {
@@ -3625,6 +3640,32 @@ class FlowchartViewer {
     // so a tall node's extra height pushes its children down by however much its
     // own bottom edge actually grew, not by the much smaller amount its capped
     // top edge did.
+    // Width of a piece of node text at the node font. Every render measures every word
+    // of every node, so this keeps one hidden <svg> text element around (instead of
+    // building and removing one per measurement) and remembers what it has measured.
+    measureNodeTextWidth(text) {
+        if (!this._textWidthCache) this._textWidthCache = new Map();
+        const cached = this._textWidthCache.get(text);
+        if (cached !== undefined) return cached;
+        if (!this._measureTextEl || !this._measureTextEl.isConnected) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('style', 'position:absolute;left:-9999px;top:-9999px;pointer-events:none');
+            svg.setAttribute('aria-hidden', 'true');
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('font-size', '13');
+            t.setAttribute('font-family', 'Arial, sans-serif');
+            svg.appendChild(t);
+            document.body.appendChild(svg);
+            this._measureTextEl = t;
+            this._textWidthCache.clear();
+        }
+        this._measureTextEl.textContent = text;
+        const width = this._measureTextEl.getComputedTextLength();
+        if (this._textWidthCache.size > 20000) this._textWidthCache.clear();
+        this._textWidthCache.set(text, width);
+        return width;
+    }
+
     measureNodeBoxHeights(root) {
         const NODE_WIDTH = this.NODE_WIDTH;
         const LINE_HEIGHT = 18;
@@ -3637,15 +3678,7 @@ class FlowchartViewer {
         const MAX_CENTERED_LINES = 5;
         const WIDTH_STEP = 20;
 
-        const tempSvg = d3.select('body').append('svg')
-            .attr('style', 'position:absolute;left:-9999px;top:-9999px');
-        const tempText = tempSvg.append('text')
-            .attr('font-size', FONT_SIZE)
-            .attr('font-family', FONT_FAMILY);
-        const measureTextWidth = (text) => {
-            tempText.text(text);
-            return tempText.node().getComputedTextLength();
-        };
+        const measureTextWidth = (text) => this.measureNodeTextWidth(text);
 
         const wrapAtWidth = (name, width) => {
             const words = (name || '').split(/(\s+)/);
@@ -3695,7 +3728,6 @@ class FlowchartViewer {
             d._bottomExtent = -cappedHalfHeight + totalBoxHeight;
         });
 
-        tempSvg.remove();
     }
 
     // Overrides the depth-axis position d3 (or the indented layout) assigned each
@@ -4806,6 +4838,28 @@ class FlowchartViewer {
             removeImageBtn.onclick = () => this.removeNodeImage();
 
             imageActionsRow.appendChild(removeImageBtn);
+
+            // Copy this node and everything under it, and paste a copied branch under
+            // another node - including one copied from a different flowchart.
+            imageActionsRow.style.flexWrap = 'wrap';
+            const makeBranchBtn = (label, title, onClick) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = label;
+                b.title = title;
+                b.style.flex = '1 1 auto';
+                b.style.background = 'var(--control-bg)';
+                b.style.color = 'var(--text)';
+                b.style.border = '1px solid var(--border)';
+                b.style.borderRadius = '5px';
+                b.style.padding = '6px 10px';
+                b.style.cursor = 'pointer';
+                b.onmousedown = (e) => e.preventDefault();
+                b.onclick = onClick;
+                return b;
+            };
+            imageActionsRow.appendChild(makeBranchBtn('📋 Copy branch', 'Copy this node and everything under it', () => this.copyNodeBranch()));
+            imageActionsRow.appendChild(makeBranchBtn('📥 Paste branch', 'Paste the copied branch under this node (or into it, if it is empty)', () => this.pasteNodeBranch()));
             this.nodeEditPopup.insertBefore(imageActionsRow, pughAddRow.nextSibling);
 
             // Mobile-only: folds/unfolds every row except colors/move (this
@@ -4994,17 +5048,7 @@ class FlowchartViewer {
         const FONT_SIZE = 13;
         const FONT_FAMILY = 'Arial, sans-serif';
 
-        const measureTextWidth = (text) => {
-            const tempSvg = d3.select('body').append('svg')
-                .attr('style', 'position:absolute;left:-9999px;top:-9999px');
-            const tempText = tempSvg.append('text')
-                .attr('font-size', FONT_SIZE)
-                .attr('font-family', FONT_FAMILY)
-                .text(text);
-            const width = tempText.node().getComputedTextLength();
-            tempSvg.remove();
-            return width;
-        };
+        const measureTextWidth = (text) => this.measureNodeTextWidth(text);
 
         const rawName = selectedData.name || '';
         const wrapAtWidth = (width) => {
@@ -5234,35 +5278,50 @@ class FlowchartViewer {
         if (this.reflectionPanelResizeHandle) {
             let dragging = false;
             let startX = 0;
+            let startY = 0;
             let startWidth = 0;
-            const onMove = (clientX) => {
+            let startHeight = 0;
+            const onMove = (clientX, clientY) => {
                 if (!dragging) return;
-                const delta = clientX - startX;
-                const maxWidth = window.innerWidth * 0.8;
-                const newWidth = Math.max(220, Math.min(startWidth + delta, maxWidth));
-                this._reflectionPanelWidth = newWidth;
-                this.reflectionPanel.style.width = newWidth + 'px';
+                if (this._panelDock === 'bottom') {
+                    // Dragging the top edge up makes the panel taller.
+                    const maxHeight = window.innerHeight * 0.85;
+                    const newHeight = Math.max(140, Math.min(startHeight - (clientY - startY), maxHeight));
+                    this._panelBottomHeight = newHeight;
+                    this.reflectionPanel.style.height = newHeight + 'px';
+                } else {
+                    const delta = clientX - startX;
+                    const maxWidth = window.innerWidth * 0.8;
+                    const newWidth = Math.max(220, Math.min(startWidth + delta, maxWidth));
+                    this._reflectionPanelWidth = newWidth;
+                    this.reflectionPanel.style.width = newWidth + 'px';
+                }
                 this.updateStickyAncestors();
+            };
+            const begin = (clientX, clientY) => {
+                dragging = true;
+                startX = clientX;
+                startY = clientY;
+                const rect = this.reflectionPanel.getBoundingClientRect();
+                startWidth = rect.width;
+                startHeight = rect.height;
             };
             const onEnd = () => {
                 if (!dragging) return;
                 dragging = false;
                 document.body.style.userSelect = '';
-                localStorage.setItem('reflection-panel-width', String(this._reflectionPanelWidth));
+                if (this._panelDock === 'bottom') localStorage.setItem('reflection-panel-height', String(Math.round(this._panelBottomHeight)));
+                else localStorage.setItem('reflection-panel-width', String(this._reflectionPanelWidth));
             };
             this.reflectionPanelResizeHandle.addEventListener('mousedown', (e) => {
-                dragging = true;
-                startX = e.clientX;
-                startWidth = this.reflectionPanel.getBoundingClientRect().width;
+                begin(e.clientX, e.clientY);
                 document.body.style.userSelect = 'none';
                 e.preventDefault();
             });
-            window.addEventListener('mousemove', (e) => onMove(e.clientX));
+            window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
             window.addEventListener('mouseup', onEnd);
             this.reflectionPanelResizeHandle.addEventListener('touchstart', (e) => {
-                dragging = true;
-                startX = e.touches[0].clientX;
-                startWidth = this.reflectionPanel.getBoundingClientRect().width;
+                begin(e.touches[0].clientX, e.touches[0].clientY);
             }, { passive: true });
             window.addEventListener('touchmove', (e) => {
                 if (!dragging) return;
@@ -5270,10 +5329,43 @@ class FlowchartViewer {
                 // as a page scroll/swipe gesture based on the drag's initial direction
                 // (see the equivalent fix on the notes resize handle for the same bug).
                 e.preventDefault();
-                onMove(e.touches[0].clientX);
+                onMove(e.touches[0].clientX, e.touches[0].clientY);
             }, { passive: false });
             window.addEventListener('touchend', onEnd);
         }
+    }
+
+    // ----- Panel docked left or along the bottom (desktop) -----
+    applyPanelDock() {
+        const bottom = this._panelDock === 'bottom';
+        document.body.classList.toggle('panel-bottom', bottom);
+        const panel = this.reflectionPanel;
+        if (!panel) return;
+        if (bottom) {
+            const h = this._panelBottomHeight || Math.round(window.innerHeight * 0.4);
+            panel.style.width = '';
+            panel.style.height = Math.max(140, Math.min(h, Math.round(window.innerHeight * 0.85))) + 'px';
+        } else {
+            panel.style.height = '';
+            panel.style.width = this._reflectionPanelWidth + 'px';
+        }
+        if (this.panelDockBtn) {
+            this.panelDockBtn.title = bottom ? 'Move this panel to the left of the screen' : 'Move this panel to the bottom of the screen';
+            this.panelDockBtn.innerHTML = bottom ? '&#11026;' : '&#11027;';
+        }
+        if (this.hamburgerPanelDockBtn) {
+            this.hamburgerPanelDockBtn.innerHTML = bottom ? '&#11026; Panel to left' : '&#11027; Panel to bottom';
+        }
+    }
+
+    togglePanelDock() {
+        this._panelDock = this._panelDock === 'bottom' ? 'left' : 'bottom';
+        try { localStorage.setItem('panel-dock', this._panelDock); } catch (err) { /* storage blocked */ }
+        // Clear the other side's fixed size before re-applying.
+        this.reflectionPanel.style.width = '';
+        this.reflectionPanel.style.height = '';
+        this.applyMobileViewState();
+        this.applyPanelDock();
     }
 
     // Shows/updates/hides the reflection panel for whichever node was just
@@ -5495,9 +5587,7 @@ class FlowchartViewer {
         if (!isMobile) {
             if (this._notesFolded) this.unfoldNotesSection();
             this.reflectionPanel.style.display = panelActive ? 'flex' : 'none';
-            if (panelActive) {
-                this.reflectionPanel.style.width = this._reflectionPanelWidth + 'px';
-            }
+            this.applyPanelDock();
             this.updateStickyAncestors();
             this.applyPendingFit();
             return;
@@ -6918,7 +7008,14 @@ class FlowchartViewer {
             const b = document.createElement('button');
             b.className = 'notes-toolbar-btn notes-icon-btn' + (className ? ' ' + className : '');
             b.type = 'button';
-            b.innerHTML = NOTES_ICONS[icon];
+            // The four arrow buttons use the original plain arrow characters; the rest
+            // draw an icon.
+            if (NOTES_ICONS[icon]) {
+                b.innerHTML = NOTES_ICONS[icon];
+            } else {
+                b.textContent = icon;
+                b.classList.add('notes-glyph-btn');
+            }
             b.title = title;
             b.setAttribute('aria-label', title);
             b.addEventListener('click', onClick);
@@ -6931,8 +7028,8 @@ class FlowchartViewer {
         // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
         const tail = document.createElement('div');
         tail.className = 'notes-toolbar-tail';
-        tail.appendChild(makeBtn('undo', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
-        tail.appendChild(makeBtn('redo', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
+        tail.appendChild(makeBtn('\u21A9', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
+        tail.appendChild(makeBtn('\u21AA', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
         row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
@@ -6946,8 +7043,8 @@ class FlowchartViewer {
         // them; its icon shows which it will do (see updateNotesTitleControls).
         row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-title-ctrl notes-fold-toggle-btn', () => this.toggleAllTitleFolds()));
 
-        row.appendChild(makeBtn('outdent', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
-        row.appendChild(makeBtn('indent', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
+        row.appendChild(makeBtn('\u21E4', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
+        row.appendChild(makeBtn('\u21E5', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
         row.appendChild(tail);
 
         return row;
@@ -8643,13 +8740,16 @@ class FlowchartViewer {
     // Makes a node a picture-only node: its text is cleared (it ends up looking like
     // the "Empty" colour, with the picture filling the box) and the picture set.
     // Its children are left alone. Used by the camera button and by Ctrl+V.
-    setNodePhotoOnly(d, dataUrl) {
+    setNodePhotoOnly(d, dataUrl, isDrawing = false) {
         const data = d.data;
         this.pushUndo();
         data.name = '';
         data.color = this.getPlaceholderColor();
         delete data._isPlaceholder;
         data._nodePhotoUrl = dataUrl;
+        // A hand-drawn picture can be opened again for editing; a photo can't.
+        if (isDrawing) data._nodePhotoIsDrawing = true;
+        else delete data._nodePhotoIsDrawing;
         // If this node's edit popup is open, its text box must not still show (and
         // later save back) the old text.
         if (this.nodeBeingEdited && this.nodeBeingEdited.data === data && this.nodeEditInput) {
@@ -8668,18 +8768,19 @@ class FlowchartViewer {
     // whole - the picture fills the node - while a node that has text gets it
     // as a new picture-only child underneath, so the text isn't lost.
     // Accepts a node as drawn (d3 node) or its raw data. Returns 'node' or 'child'.
-    addPictureToNode(nodeOrData, dataUrl) {
+    addPictureToNode(nodeOrData, dataUrl, isDrawing = false) {
         const d = (nodeOrData && nodeOrData.data) ? nodeOrData : { data: nodeOrData };
         const data = d.data;
         const hasText = (data.name || '').trim() !== '' && !this.isPlaceholderNodeData(data);
         if (!hasText) {
-            this.setNodePhotoOnly(d, dataUrl);
+            this.setNodePhotoOnly(d, dataUrl, isDrawing);
             return 'node';
         }
         this.pushUndo();
         if (!Array.isArray(data.children)) data.children = [];
         data._collapsed = false;
         const child = { name: '', color: this.getPlaceholderColor(), _nodePhotoUrl: dataUrl };
+        if (isDrawing) child._nodePhotoIsDrawing = true;
         // Before the trailing empty placeholder (kept at the far end), like a normal new child.
         const lastPlaceholder = data.children.reduce((last, c, i) => (this.isPlaceholderNodeData(c) ? i : last), -1);
         if (lastPlaceholder !== -1) data.children.splice(lastPlaceholder, 0, child);
@@ -10030,7 +10131,10 @@ class FlowchartViewer {
         // Which store the drawing being edited lives in (chart or global notes).
         state.editingScope = existingId ? this.notesMediaScopeOf('drawing', existingId) : null;
         const existingDrawing = existingId ? this.findNotesMedia('drawing', existingId) : null;
-        if (existingDrawing) {
+        // A drawing on a node opens for editing too.
+        state.editingNodeDrawing = Boolean(nodeTarget && nodeTarget._nodePhotoIsDrawing && nodeTarget._nodePhotoUrl);
+        const existingSrc = existingDrawing ? existingDrawing.dataUrl : (state.editingNodeDrawing ? nodeTarget._nodePhotoUrl : null);
+        if (existingSrc) {
             const img = new Image();
             img.onload = () => {
                 ctx.fillStyle = '#ffffff';
@@ -10046,7 +10150,7 @@ class FlowchartViewer {
                 const offsetY = (canvas.height - drawH) / 2;
                 ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
             };
-            img.src = existingDrawing.dataUrl;
+            img.src = existingSrc;
         }
     }
 
@@ -10059,11 +10163,23 @@ class FlowchartViewer {
 
             if (state.nodeTarget) {
                 const target = state.nodeTarget;
+                const editingExisting = Boolean(state.editingNodeDrawing);
                 state.nodeTarget = null;
+                state.editingNodeDrawing = false;
                 this.drawingOverlay.style.display = 'none';
+                if (editingExisting) {
+                    // Re-opened drawing: the node's own picture is replaced.
+                    this.pushUndo();
+                    target._nodePhotoUrl = dataUrl;
+                    target._nodePhotoIsDrawing = true;
+                    this.renderFlowchart(this.rootData);
+                    this.autosave();
+                    this.showNotification('Drawing updated.');
+                    return;
+                }
                 // Empty node: the drawing fills it. A node with text: the drawing
                 // becomes a new child of it (see addPictureToNode).
-                const where = this.addPictureToNode({ data: target }, dataUrl);
+                const where = this.addPictureToNode({ data: target }, dataUrl, true);
                 this.showNotification(where === 'child' ? 'Drawing added as a child of the node.' : 'Drawing added to node.');
                 return;
             }
@@ -10145,6 +10261,115 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // ----- Copy / paste a branch of the tree -----
+    // The copied branch is kept in the browser's storage (so it survives switching to
+    // another flowchart, which is the point) and also put on the system clipboard as
+    // text, so it can be pasted on another device that has the same app open.
+    static BRANCH_CLIPBOARD_KEY = 'flowchart-branch-clipboard';
+    static BRANCH_TEXT_MARKER = 'flowchart-branch/v1\n';
+
+    // A copy of node data and its descendants without ids (pasted nodes are new
+    // nodes), without the automatic empty slots at the end of each row.
+    cloneBranch(nodeData) {
+        const copy = (n) => {
+            const out = {};
+            Object.keys(n).forEach((k) => {
+                if (k === 'children' || k === '_id') return;
+                out[k] = JSON.parse(JSON.stringify(n[k]));
+            });
+            const kids = (n.children || []).filter(c => c && typeof c === 'object'
+                && !(this.isPlaceholderNodeData(c) && !c._nodePhotoUrl && !(c.children && c.children.length)));
+            if (kids.length) out.children = kids.map(copy);
+            return out;
+        };
+        return copy(nodeData);
+    }
+
+    countBranch(branch) {
+        return 1 + (branch.children || []).reduce((n, c) => n + this.countBranch(c), 0);
+    }
+
+    async copyNodeBranch() {
+        const d = this.nodeBeingEdited || this.selectedNode;
+        if (!d || !d.data) return;
+        const branch = this.cloneBranch(d.data);
+        const json = JSON.stringify(branch);
+        try {
+            localStorage.setItem(FlowchartViewer.BRANCH_CLIPBOARD_KEY, json);
+        } catch (err) {
+            this.showNotification('Couldn\'t copy: the branch is too big for the browser\'s storage.');
+            return;
+        }
+        // Best effort - the in-browser copy above is what normally gets pasted.
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(FlowchartViewer.BRANCH_TEXT_MARKER + json);
+            }
+        } catch (err) { /* not allowed here */ }
+        const n = this.countBranch(branch);
+        this.showNotification(`Copied ${n} node${n === 1 ? '' : 's'}. Select a node and press Paste branch.`);
+    }
+
+    // Reads a copied branch: this browser's own copy first, otherwise a branch found
+    // on the system clipboard (copied on another device).
+    async readCopiedBranch() {
+        try {
+            const stored = JSON.parse(localStorage.getItem(FlowchartViewer.BRANCH_CLIPBOARD_KEY) || 'null');
+            if (stored && typeof stored === 'object' && !Array.isArray(stored)) return stored;
+        } catch (err) { /* fall through */ }
+        try {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                const text = await navigator.clipboard.readText();
+                if (text && text.startsWith(FlowchartViewer.BRANCH_TEXT_MARKER)) {
+                    const parsed = JSON.parse(text.slice(FlowchartViewer.BRANCH_TEXT_MARKER.length));
+                    if (parsed && typeof parsed === 'object') return parsed;
+                }
+            }
+        } catch (err) { /* not allowed, or not a branch */ }
+        return null;
+    }
+
+    // Pastes the copied branch under the selected node - or, if that node is empty
+    // (no text, picture or children), in its place.
+    async pasteNodeBranch() {
+        const d = this.nodeBeingEdited || this.selectedNode;
+        if (!d || !d.data) return;
+        const branch = await this.readCopiedBranch();
+        if (!branch) {
+            this.showNotification('Nothing copied yet - select a node and press Copy branch first.');
+            return;
+        }
+        const target = d.data;
+        const fresh = JSON.parse(JSON.stringify(branch));
+        const isEmptyTarget = !(target.name || '').trim() && !target._nodePhotoUrl
+            && !(target.children && target.children.filter(c => !this.isPlaceholderNodeData(c)).length);
+        this.pushUndo();
+        if (this.nodeBeingEdited) this.hideNodeEditPopup(false);
+        if (isEmptyTarget && d.parent) {
+            // Fill the empty node with the branch's top node.
+            Object.keys(target).forEach((k) => { if (k !== '_id' && k !== 'children') delete target[k]; });
+            Object.keys(fresh).forEach((k) => { if (k !== 'children') target[k] = fresh[k]; });
+            if (fresh.children) target.children = fresh.children;
+            else delete target.children;
+        } else {
+            if (!Array.isArray(target.children)) target.children = [];
+            target._collapsed = false;
+            // Before the trailing empty slot, like any new child.
+            let slot = -1;
+            target.children.forEach((c, i) => { if (this.isPlaceholderNodeData(c)) slot = i; });
+            if (slot !== -1) target.children.splice(slot, 0, fresh);
+            else target.children.push(fresh);
+        }
+        this.ensureRightmostPlaceholderNodes(this.rootData);
+        this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+        if (this.resyncMorphRows()) this.renderMorphPanel();
+        this.selectedNode = null;
+        this.renderFlowchart(this.rootData);
+        this.autosave();
+        const n = this.countBranch(branch);
+        this.showNotification(`Pasted ${n} node${n === 1 ? '' : 's'}.`);
+    }
+
     // Clears whichever image is attached to the currently-edited node - a pasted
     // photo or a hand-drawn one (see the "Remove Image" button in the node edit
     // popup) - both are just _nodePhotoUrl under the hood, so one action clears either.
@@ -10156,6 +10381,7 @@ class FlowchartViewer {
         }
         this.pushUndo();
         delete this.nodeBeingEdited.data._nodePhotoUrl;
+        delete this.nodeBeingEdited.data._nodePhotoIsDrawing;
         this.renderFlowchart(this.rootData);
         this.autosave();
         this.showNotification('Image removed.');
@@ -10170,7 +10396,9 @@ class FlowchartViewer {
         const state = this._drawingState;
         if (state.nodeTarget) {
             delete state.nodeTarget._nodePhotoUrl;
+            delete state.nodeTarget._nodePhotoIsDrawing;
             state.nodeTarget = null;
+            state.editingNodeDrawing = false;
             this.renderFlowchart(this.rootData);
             this.autosave();
         } else if (state.editingId && this.findNotesMedia('drawing', state.editingId)) {
@@ -11114,12 +11342,13 @@ class FlowchartViewer {
         // two devices' edits to the same flowchart be merged (see FlowchartMerge).
         FlowchartMerge.ensureIds(this.rootData);
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _id } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id } = node;
             const out = { name };
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
             if (_isPlaceholder) out._isPlaceholder = true;
             if (_nodePhotoUrl) out._nodePhotoUrl = _nodePhotoUrl;
+            if (_nodePhotoUrl && _nodePhotoIsDrawing) out._nodePhotoIsDrawing = true;
             if (Array.isArray(_reflectionAnswers) && _reflectionAnswers.some(a => a && a.trim())) {
                 out._reflectionAnswers = _reflectionAnswers;
             }
@@ -11149,13 +11378,66 @@ class FlowchartViewer {
         }, null, 2);
     }
 
+    // Everything that's stored: every flowchart (each already carries its own notes,
+    // drawings, pictures, Pugh and Morph matrices) plus the global notes with their
+    // drawings and pictures. Cloud sync settings are deliberately left out - they're
+    // credentials.
     exportAllAsJSON() {
         this.saveCurrentFlowchart();
-        const exportData = this.flowchartList.map(item => ({
-            title: item.title,
-            data: item.data
-        }));
-        return JSON.stringify(exportData, null, 2);
+        return JSON.stringify({
+            app: 'flowchart-editor',
+            version: 2,
+            exportedAt: new Date().toISOString(),
+            flowcharts: this.flowchartList.map(item => ({ title: item.title, data: item.data })),
+            globalNotes: {
+                tabs: this.globalNotesTabs,
+                activeTabId: this.activeGlobalNotesTabId,
+                media: this.globalNotesMedia
+            },
+            settings: { arrangement: this.arrangement }
+        }, null, 2);
+    }
+
+    // Adds the global notes from an export to this device's: notes that aren't here yet
+    // are added, a note with the same id but different text is kept alongside as a
+    // copy ("(imported)"), and any drawings/pictures that are missing are added.
+    // Nothing already here is overwritten. Returns how many notes were added.
+    importGlobalNotes(payload) {
+        if (!payload || !Array.isArray(payload.tabs)) return 0;
+        const incoming = this.sanitizeNotesTabs(payload.tabs);
+        // A device with only the untouched starter note takes the imported ones instead.
+        if (incoming.length && this.globalNotesTabs.length === 1 && !(this.globalNotesTabs[0].content || '').trim()) {
+            this.globalNotesTabs = [];
+        }
+        let added = 0;
+        incoming.forEach((tab) => {
+            const existing = this.globalNotesTabs.find(t => t.id === tab.id);
+            if (!existing) {
+                this.globalNotesTabs.push(tab);
+                added++;
+            } else if ((existing.content || '') !== (tab.content || '')) {
+                this.globalNotesTabs.push(Object.assign({}, tab, {
+                    id: this.nextNotesId('tab'),
+                    name: `${tab.name || 'Untitled'} (imported)`
+                }));
+                added++;
+            }
+        });
+        const media = payload.media && typeof payload.media === 'object' ? payload.media : {};
+        ['drawings', 'images'].forEach((kind) => {
+            const from = media[kind];
+            if (!from || typeof from !== 'object') return;
+            Object.keys(from).forEach((id) => {
+                if (!this.globalNotesMedia[kind][id] && from[id] && typeof from[id] === 'object') {
+                    this.globalNotesMedia[kind][id] = from[id];
+                }
+            });
+        });
+        if (!this.globalNotesTabs.length) this.globalNotesTabs = [this.getDefaultNotesTab('Global Notes')];
+        if (!this.globalNotesTabs.some(t => t.id === this.activeGlobalNotesTabId)) this.activeGlobalNotesTabId = this.globalNotesTabs[0].id;
+        this.saveGlobalNotesMedia();
+        this.saveGlobalNotesTabs();
+        return added;
     }
 
     exportAsText() {
@@ -11571,9 +11853,14 @@ class FlowchartViewer {
             const importedData = JSON.parse(text);
             
             let flowchartsToImport = [];
+            let globalPayload = null;
             if (Array.isArray(importedData)) {
                 flowchartsToImport = importedData;
-            } else if (importedData.tree) {
+            } else if (importedData && Array.isArray(importedData.flowcharts)) {
+                // The current Export All: flowcharts plus global notes.
+                flowchartsToImport = importedData.flowcharts;
+                globalPayload = importedData.globalNotes || null;
+            } else if (importedData && importedData.tree) {
                 flowchartsToImport = [{
                     title: `Imported Flowchart ${this.flowchartList.length + 1}`,
                     data: text
@@ -11584,7 +11871,7 @@ class FlowchartViewer {
             
             flowchartsToImport = flowchartsToImport.filter(item => item && item.data);
             
-            if (flowchartsToImport.length === 0) {
+            if (flowchartsToImport.length === 0 && !(globalPayload && Array.isArray(globalPayload.tabs) && globalPayload.tabs.length)) {
                 alert("No valid flowcharts found in the import data.");
                 return;
             }
@@ -11632,11 +11919,19 @@ class FlowchartViewer {
             this.saveFlowchartList();
             this.importPopup.style.display = 'none';
             
+            const addedNotes = globalPayload ? this.importGlobalNotes(globalPayload) : 0;
+            const notesNote = addedNotes > 0 ? ` and ${addedNotes} global note${addedNotes === 1 ? '' : 's'}` : '';
+
             if (addedCount > 0) {
                 const newIndex = this.flowchartList.length - addedCount;
                 this.loadFlowchartFromList(newIndex);
                 this.autosave();
-                this.showNotification(`Imported ${addedCount} flowchart(s)!`);
+                this.showNotification(`Imported ${addedCount} flowchart(s)${notesNote}!`);
+            } else if (addedNotes > 0) {
+                this.refreshEmbeddedEditors();
+                this.renderNotesTabBar();
+                this.autosave();
+                this.showNotification(`Imported ${addedNotes} global note${addedNotes === 1 ? '' : 's'}!`);
             } else {
                 this.showNotification('No valid flowcharts were imported.');
             }
@@ -12048,28 +12343,20 @@ class FlowchartViewer {
                         return;
                     }
                     event.stopPropagation();
-                    // Delayed rather than run immediately: the edit popup it opens is
-                    // centered on the panel, not anchored to the node, so for any node
-                    // that happens to sit near that center it can open right on top of
-                    // the node and swallow the second click of a double-click before
-                    // the browser ever fires 'dblclick' below - silently breaking the
-                    // fold/unfold toggle. Waiting out the double-click window first,
-                    // and bailing if one arrives (cleared in the dblclick handler),
-                    // keeps the popup from ever getting in its own way.
-                    clearTimeout(this._nodeClickTimer);
-                    this._nodeClickTimer = setTimeout(() => {
-                        this.centerNodeOnMobile(d, () => {
-                            this.showNodeEditPopup(d);
-                            this.selectNode(d);
-                            this.refreshRadialButtons();
-                        });
-                    }, 250);
+                    // Opens straight away - no waiting to see whether a second click is
+                    // coming. (A double-click still folds/unfolds: see 'dblclick' below,
+                    // which closes the popup this opened.)
+                    this.centerNodeOnMobile(d, () => {
+                        this.showNodeEditPopup(d);
+                        this.selectNode(d);
+                        this.refreshRadialButtons();
+                    });
                 }
             })
             .on('dblclick', (event, d) => {
                 event.stopPropagation();
-                clearTimeout(this._nodeClickTimer);
                 if (d && d.data && d.data.children && d.data.children.length > 0) {
+                    if (this.nodeBeingEdited) this.hideNodeEditPopup(true);
                     this.toggleNodeCollapse(d);
                 }
             })
@@ -12094,16 +12381,7 @@ class FlowchartViewer {
         const FONT_SIZE = 13;
         const FONT_FAMILY = 'Arial, sans-serif';
 
-        function measureTextWidth(text) {
-            const svg = d3.select('body').append('svg').attr('style', 'position:absolute;left:-9999px;top:-9999px');
-            const tempText = svg.append('text')
-                .attr('font-size', FONT_SIZE)
-                .attr('font-family', FONT_FAMILY)
-                .text(text);
-            const width = tempText.node().getComputedTextLength();
-            svg.remove();
-            return width;
-        }
+        const measureTextWidth = (text) => this.measureNodeTextWidth(text);
 
         const MAX_CENTERED_LINES = 5;
         const WIDTH_STEP = 20;
@@ -12259,11 +12537,12 @@ class FlowchartViewer {
             // shared clip path set up alongside the SVG itself).
             .attr('clip-path', d => isPhotoFillNode(d) ? 'url(#node-photo-fill-clip)' : null)
             .attr('preserveAspectRatio', 'xMidYMid slice')
-            .style('cursor', d => isPhotoFillNode(d) ? null : 'zoom-in')
+            .style('cursor', d => isPhotoFillNode(d) ? null : (d.data._nodePhotoIsDrawing ? 'pointer' : 'zoom-in'))
             .on('click', (event, d) => {
                 if (isPhotoFillNode(d)) return; // bubbles up to the node's own click
                 event.stopPropagation();
-                this.openNotesImageLightbox(d.data._nodePhotoUrl);
+                if (d.data._nodePhotoIsDrawing) this.openDrawingOverlay(null, d.data);
+                else this.openNotesImageLightbox(d.data._nodePhotoUrl);
             })
             .on('mousedown', (event, d) => {
                 if (!isPhotoFillNode(d)) event.stopPropagation();
@@ -12273,10 +12552,13 @@ class FlowchartViewer {
             .append('g')
             .attr('class', 'node-photo-zoom')
             .attr('transform', d => `translate(${NODE_WIDTH / 2 - 17},${boxTop(d) + 17})`)
-            .style('cursor', 'zoom-in')
+            .style('cursor', d => (d.data._nodePhotoIsDrawing ? 'pointer' : 'zoom-in'))
+            .attr('data-drawing', d => (d.data._nodePhotoIsDrawing ? '1' : null))
             .on('click', (event, d) => {
                 event.stopPropagation();
-                this.openNotesImageLightbox(d.data._nodePhotoUrl);
+                // A drawing opens in the drawing editor, a photo in the viewer.
+                if (d.data._nodePhotoIsDrawing) this.openDrawingOverlay(null, d.data);
+                else this.openNotesImageLightbox(d.data._nodePhotoUrl);
             })
             .on('mousedown', (event) => event.stopPropagation());
         // Just the glyph, no backing disc; the transparent circle is only there
@@ -12291,7 +12573,7 @@ class FlowchartViewer {
             .attr('font-weight', 'normal')
             .style('pointer-events', 'none')
             .style('filter', 'drop-shadow(0 0 2px rgba(0,0,0,0.9))')
-            .text('\u{1F50D}');
+            .text(d => (d.data._nodePhotoIsDrawing ? '\u270F\uFE0F' : '\u{1F50D}'));
 
         const collapseArrowOrientation = this.orientation;
         node.each(function(d) {
