@@ -7035,7 +7035,7 @@ class FlowchartViewer {
 
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
-        row.appendChild(makeBtn('title', 'Title - make the selected (or current) lines a bold title', '', () => this.toggleNotesTitle()));
+        row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
         row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
@@ -7265,6 +7265,7 @@ class FlowchartViewer {
                 options: [
                     { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
                     { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
+                    { model: 'heading5', view: 'h5', title: 'Subheading', class: 'ck-heading_heading5' },
                 ],
             },
             // Just the one yellow marker - the Highlight button toggles this
@@ -7431,6 +7432,8 @@ class FlowchartViewer {
     // Toggles the current line between a plain paragraph and a bold,
     // slightly-larger "Title" line (heading4 - see the heading.options
     // config in renderNotesPanel, and its size/weight in style.css).
+    // The Title button steps a line through: normal text -> Title -> Subheading ->
+    // normal text again, one click each.
     toggleNotesTitle() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
@@ -7440,23 +7443,30 @@ class FlowchartViewer {
         // state flipping every other line the wrong way.
         const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
         const isTitle = blocks.length > 0 && blocks.every(b => b.is('element', 'heading4'));
-        if (!isTitle) {
-            // A title is always a top-level block (folding, the Titles list and
-            // fold-all all only look at the editor's direct children) - turning a
-            // bullet/checklist line into one left a heading nested inside the list
-            // item, which none of that could see or fold. Take such lines out of
-            // their list first so they become real top-level titles.
-            const listBlocks = blocks.filter(b => b.hasAttribute('listItemId'));
-            if (listBlocks.length) {
-                editor.model.change(writer => {
-                    listBlocks.forEach(b => {
-                        ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent']
-                            .forEach(attr => { if (b.hasAttribute(attr)) writer.removeAttribute(attr, b); });
-                    });
-                });
-            }
+        const isSubheading = blocks.length > 0 && blocks.every(b => b.is('element', 'heading5'));
+        if (isTitle || isSubheading) {
+            // Second click: a Title becomes a Subheading; third click: a Subheading
+            // goes back to normal text.
+            if (isTitle) editor.execute('heading', { value: 'heading5' });
+            else editor.execute('paragraph');
+            editor.editing.view.focus();
+            return;
         }
-        editor.execute(isTitle ? 'paragraph' : 'heading', isTitle ? undefined : { value: 'heading4' });
+        // A title is always a top-level block (folding, the Titles list and
+        // fold-all all only look at the editor's direct children) - turning a
+        // bullet/checklist line into one left a heading nested inside the list
+        // item, which none of that could see or fold. Take such lines out of
+        // their list first so they become real top-level titles.
+        const listBlocks = blocks.filter(b => b.hasAttribute('listItemId'));
+        if (listBlocks.length) {
+            editor.model.change(writer => {
+                listBlocks.forEach(b => {
+                    ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent']
+                        .forEach(attr => { if (b.hasAttribute(attr)) writer.removeAttribute(attr, b); });
+                });
+            });
+        }
+        editor.execute('heading', { value: 'heading4' });
         editor.editing.view.focus();
     }
 
@@ -9375,6 +9385,7 @@ class FlowchartViewer {
                 options: [
                     { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
                     { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
+                    { model: 'heading5', view: 'h5', title: 'Subheading', class: 'ck-heading_heading5' },
                 ],
             },
             highlight: {
