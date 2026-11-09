@@ -3463,6 +3463,11 @@ class FlowchartViewer {
     // so without this a sticky node would end up rendered underneath it.
     getStickyLeftBound() {
         const margin = 20;
+        // Docked along the bottom, the panel is no obstruction on the left (it spans the
+        // whole width underneath the chart), so nodes dock against the plain margin.
+        const bottomDocked = document.body.classList.contains('panel-bottom')
+            && !window.matchMedia('(max-width: 600px)').matches;
+        if (bottomDocked) return margin;
         if (this.reflectionPanel && this.flowchartPanel) {
             const panelStyle = window.getComputedStyle(this.reflectionPanel);
             if (panelStyle.display !== 'none') {
@@ -5366,6 +5371,8 @@ class FlowchartViewer {
         this.reflectionPanel.style.height = '';
         this.applyMobileViewState();
         this.applyPanelDock();
+        this.updateStickyAncestors();
+        requestAnimationFrame(() => this.updateStickyAncestors());
     }
 
     // Shows/updates/hides the reflection panel for whichever node was just
