@@ -8244,7 +8244,7 @@ class FlowchartViewer {
                     list.appendChild(gh);
                 }
                 const row = document.createElement('div');
-                row.className = 'notes-list-item' + (item.active ? ' active' : '');
+                row.className = 'notes-list-item' + (item.active ? ' active' : '') + (item.indent ? ' notes-list-indent' : '');
                 if (item.dragKey && !q) {
                     row.dataset.dragKey = item.dragKey;
                     const grab = document.createElement('button');
@@ -8428,12 +8428,14 @@ class FlowchartViewer {
         });
     }
 
-    // Jump list of every Title in the open note.
+    // Jump list of every Title and Subheading in the open note.
     openNotesTitleList() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
         this.dismissNotesKeyboard();
-        const titles = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+        // Titles and subheadings, in the order they appear in the note.
+        const titles = Array.from(editor.model.document.getRoot().getChildren())
+            .filter(c => c.is('element', 'heading4') || c.is('element', 'heading5'));
         this.showNotesListPopup(({ close }) => ({
             title: 'Titles',
             searchable: true,
@@ -8442,9 +8444,11 @@ class FlowchartViewer {
             items: titles.map((t) => {
                 let text = '';
                 for (const item of t.getChildren()) if (item.is('$text')) text += item.data;
+                const isSub = t.is('element', 'heading5');
                 return {
-                    label: text.trim() || '(untitled)',
-                    sub: t.getAttribute('folded') ? 'Folded' : '',
+                    label: text.trim() || (isSub ? '(untitled subheading)' : '(untitled)'),
+                    sub: isSub ? 'Subheading' : (t.getAttribute('folded') ? 'Folded' : ''),
+                    indent: isSub,
                     onClick: () => { close(); this.jumpToNotesTitle(editor, t); }
                 };
             }),

@@ -406,15 +406,18 @@ body {
     font-weight: bold;
 }
 
-/* Subheading: a smaller bold line below a Title - no fold arrow of its own. */
+/* Subheading: a smaller bold line below a Title, centred across the same column
+   the normal text uses (52 normal characters wide: 13px text). No fold arrow of
+   its own. */
 #notes-editor-wrap .ck.ck-content h5, .notes-editor-wrap-el .ck.ck-content h5 {
     font-size: 21px !important;
     font-weight: bold !important;
+    text-align: center !important;
     margin-bottom: 0;
-    margin-left: 14px !important;
+    margin-left: 0 !important;
     white-space: normal !important;
     overflow-wrap: break-word !important;
-    width: calc(52 * var(--note-title-char-em, 0.52) * 1em) !important;
+    width: calc(52 * var(--note-char-em, 0.47) * 13px) !important;
     flex-shrink: 0;
 }
 
@@ -2495,6 +2498,11 @@ input[type="range"]::-moz-range-progress {
 .notes-list-main small {
     color: var(--muted);
     font-size: 11px;
+}
+
+/* Subheadings in the Titles list sit slightly in from the titles. */
+.notes-list-item.notes-list-indent .notes-list-main {
+    padding-left: 26px;
 }
 
 .notes-list-grab {
