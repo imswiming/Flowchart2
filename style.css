@@ -3151,3 +3151,9 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
     background: var(--accent, #00a67e);
     color: #fff;
 }
+
+/* With the History button on, default text (no colour of its own) is yellow. */
+.ck.ck-content .note-default-text {
+    background-color: #ffee00;
+    color: #1b1b1b;
+}

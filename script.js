@@ -7529,6 +7529,47 @@ class FlowchartViewer {
                 };
                 editor.model.document.on('change:data', refreshTimes, { priority: 'low' });
                 editor.once('ready', refreshTimes);
+
+                // With the History button on, all the default text (text with no colour
+                // highlight of its own) is shown in yellow. Done with on-screen-only
+                // markers, so nothing about it is saved in the note.
+                editor.conversion.for('editingDowncast').markerToHighlight({
+                    model: 'noteDefault',
+                    view: { classes: 'note-default-text', priority: 0 },
+                });
+                const refreshDefault = () => {
+                    if (editor.state === 'destroyed') return;
+                    const model = editor.model;
+                    const root = model.document.getRoot();
+                    if (!root) return;
+                    const on = app.notesHistoryShown();
+                    const stale = Array.from(model.markers).filter(m => m.name.startsWith('noteDefault:'));
+                    if (!on && !stale.length) return;
+                    model.change((writer) => {
+                        stale.forEach(m => writer.removeMarker(m));
+                        if (!on) return;
+                        let n = 0;
+                        let run = null;
+                        const flush = () => {
+                            if (run) writer.addMarker('noteDefault:' + (n++), { range: run, usingOperation: false, affectsData: false });
+                            run = null;
+                        };
+                        for (const item of writer.createRangeIn(root).getItems()) {
+                            if (!item.is('$textProxy') || item.hasAttribute('highlight') || !/\S/.test(item.data)) { flush(); continue; }
+                            const r = model.createRangeOn(item);
+                            if (run && run.end.isEqual(r.start)) run = writer.createRange(run.start, r.end);
+                            else { flush(); run = r; }
+                        }
+                        flush();
+                    });
+                };
+                let defaultTimer = null;
+                editor.model.document.on('change:data', () => {
+                    clearTimeout(defaultTimer);
+                    defaultTimer = setTimeout(refreshDefault, 150);
+                }, { priority: 'low' });
+                editor.once('ready', refreshDefault);
+                editor._noteRefreshDefault = refreshDefault;
             }
         }
         this._NoteStampPlugin = NoteStampPlugin;
@@ -7545,6 +7586,17 @@ class FlowchartViewer {
         const shown = this.notesHistoryShown();
         document.body.classList.toggle('notes-history-off', !shown);
         root.querySelectorAll('.notes-history-toggle').forEach(b => b.classList.toggle('active', shown));
+        this.getAllNotesEditors().forEach(ed => { if (ed._noteRefreshDefault) ed._noteRefreshDefault(); });
+    }
+
+    // Every Notes editor that exists right now: the pooled embedded ones and any
+    // full-screen panes.
+    getAllNotesEditors() {
+        const out = [];
+        if (this._embeddedEditors) this._embeddedEditors.forEach((e) => { if (e.editor && !e.dead) out.push(e.editor); });
+        if (this._notesPaneEditors) this._notesPaneEditors.forEach((ed) => { if (ed && !out.includes(ed)) out.push(ed); });
+        if (this.notesEditor && !out.includes(this.notesEditor)) out.push(this.notesEditor);
+        return out;
     }
 
     setNotesHistoryShown(shown, announce) {
