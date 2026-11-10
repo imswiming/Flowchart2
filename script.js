@@ -7557,6 +7557,8 @@ class FlowchartViewer {
                         };
                         for (const item of writer.createRangeIn(root).getItems()) {
                             if (!item.is('$textProxy') || item.hasAttribute('noteStamp') || !/\S/.test(item.data)) { flush(); continue; }
+                            // titles and subheadings are left alone
+                            if (item.parent.is('element', 'heading4') || item.parent.is('element', 'heading5')) { flush(); continue; }
                             const r = model.createRangeOn(item);
                             if (run && run.end.isEqual(r.start)) run = writer.createRange(run.start, r.end);
                             else { flush(); run = r; }
