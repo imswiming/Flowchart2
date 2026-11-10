@@ -7099,7 +7099,8 @@ class FlowchartViewer {
         };
 
         row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
-        row.appendChild(makeBtn('history', 'Highlight history - the date and time of every highlight in this note', '', () => this.openNotesHistory()));
+        row.appendChild(makeBtn('history', 'Show or hide the highlights and the dates and times they were made', 'notes-history-toggle', () => this.toggleNotesHistoryView()));
+        this.applyNotesHistoryView(row);
         // Pushed to the bottom right of the toolbar (see the CSS): undo and redo
         // (mobile only - desktop has Ctrl+Z / Ctrl+Y), and on a phone the
         // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
@@ -7485,28 +7486,72 @@ class FlowchartViewer {
                     view: { name: 'span', attributes: { 'data-note-stamp': /.+/ } },
                     model: { key: 'noteStamp', value: (el) => el.getAttribute('data-note-stamp') },
                 });
-                // The saved HTML only carries the id...
-                editor.conversion.for('dataDowncast').attributeToElement({
+                editor.conversion.for('downcast').attributeToElement({
                     model: 'noteStamp',
                     view: (value, { writer }) => writer.createAttributeElement('span', { 'data-note-stamp': value }, { priority: 3 }),
                 });
-                // ...while in the editor the date and time of the highlight is shown right
-                // after the text (drawn by CSS from data-note-time, so it isn't note content).
-                editor.conversion.for('editingDowncast').attributeToElement({
-                    model: 'noteStamp',
-                    view: (value, { writer }) => {
-                        const attrs = { 'data-note-stamp': value };
-                        const ref = editor.config.get('noteTab');
-                        const tab = ref && app.getNotesTab(ref.scope, ref.tabId);
-                        const entry = tab && Array.isArray(tab.log) && tab.log.find(x => x.id === value);
-                        if (entry) attrs['data-note-time'] = app.formatNoteStampShort(entry);
-                        return writer.createAttributeElement('span', attrs, { priority: 3 });
-                    },
-                });
+
+                // In the editor, the date and time of the highlights in a paragraph are shown
+                // in small print on a line under it (drawn by CSS from data-note-times on the
+                // paragraph's on-screen element, so it is never part of the note's text and
+                // never sits inside a line of words).
+                const refreshTimes = () => {
+                    const root = editor.model.document.getRoot();
+                    const ref = editor.config.get('noteTab');
+                    const tab = ref && app.getNotesTab(ref.scope, ref.tabId);
+                    if (!root || !tab) return;
+                    const byId = new Map((Array.isArray(tab.log) ? tab.log : []).map(x => [x.id, x]));
+                    editor.editing.view.change((writer) => {
+                        for (const block of root.getChildren()) {
+                            const ids = [];
+                            for (const child of block.getChildren()) {
+                                const id = child.is('$text') ? child.getAttribute('noteStamp') : null;
+                                if (id && !ids.includes(id)) ids.push(id);
+                            }
+                            const times = ids.map(id => byId.get(id)).filter(Boolean).map(en => app.formatNoteStampShort(en));
+                            let label = times.slice(0, 3).join(' · ');
+                            if (times.length > 3) label += ` · +${times.length - 3} more`;
+                            const viewEl = editor.editing.mapper.toViewElement(block);
+                            if (!viewEl) continue;
+                            const current = viewEl.getAttribute('data-note-times');
+                            if (label && current !== label) writer.setAttribute('data-note-times', label, viewEl);
+                            else if (!label && current !== undefined) writer.removeAttribute('data-note-times', viewEl);
+                        }
+                    });
+                };
+                editor.model.document.on('change:data', refreshTimes, { priority: 'low' });
+                editor.once('ready', refreshTimes);
             }
         }
         this._NoteStampPlugin = NoteStampPlugin;
         return NoteStampPlugin;
+    }
+
+    // The History button shows or hides every highlight colour and the dates and times
+    // under them (the text itself is untouched either way). Remembered on this device.
+    notesHistoryShown() {
+        try { return localStorage.getItem('notes-history-shown') !== '0'; } catch (err) { return true; }
+    }
+
+    applyNotesHistoryView(root = document) {
+        const shown = this.notesHistoryShown();
+        document.body.classList.toggle('notes-history-off', !shown);
+        root.querySelectorAll('.notes-history-toggle').forEach(b => b.classList.toggle('active', shown));
+    }
+
+    setNotesHistoryShown(shown, announce) {
+        try { localStorage.setItem('notes-history-shown', shown ? '1' : '0'); } catch (err) { /* not remembered */ }
+        this.applyNotesHistoryView();
+        if (!announce) return;
+        if (!shown) { this.showNotification('Highlights and dates hidden'); return; }
+        const { scope, tabId } = this.getActiveNotesTarget();
+        const tab = this.getNotesTab(scope, tabId);
+        const last = tab && Array.isArray(tab.log) ? tab.log.filter(x => x.k === 'h').pop() : null;
+        this.showNotification(last ? 'Highlights shown - last highlighted ' + this.formatNoteStamp(last) : 'Highlights shown - nothing highlighted in this note yet');
+    }
+
+    toggleNotesHistoryView() {
+        this.setNotesHistoryShown(!this.notesHistoryShown(), true);
     }
 
     // The toolbar's Highlight button opens (or closes) a bar of colours; tapping one
@@ -7532,6 +7577,12 @@ class FlowchartViewer {
             b.addEventListener('click', () => this.applyNotesHighlight(c.model));
             bar.appendChild(b);
         });
+        const list = document.createElement('button');
+        list.type = 'button';
+        list.textContent = 'History';
+        list.title = 'List every highlight in this note with its date and time';
+        list.addEventListener('click', () => this.openNotesHistory());
+        bar.appendChild(list);
         const clear = document.createElement('button');
         clear.type = 'button';
         clear.textContent = 'Clear';
@@ -7584,6 +7635,8 @@ class FlowchartViewer {
         this._pendingNotesSave = false;
         this.autosave();
         editor.editing.view.focus();
+        // A new highlight would be invisible while the highlights are hidden.
+        if (entry && !this.notesHistoryShown()) this.setNotesHistoryShown(true, false);
         if (entry) this.showNotification('Highlighted - ' + this.formatNoteStamp(entry));
     }
 

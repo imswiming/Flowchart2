@@ -3123,20 +3123,31 @@ input[type="range"]::-moz-range-progress {
     border: 2px solid rgba(255, 255, 255, 0.6);
 }
 
-/* The date and time a highlight was made, shown right after the highlighted text. It is
-   drawn from data-note-time, so it is not part of the note's text. */
-.ck.ck-content span[data-note-time]::after {
-    content: attr(data-note-time);
-    margin-left: 5px;
-    padding: 0 5px;
+/* The date and time of the highlights in a paragraph, in small print on a line under it.
+   Drawn from data-note-times, so it is not part of the note's text. */
+.ck.ck-content [data-note-times]::after {
+    content: attr(data-note-times);
+    display: block;
+    margin-top: 1px;
     font-size: 10px;
     font-weight: normal;
     font-style: normal;
-    line-height: 1.5;
-    white-space: nowrap;
+    line-height: 1.4;
     color: var(--muted);
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    vertical-align: middle;
     user-select: none;
+}
+
+/* History button: off hides the highlight colours and the dates/times under them. */
+body.notes-history-off #notes-editor-wrap .ck.ck-content mark[class^="marker-"] , body.notes-history-off .notes-editor-wrap-el .ck.ck-content mark[class^="marker-"] {
+    background-color: transparent !important;
+    color: inherit !important;
+}
+
+body.notes-history-off .ck.ck-content [data-note-times]::after {
+    display: none;
+}
+
+.notes-toolbar-btn.notes-history-toggle.active {
+    background: var(--accent, #00a67e);
+    color: #fff;
 }
