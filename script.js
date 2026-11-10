@@ -134,7 +134,12 @@ const NotesMerge = (() => {
     // time span and the more recently changed comment. An entry one side deleted is
     // only dropped if the other side didn't touch it since the base.
     function mergeLogs(base, local, remote) {
+        // A side with no history field at all (a device on an older version of the app,
+        // which doesn't carry it) knows nothing - that isn't the same as having deleted
+        // every entry, so the other side's history stands.
         if (!Array.isArray(local) && !Array.isArray(remote)) return undefined;
+        if (!Array.isArray(local)) return remote;
+        if (!Array.isArray(remote)) return local;
         const index = (arr) => new Map((arr || []).map(x => [x.id, x]));
         const bm = index(base), lm = index(local), rm = index(remote);
         const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -155,7 +160,7 @@ const NotesMerge = (() => {
             out.push(only);
         });
         out.sort((a, b) => a.t - b.t);
-        return out.length ? out : undefined;
+        return out;
     }
 
     // Tabs are {id, name, content, log?}. Returns the merged list plus any tabs that
@@ -6516,7 +6521,9 @@ class FlowchartViewer {
             if (typeof x.col === 'string' && x.col) entry.col = x.col;
             out.push(entry);
         });
-        return out.length ? out : undefined;
+        // An empty list is kept (the history was cleared here), so a sync doesn't mistake
+        // it for a device that has no history field.
+        return out;
     }
 
     // Accepts the current multi-tab save shape (rawArray) or migrates an
@@ -7946,7 +7953,6 @@ class FlowchartViewer {
                                 if (entry.c && !window.confirm('Delete this entry and its comment?')) return;
                                 this.removeNoteStampFromText(entry.id);
                                 tab.log = (tab.log || []).filter(x => x.id !== entry.id);
-                                if (!tab.log.length) delete tab.log;
                                 save();
                                 refresh();
                             }
