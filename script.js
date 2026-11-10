@@ -7114,7 +7114,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
-        row.appendChild(makeBtn('highlight', 'Comment on the selected text - marks it with the date, time and your comment', '', () => this.toggleNotesHighlight()));
+        row.appendChild(makeBtn('highlight', this.notesHistoryShown() ? 'Comment on the selected text - marks it with the date, time and your comment' : 'Highlight the selected text in yellow', 'notes-highlight-btn', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
         // One button: folds every title, or - once they're all folded - unfolds
@@ -7604,13 +7604,23 @@ class FlowchartViewer {
     // The History button shows or hides every highlight colour and the dates and times
     // under them (the text itself is untouched either way). Remembered on this device.
     notesHistoryShown() {
-        try { return localStorage.getItem('notes-history-shown') !== '0'; } catch (err) { return true; }
+        try { return localStorage.getItem('notes-history-shown') === '1'; } catch (err) { return false; }
     }
 
     applyNotesHistoryView(root = document) {
         const shown = this.notesHistoryShown();
         document.body.classList.toggle('notes-history-off', !shown);
         root.querySelectorAll('.notes-history-toggle').forEach(b => b.classList.toggle('active', shown));
+        // The highlight button is an ordinary yellow highlight, except in history mode,
+        // where it opens the comment bar.
+        const hlTitle = shown
+            ? 'Comment on the selected text - marks it with the date, time and your comment'
+            : 'Highlight the selected text in yellow';
+        root.querySelectorAll('.notes-highlight-btn').forEach((b) => { b.title = hlTitle; b.setAttribute('aria-label', hlTitle); });
+        if (!shown) {
+            const bar = document.getElementById('notes-highlight-bar');
+            if (bar) bar.remove();
+        }
         this.getAllNotesEditors().forEach(ed => { if (ed._noteRefreshDefault) ed._noteRefreshDefault(); });
     }
 
@@ -7695,9 +7705,19 @@ class FlowchartViewer {
         }));
     }
 
-    // The toolbar's comment button opens (or closes) a bar with the user's comments: select
-    // text, tap a comment, and the text is marked with the date and time and that comment.
+    // The toolbar's highlight button. Normally it toggles a yellow highlight on the selected
+    // text. In history mode (the History button is on) it opens (or closes) a bar with the
+    // user's comments instead: select text, tap a comment, and the text is marked with the
+    // date and time and that comment.
     toggleNotesHighlight() {
+        if (!this.notesHistoryShown()) {
+            const { editor } = this.getActiveNotesTarget();
+            if (!editor) return;
+            const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
+            editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
+            editor.editing.view.focus();
+            return;
+        }
         const existing = document.getElementById('notes-highlight-bar');
         if (existing) { existing.remove(); return; }
         const bar = document.createElement('div');
