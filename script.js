@@ -7571,6 +7571,30 @@ class FlowchartViewer {
                 }, { priority: 'low' });
                 editor.once('ready', refreshDefault);
                 editor._noteRefreshDefault = refreshDefault;
+
+                // Comments made by the previous version were also given a green highlight;
+                // take that off (comments are not coloured). Colours picked from the old
+                // colour bar have a colour on their entry and are left alone.
+                const dropCommentGreen = () => {
+                    const ref = editor.config.get('noteTab');
+                    const tab = ref && app.getNotesTab(ref.scope, ref.tabId);
+                    const root = editor.model.document.getRoot();
+                    if (!tab || !Array.isArray(tab.log) || !root) return;
+                    const plain = new Set(tab.log.filter(x => x.k === 'h' && x.c && !x.col).map(x => x.id));
+                    if (!plain.size) return;
+                    const ranges = [];
+                    for (const item of editor.model.createRangeIn(root).getItems()) {
+                        if (item.is('$textProxy') && item.getAttribute('highlight') === 'greenMarker' && plain.has(item.getAttribute('noteStamp'))) {
+                            ranges.push(editor.model.createRangeOn(item));
+                        }
+                    }
+                    if (!ranges.length) return;
+                    editor.model.enqueueChange({ isUndoable: false }, (writer) => {
+                        ranges.forEach(r => writer.removeAttribute('highlight', r));
+                    });
+                };
+                editor.once('ready', dropCommentGreen);
+                editor._noteDropCommentGreen = dropCommentGreen;
             }
         }
         this._NoteStampPlugin = NoteStampPlugin;
@@ -7755,9 +7779,10 @@ class FlowchartViewer {
             this.trimNoteLog(tab);
         }
         editor.model.change((writer) => {
-            for (const r of editor.model.schema.getValidRanges(ranges, 'highlight')) {
-                if (entry) writer.setAttribute('highlight', 'greenMarker', r);
-                else writer.removeAttribute('highlight', r);
+            // Commented text is not coloured (only unstamped text is yellow, see the
+            // plugin); clearing also takes off any colour an older version gave it.
+            if (!entry) {
+                for (const r of editor.model.schema.getValidRanges(ranges, 'highlight')) writer.removeAttribute('highlight', r);
             }
             for (const r of editor.model.schema.getValidRanges(ranges, 'noteStamp')) {
                 if (entry) writer.setAttribute('noteStamp', entry.id, r);
