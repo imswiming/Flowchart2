@@ -7501,22 +7501,30 @@ class FlowchartViewer {
                     const tab = ref && app.getNotesTab(ref.scope, ref.tabId);
                     if (!root || !tab) return;
                     const byId = new Map((Array.isArray(tab.log) ? tab.log : []).map(x => [x.id, x]));
+                    // A highlight over several paragraphs gets its time once, under the last one.
+                    const blocks = Array.from(root.getChildren());
+                    const idsPerBlock = blocks.map((block) => {
+                        const ids = [];
+                        for (const child of block.getChildren()) {
+                            const id = child.is('$text') ? child.getAttribute('noteStamp') : null;
+                            if (id && !ids.includes(id)) ids.push(id);
+                        }
+                        return ids;
+                    });
+                    const lastBlockOf = new Map();
+                    idsPerBlock.forEach((ids, i) => ids.forEach(id => lastBlockOf.set(id, i)));
                     editor.editing.view.change((writer) => {
-                        for (const block of root.getChildren()) {
-                            const ids = [];
-                            for (const child of block.getChildren()) {
-                                const id = child.is('$text') ? child.getAttribute('noteStamp') : null;
-                                if (id && !ids.includes(id)) ids.push(id);
-                            }
+                        blocks.forEach((block, i) => {
+                            const ids = idsPerBlock[i].filter(id => lastBlockOf.get(id) === i);
                             const times = ids.map(id => byId.get(id)).filter(Boolean).map(en => app.formatNoteStampShort(en));
                             let label = times.slice(0, 3).join(' · ');
                             if (times.length > 3) label += ` · +${times.length - 3} more`;
                             const viewEl = editor.editing.mapper.toViewElement(block);
-                            if (!viewEl) continue;
+                            if (!viewEl) return;
                             const current = viewEl.getAttribute('data-note-times');
                             if (label && current !== label) writer.setAttribute('data-note-times', label, viewEl);
                             else if (!label && current !== undefined) writer.removeAttribute('data-note-times', viewEl);
-                        }
+                        });
                     });
                 };
                 editor.model.document.on('change:data', refreshTimes, { priority: 'low' });
