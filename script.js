@@ -518,8 +518,16 @@ const FlowchartMerge = (() => {
     return { mergeOrder, mergeValue, mergeTrees, mergeData, ensureIds, stable };
 })();
 
-// Edits to a note closer together than this are recorded as one history entry.
-const NOTES_EDIT_GAP_MS = 5 * 60 * 1000;
+// The highlight colours in the Notes toolbar. Highlighting text also time stamps it
+// (see applyNotesHighlight).
+const NOTES_HIGHLIGHT_COLORS = [
+    { model: 'yellowMarker', cls: 'marker-yellow', title: 'Yellow', color: '#ffee00', dot: '\uD83D\uDFE8' },
+    { model: 'greenMarker', cls: 'marker-green', title: 'Green', color: '#6ee7a0', dot: '\uD83D\uDFE9' },
+    { model: 'blueMarker', cls: 'marker-blue', title: 'Blue', color: '#7cc4ff', dot: '\uD83D\uDFE6' },
+    { model: 'orangeMarker', cls: 'marker-orange', title: 'Orange', color: '#ffb35c', dot: '\uD83D\uDFE7' },
+    { model: 'purpleMarker', cls: 'marker-purple', title: 'Purple', color: '#d4a5ff', dot: '\uD83D\uDFEA' },
+];
+const NOTES_LOG_MAX = 1000;
 
 const NOTES_ICONS = (() => {
     const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
@@ -6504,7 +6512,8 @@ class FlowchartViewer {
             if (typeof x.s === 'string' && x.s) entry.s = x.s;
             if (typeof x.c === 'string' && x.c) entry.c = x.c;
             if (Number.isFinite(x.m)) entry.m = x.m;
-            if (x.k === 'm') entry.k = 'm';
+            if (x.k === 'm' || x.k === 'h') entry.k = x.k;
+            if (typeof x.col === 'string' && x.col) entry.col = x.col;
             out.push(entry);
         });
         return out.length ? out : undefined;
@@ -7090,7 +7099,7 @@ class FlowchartViewer {
         };
 
         row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
-        row.appendChild(makeBtn('history', 'Edit history - when this note was edited, with comments', '', () => this.openNotesHistory()));
+        row.appendChild(makeBtn('history', 'Highlight history - the date and time of every highlight in this note', '', () => this.openNotesHistory()));
         // Pushed to the bottom right of the toolbar (see the CSS): undo and redo
         // (mobile only - desktop has Ctrl+Z / Ctrl+Y), and on a phone the
         // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
@@ -7104,7 +7113,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
-        row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
+        row.appendChild(makeBtn('highlight', 'Highlight the selected text in a colour - each highlight is time stamped', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
         // One button: folds every title, or - once they're all folded - unfolds
@@ -7325,7 +7334,7 @@ class FlowchartViewer {
             if (entry.dead) return null;
             return DecoupledEditor.create(host, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()],
             noteMediaMarkerApp: this,
             // Only paragraph/heading4 ("Title") are offered - matches the old
             // Tiptap config (StarterKit's heading restricted to level 4 only).
@@ -7336,13 +7345,14 @@ class FlowchartViewer {
                     { model: 'heading5', view: 'h5', title: 'Subheading', class: 'ck-heading_heading5' },
                 ],
             },
-            // Just the one yellow marker - the Highlight button toggles this
-            // single option on/off rather than offering a color picker.
+            // The Highlight button's colours (see NOTES_HIGHLIGHT_COLORS).
             highlight: {
                 options: [
-                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#ffee00', type: 'marker' },
+                    ...NOTES_HIGHLIGHT_COLORS.map(c => ({ model: c.model, class: c.cls, title: c.title, color: c.color, type: 'marker' })),
                 ],
             },
+            // Which note this editor shows (the highlight time stamps are looked up in it).
+            noteTab: { scope: entry.scope, tabId: entry.tabId },
             initialData: tab.content || '<p></p>',
             });
         }).then((editor) => {
@@ -7412,15 +7422,14 @@ class FlowchartViewer {
                 const t = this.getNotesTab(entry.scope, entry.tabId);
                 if (!t) return;
                 const html = editor.getData();
-                const edited = t.content !== html;
                 t.content = html;
                 entry.lastContent = html;
-                if (edited && !this._applyingRemoteGlobalNotes) this.recordNoteEdit(t, editor);
                 if (!this._applyingRemoteGlobalNotes) {
                     this._pendingNotesSave = true;
                     this.scheduleNotesAutosave();
                 }
             });
+            editor._noteTabRef = { scope: entry.scope, tabId: entry.tabId };
             this.wireNotesEditorFeedback(editor, true);
 
             if (this._embeddedWanted === key) this.activateEmbeddedEntry(entry);
@@ -7445,33 +7454,177 @@ class FlowchartViewer {
     // Saves (and so syncs) a couple of seconds after typing pauses, rather than
     // only when the text loses focus - a note left open on one device would
     // otherwise never reach the others. Also flushed when the page is hidden.
-    // ----- Edit history -----
-    // Every note keeps a list of when it was edited (tab.log, see NotesMerge.mergeLogs):
-    // edits made close together are one entry, and an entry can carry a comment - e.g.
-    // who asked for the change. A comment keeps its entry from growing: the next edit
-    // starts a new one.
-    recordNoteEdit(tab, editor) {
-        if (!tab) return;
-        const now = Date.now();
-        if (!Array.isArray(tab.log)) tab.log = [];
-        let snippet = '';
-        try {
-            const parent = editor.model.document.selection.getFirstPosition().parent;
-            if (parent && parent.getChildren) {
-                for (const ch of parent.getChildren()) if (ch.is('$text')) snippet += ch.data;
+    // ----- Highlight history -----
+    // Highlighting text in a colour time stamps it: the text is tagged (noteStamp) with a
+    // history entry (tab.log, see NotesMerge.mergeLogs) holding the date and time it was
+    // highlighted, the colour and the words. An entry can also carry a comment - e.g.
+    // who asked for the change.
+    trimNoteLog(tab) {
+        if (!Array.isArray(tab.log)) return;
+        while (tab.log.length > NOTES_LOG_MAX) {
+            let i = tab.log.findIndex(x => !x.c);
+            if (i < 0) i = 0;
+            tab.log.splice(i, 1);
+        }
+    }
+
+    // The CKEditor plugin for it: one invisible text attribute, noteStamp = the id of the
+    // history entry the text was highlighted under (kept in the note's HTML).
+    getNoteStampPlugin() {
+        if (this._NoteStampPlugin) return this._NoteStampPlugin;
+        const { Plugin } = window.CKEDITOR;
+        const app = this;
+
+        class NoteStampPlugin extends Plugin {
+            static get pluginName() { return 'NoteStamp'; }
+
+            afterInit() {
+                const editor = this.editor;
+                editor.model.schema.extend('$text', { allowAttributes: ['noteStamp'] });
+                editor.conversion.for('upcast').elementToAttribute({
+                    view: { name: 'span', attributes: { 'data-note-stamp': /.+/ } },
+                    model: { key: 'noteStamp', value: (el) => el.getAttribute('data-note-stamp') },
+                });
+                // The saved HTML only carries the id...
+                editor.conversion.for('dataDowncast').attributeToElement({
+                    model: 'noteStamp',
+                    view: (value, { writer }) => writer.createAttributeElement('span', { 'data-note-stamp': value }, { priority: 3 }),
+                });
+                // ...while in the editor the date and time of the highlight is shown right
+                // after the text (drawn by CSS from data-note-time, so it isn't note content).
+                editor.conversion.for('editingDowncast').attributeToElement({
+                    model: 'noteStamp',
+                    view: (value, { writer }) => {
+                        const attrs = { 'data-note-stamp': value };
+                        const ref = editor.config.get('noteTab');
+                        const tab = ref && app.getNotesTab(ref.scope, ref.tabId);
+                        const entry = tab && Array.isArray(tab.log) && tab.log.find(x => x.id === value);
+                        if (entry) attrs['data-note-time'] = app.formatNoteStampShort(entry);
+                        return writer.createAttributeElement('span', attrs, { priority: 3 });
+                    },
+                });
             }
-        } catch (err) { /* no caret - leave the snippet out */ }
-        snippet = snippet.replace(/\s+/g, ' ').trim().slice(0, 80);
-        const last = tab.log[tab.log.length - 1];
-        if (last && last.k !== 'm' && !last.c && now - (last.e || last.t) < NOTES_EDIT_GAP_MS) {
-            last.e = now;
-            if (!last.s && snippet) last.s = snippet;
+        }
+        this._NoteStampPlugin = NoteStampPlugin;
+        return NoteStampPlugin;
+    }
+
+    // The toolbar's Highlight button opens (or closes) a bar of colours; tapping one
+    // highlights the selected text in it and time stamps it. "Clear" takes the
+    // highlight off again.
+    toggleNotesHighlight() {
+        const existing = document.getElementById('notes-highlight-bar');
+        if (existing) { existing.remove(); return; }
+        const bar = document.createElement('div');
+        bar.id = 'notes-highlight-bar';
+        // Tapping the bar must not drop the text selection it acts on.
+        bar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+        const msg = document.createElement('span');
+        msg.textContent = 'Highlight the selected text:';
+        bar.appendChild(msg);
+        NOTES_HIGHLIGHT_COLORS.forEach((c) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'swatch';
+            b.style.background = c.color;
+            b.title = c.title;
+            b.setAttribute('aria-label', 'Highlight ' + c.title);
+            b.addEventListener('click', () => this.applyNotesHighlight(c.model));
+            bar.appendChild(b);
+        });
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.textContent = 'Clear';
+        clear.title = 'Remove the highlight from the selected text';
+        clear.addEventListener('click', () => this.applyNotesHighlight(null));
+        bar.appendChild(clear);
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '\u00D7';
+        x.title = 'Close';
+        x.addEventListener('click', () => bar.remove());
+        bar.appendChild(x);
+        document.body.appendChild(bar);
+    }
+
+    // Highlights the selected text in a colour (model name from NOTES_HIGHLIGHT_COLORS,
+    // or null to clear) and records the date and time as a history entry.
+    applyNotesHighlight(model) {
+        const { editor, scope, tabId } = this.getActiveNotesTarget();
+        const tab = this.getNotesTab(scope, tabId);
+        if (!editor || !tab) return;
+        const sel = editor.model.document.selection;
+        if (sel.isCollapsed) {
+            this.showNotification('Select the text you want to highlight first.');
             return;
         }
-        const entry = { id: this.nextNotesId('ed'), t: now, e: now };
-        if (snippet) entry.s = snippet;
-        tab.log.push(entry);
-        if (tab.log.length > 500) tab.log.splice(0, tab.log.length - 500);
+        const ranges = Array.from(sel.getRanges());
+        let entry = null;
+        if (model) {
+            let text = '';
+            ranges.forEach((r) => {
+                for (const it of r.getItems()) if (it.is('$textProxy')) text += it.data + ' ';
+            });
+            const now = Date.now();
+            entry = { id: this.nextNotesId('hl'), t: now, e: now, k: 'h', col: model };
+            const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 80);
+            if (snippet) entry.s = snippet;
+            if (!Array.isArray(tab.log)) tab.log = [];
+            tab.log.push(entry);
+            this.trimNoteLog(tab);
+        }
+        editor.model.change((writer) => {
+            editor.execute('highlight', { value: model });
+            for (const r of editor.model.schema.getValidRanges(ranges, 'noteStamp')) {
+                if (entry) writer.setAttribute('noteStamp', entry.id, r);
+                else writer.removeAttribute('noteStamp', r);
+            }
+            writer.setSelection(ranges[ranges.length - 1].end);
+        });
+        this._pendingNotesSave = false;
+        this.autosave();
+        editor.editing.view.focus();
+        if (entry) this.showNotification('Highlighted - ' + this.formatNoteStamp(entry));
+    }
+
+    // Selects the text a history entry was made on, so it can be found in the note.
+    // False if that text is gone.
+    jumpToNotesStamp(editor, id) {
+        const found = [];
+        const root = editor.model.document.getRoot();
+        for (const item of editor.model.createRangeIn(root).getItems()) {
+            if (item.is('$textProxy') && item.getAttribute('noteStamp') === id) found.push(editor.model.createRangeOn(item));
+        }
+        if (!found.length) return false;
+        editor.model.change(w => w.setSelection(found[0]));
+        editor.editing.view.scrollToTheSelection();
+        return true;
+    }
+
+    // Takes a deleted entry's highlight (and time stamp) off the text it covered.
+    removeNoteStampFromText(id) {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const root = editor.model.document.getRoot();
+        const ranges = [];
+        for (const item of editor.model.createRangeIn(root).getItems()) {
+            if (item.is('$textProxy') && item.getAttribute('noteStamp') === id) ranges.push(editor.model.createRangeOn(item));
+        }
+        if (!ranges.length) return;
+        editor.model.change((writer) => {
+            ranges.forEach(r => writer.removeAttribute('noteStamp', r));
+            writer.setSelection(ranges);
+            editor.execute('highlight', { value: null });
+            writer.setSelection(ranges[ranges.length - 1].end);
+        });
+    }
+
+    // Short form for the label shown beside highlighted text: "10 Nov, 1:17 PM".
+    formatNoteStampShort(entry) {
+        const d = new Date(entry.t);
+        const opts = { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' };
+        if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+        return d.toLocaleString(undefined, opts);
     }
 
     formatNoteStamp(entry) {
@@ -7488,8 +7641,8 @@ class FlowchartViewer {
         return text;
     }
 
-    // The open note's edit history: newest first. Tap an entry to add or change its
-    // comment; the footer adds a time stamp of its own.
+    // The open note's highlight history: newest first, each with the date and time it was
+    // highlighted. Tap one to jump to that text; 💬 adds a comment (who asked for it).
     openNotesHistory() {
         const { scope, tabId } = this.getActiveNotesTarget();
         const tab = this.getNotesTab(scope, tabId);
@@ -7504,29 +7657,39 @@ class FlowchartViewer {
             save();
             return true;
         };
-        this.showNotesListPopup(({ refresh }) => {
-            const log = Array.isArray(tab.log) ? tab.log : [];
+        this.showNotesListPopup(({ close, refresh }) => {
+            // Highlights (and anything with a comment) - the plain edit entries an earlier
+            // version recorded automatically are left out.
+            const log = (Array.isArray(tab.log) ? tab.log : []).filter(x => x.k === 'h' || x.c);
             return {
-                title: `Edit history - ${tab.name}`,
+                title: `Highlight history - ${tab.name}`,
                 searchable: true,
-                searchPlaceholder: 'Search comments...',
-                emptyText: 'No edits recorded yet - from now on each edit is listed here with its date and time.',
+                searchPlaceholder: 'Search comments and text...',
+                emptyText: 'Nothing highlighted yet - select text and pick a colour with the Highlight button; each highlight is listed here with its date and time.',
                 items: log.slice().reverse().map((entry) => {
+                    const colour = NOTES_HIGHLIGHT_COLORS.find(c => c.model === entry.col);
                     const bits = [];
                     if (entry.c) bits.push('\uD83D\uDCAC ' + entry.c);
-                    else bits.push('Tap to add a comment');
-                    if (entry.k === 'm') bits.push('Time stamp');
-                    else if (entry.s) bits.push('\u201C' + entry.s + '\u201D');
+                    if (entry.s) bits.push('\u201C' + entry.s + '\u201D');
                     return {
-                        label: this.formatNoteStamp(entry),
+                        label: (colour ? colour.dot + ' ' : '') + this.formatNoteStamp(entry),
                         sub: bits.join(' \u00B7 '),
                         contentText: (entry.c || '') + ' ' + (entry.s || ''),
-                        onClick: async () => { if (await askComment(entry)) refresh(); },
+                        onClick: async () => {
+                            const { editor } = this.getActiveNotesTarget();
+                            if (editor && this.jumpToNotesStamp(editor, entry.id)) { close(); return; }
+                            if (await askComment(entry)) refresh();
+                        },
                         actions: [{
+                            label: '\uD83D\uDCAC',
+                            title: 'Add or change a comment',
+                            onClick: async () => { if (await askComment(entry)) refresh(); }
+                        }, {
                             label: '\u2715',
-                            title: 'Delete this entry',
+                            title: 'Delete this entry (and its highlight)',
                             onClick: () => {
                                 if (entry.c && !window.confirm('Delete this entry and its comment?')) return;
+                                this.removeNoteStampFromText(entry.id);
                                 tab.log = (tab.log || []).filter(x => x.id !== entry.id);
                                 if (!tab.log.length) delete tab.log;
                                 save();
@@ -7534,21 +7697,7 @@ class FlowchartViewer {
                             }
                         }]
                     };
-                }),
-                footer: [{
-                    label: 'Add a time stamp now',
-                    onClick: async () => {
-                        const now = Date.now();
-                        const entry = { id: this.nextNotesId('ed'), t: now, e: now, k: 'm' };
-                        if (!Array.isArray(tab.log)) tab.log = [];
-                        tab.log.push(entry);
-                        if (tab.log.length > 500) tab.log.splice(0, tab.log.length - 500);
-                        save();
-                        refresh();
-                        await askComment(entry);
-                        refresh();
-                    }
-                }]
+                })
             };
         });
     }
@@ -7645,17 +7794,6 @@ class FlowchartViewer {
             });
         }
         editor.execute('heading', { value: 'heading4' });
-        editor.editing.view.focus();
-    }
-
-    // Toggles a yellow highlight marker on the selected text - a no-op if
-    // nothing is selected, same as the other formatting buttons only acting
-    // on an actual selection/current line.
-    toggleNotesHighlight() {
-        const { editor } = this.getActiveNotesTarget();
-        if (!editor) return;
-        const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
-        editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
         editor.editing.view.focus();
     }
 
@@ -8790,6 +8928,18 @@ class FlowchartViewer {
     // Shared by the embedded editor and every full-screen pane: wires up
     // everything that reacts to what the caret/typing is doing.
     wireNotesEditorFeedback(editor, isEmbedded) {
+        editor.editing.view.document.on('click', (evt, data) => {
+            const ref = editor._noteTabRef;
+            const tab = ref && this.getNotesTab(ref.scope, ref.tabId);
+            if (!tab || !Array.isArray(tab.log)) return;
+            let id = null;
+            for (let el = data.target; el && el.is && !el.is('rootElement'); el = el.parent) {
+                if (el.getAttribute && el.getAttribute('data-note-stamp')) { id = el.getAttribute('data-note-stamp'); break; }
+            }
+            const entry = id && tab.log.find(x => x.id === id);
+            if (!entry) return;
+            this.showNotification('Highlighted ' + this.formatNoteStamp(entry) + (entry.c ? ' \u2014 \uD83D\uDCAC ' + entry.c : ''), 4000);
+        });
         // Typing a lowercase letter at the very start of a line (paragraph, list
         // item, checklist item or title) types it as a capital instead.
         editor.editing.view.document.on('insertText', (evt, data) => {
@@ -9561,7 +9711,7 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()],
             noteMediaMarkerApp: this,
             heading: {
                 options: [
@@ -9572,9 +9722,10 @@ class FlowchartViewer {
             },
             highlight: {
                 options: [
-                    { model: 'yellowMarker', class: 'marker-yellow', title: 'Yellow', color: '#ffee00', type: 'marker' },
+                    ...NOTES_HIGHLIGHT_COLORS.map(c => ({ model: c.model, class: c.cls, title: c.title, color: c.color, type: 'marker' })),
                 ],
             },
+            noteTab: { scope: node.scope, tabId: node.tabId },
             initialData: tab.content || '<p></p>',
         }).then((editor) => {
             // The pane could have been closed/rebuilt (e.g. the whole tree re-rendered
@@ -9612,15 +9763,12 @@ class FlowchartViewer {
                 if (this._notesPaneSyncGuard) return;
                 const newContent = editor.getData();
                 const liveTab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
-                if (liveTab) {
-                    const edited = liveTab.content !== newContent;
-                    liveTab.content = newContent;
-                    if (edited) this.recordNoteEdit(liveTab, editor);
-                }
+                if (liveTab) liveTab.content = newContent;
                 this._pendingNotesSave = true;
                 this.scheduleNotesAutosave();
                 this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
             });
+            editor._noteTabRef = { scope: node.scope, tabId: node.tabId };
             this.wireNotesEditorFeedback(editor, false);
             editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
                 if (isFocused) {

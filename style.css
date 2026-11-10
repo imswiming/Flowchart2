@@ -455,6 +455,27 @@ body {
     background-color: #ffee00 !important;
 }
 
+#notes-editor-wrap .ck.ck-content mark.marker-green , .notes-editor-wrap-el .ck.ck-content mark.marker-green {
+    background-color: #6ee7a0 !important;
+}
+
+#notes-editor-wrap .ck.ck-content mark.marker-blue , .notes-editor-wrap-el .ck.ck-content mark.marker-blue {
+    background-color: #7cc4ff !important;
+}
+
+#notes-editor-wrap .ck.ck-content mark.marker-orange , .notes-editor-wrap-el .ck.ck-content mark.marker-orange {
+    background-color: #ffb35c !important;
+}
+
+#notes-editor-wrap .ck.ck-content mark.marker-purple , .notes-editor-wrap-el .ck.ck-content mark.marker-purple {
+    background-color: #d4a5ff !important;
+}
+
+/* Dark text on every highlight colour, so it stays readable on the light backgrounds. */
+#notes-editor-wrap .ck.ck-content mark[class^="marker-"] , .notes-editor-wrap-el .ck.ck-content mark[class^="marker-"] {
+    color: #1b1b1b !important;
+}
+
 /* CKEditor's editing view never adds a "checked" modifier class to the
    label/description the way its saved HTML output does (that <label
    checked="checked">... shape only exists in getData()'s output, not the
@@ -3059,4 +3080,63 @@ input[type="range"]::-moz-range-progress {
         top: 56px;
         max-height: calc(100vh - 70px);
     }
+}
+
+/* The Highlight button's colour bar. */
+#notes-highlight-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    z-index: 9000;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    padding: 10px 12px;
+    background: var(--panel-bg, #222833);
+    color: var(--text, #fff);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+}
+
+#notes-highlight-bar button {
+    background: var(--control-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    padding: 7px 12px;
+    cursor: pointer;
+}
+
+#notes-highlight-bar button.swatch {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+}
+
+/* The date and time a highlight was made, shown right after the highlighted text. It is
+   drawn from data-note-time, so it is not part of the note's text. */
+.ck.ck-content span[data-note-time]::after {
+    content: attr(data-note-time);
+    margin-left: 5px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1.5;
+    white-space: nowrap;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    vertical-align: middle;
+    user-select: none;
 }
