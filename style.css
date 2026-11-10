@@ -3157,3 +3157,14 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
     background-color: #ffee00;
     color: #1b1b1b;
 }
+
+/* The comment bar's own comments. */
+#notes-highlight-bar button.comment-choice {
+    border-color: var(--accent, #00a67e);
+}
+
+#notes-highlight-bar button.primary {
+    background: var(--accent, #00a67e);
+    border-color: transparent;
+    color: #fff;
+}

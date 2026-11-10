@@ -7099,7 +7099,7 @@ class FlowchartViewer {
         };
 
         row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
-        row.appendChild(makeBtn('history', 'Show or hide the highlights and the dates and times they were made', 'notes-history-toggle', () => this.toggleNotesHistoryView()));
+        row.appendChild(makeBtn('history', 'Show or hide the comments (highlighted text) and their dates and times', 'notes-history-toggle', () => this.toggleNotesHistoryView()));
         this.applyNotesHistoryView(row);
         // Pushed to the bottom right of the toolbar (see the CSS): undo and redo
         // (mobile only - desktop has Ctrl+Z / Ctrl+Y), and on a phone the
@@ -7114,7 +7114,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
-        row.appendChild(makeBtn('highlight', 'Highlight the selected text in a colour - each highlight is time stamped', '', () => this.toggleNotesHighlight()));
+        row.appendChild(makeBtn('highlight', 'Comment on the selected text - marks it with the date, time and your comment', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
         // One button: folds every title, or - once they're all folded - unfolds
@@ -7516,7 +7516,7 @@ class FlowchartViewer {
                     editor.editing.view.change((writer) => {
                         blocks.forEach((block, i) => {
                             const ids = idsPerBlock[i].filter(id => lastBlockOf.get(id) === i);
-                            const times = ids.map(id => byId.get(id)).filter(Boolean).map(en => app.formatNoteStampShort(en));
+                            const times = ids.map(id => byId.get(id)).filter(Boolean).map(en => app.formatNoteStampShort(en) + (en.c ? ' - ' + en.c : ''));
                             let label = times.slice(0, 3).join(' · ');
                             if (times.length > 3) label += ` · +${times.length - 3} more`;
                             const viewEl = editor.editing.mapper.toViewElement(block);
@@ -7529,9 +7529,10 @@ class FlowchartViewer {
                 };
                 editor.model.document.on('change:data', refreshTimes, { priority: 'low' });
                 editor.once('ready', refreshTimes);
+                editor._noteRefreshTimes = refreshTimes;
 
-                // With the History button on, all the default text (text with no colour
-                // highlight of its own) is shown in yellow. Done with on-screen-only
+                // With the History button on, all the default text (text with no comment
+                // stamp on it) is shown in yellow. Done with on-screen-only
                 // markers, so nothing about it is saved in the note.
                 editor.conversion.for('editingDowncast').markerToHighlight({
                     model: 'noteDefault',
@@ -7555,7 +7556,7 @@ class FlowchartViewer {
                             run = null;
                         };
                         for (const item of writer.createRangeIn(root).getItems()) {
-                            if (!item.is('$textProxy') || item.hasAttribute('highlight') || !/\S/.test(item.data)) { flush(); continue; }
+                            if (!item.is('$textProxy') || item.hasAttribute('noteStamp') || !/\S/.test(item.data)) { flush(); continue; }
                             const r = model.createRangeOn(item);
                             if (run && run.end.isEqual(r.start)) run = writer.createRange(run.start, r.end);
                             else { flush(); run = r; }
@@ -7603,20 +7604,75 @@ class FlowchartViewer {
         try { localStorage.setItem('notes-history-shown', shown ? '1' : '0'); } catch (err) { /* not remembered */ }
         this.applyNotesHistoryView();
         if (!announce) return;
-        if (!shown) { this.showNotification('Highlights and dates hidden'); return; }
+        if (!shown) { this.showNotification('Comments and dates hidden'); return; }
         const { scope, tabId } = this.getActiveNotesTarget();
         const tab = this.getNotesTab(scope, tabId);
         const last = tab && Array.isArray(tab.log) ? tab.log.filter(x => x.k === 'h').pop() : null;
-        this.showNotification(last ? 'Highlights shown - last highlighted ' + this.formatNoteStamp(last) : 'Highlights shown - nothing highlighted in this note yet');
+        this.showNotification(last ? 'Comments shown - last one ' + this.formatNoteStamp(last) + (last.c ? ' - ' + last.c : '') : 'Comments shown - no comments in this note yet');
     }
 
     toggleNotesHistoryView() {
         this.setNotesHistoryShown(!this.notesHistoryShown(), true);
     }
 
-    // The toolbar's Highlight button opens (or closes) a bar of colours; tapping one
-    // highlights the selected text in it and time stamps it. "Clear" takes the
-    // highlight off again.
+    // ----- Comments -----
+    // The comments the user has defined (kept on this device) - quick choices on the
+    // comment bar. A comment put on text carries its own words, so other devices show it
+    // whether or not they have the same list.
+    getNoteCommentPresets() {
+        try {
+            const raw = JSON.parse(localStorage.getItem('notes-comment-presets') || '[]');
+            return Array.isArray(raw) ? raw.filter(x => x && typeof x.id === 'string' && typeof x.text === 'string' && x.text) : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    saveNoteCommentPresets(list) {
+        try { localStorage.setItem('notes-comment-presets', JSON.stringify(list)); } catch (err) { /* not remembered */ }
+        this.renderNotesCommentBar();
+    }
+
+    // Asks for a new comment and adds it to the list. Resolves to its text, or null.
+    async defineNoteComment() {
+        const value = await this.showNameDialog('New comment (e.g. who asked for it)', '', { plain: true, placeholder: 'e.g. Asked by Dave' });
+        if (!value) return null;
+        const list = this.getNoteCommentPresets();
+        if (!list.some(x => x.text === value)) {
+            list.push({ id: this.nextNotesId('cm'), text: value });
+            this.saveNoteCommentPresets(list);
+        }
+        return value;
+    }
+
+    manageNoteComments() {
+        this.showNotesListPopup(({ refresh }) => ({
+            title: 'My comments',
+            emptyText: 'No comments yet - add one below, then pick it after selecting text.',
+            items: this.getNoteCommentPresets().map(p => ({
+                label: p.text,
+                sub: 'Tap to rename',
+                onClick: async () => {
+                    const value = await this.showNameDialog('Rename comment', p.text, { plain: true });
+                    if (!value) return;
+                    this.saveNoteCommentPresets(this.getNoteCommentPresets().map(x => (x.id === p.id ? { id: x.id, text: value } : x)));
+                    refresh();
+                },
+                actions: [{
+                    label: '\u2715',
+                    title: 'Remove this comment from the list',
+                    onClick: () => {
+                        this.saveNoteCommentPresets(this.getNoteCommentPresets().filter(x => x.id !== p.id));
+                        refresh();
+                    }
+                }]
+            })),
+            footer: [{ label: 'Add a comment', onClick: async () => { await this.defineNoteComment(); refresh(); } }]
+        }));
+    }
+
+    // The toolbar's comment button opens (or closes) a bar with the user's comments: select
+    // text, tap a comment, and the text is marked with the date and time and that comment.
     toggleNotesHighlight() {
         const existing = document.getElementById('notes-highlight-bar');
         if (existing) { existing.remove(); return; }
@@ -7624,60 +7680,74 @@ class FlowchartViewer {
         bar.id = 'notes-highlight-bar';
         // Tapping the bar must not drop the text selection it acts on.
         bar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
-        const msg = document.createElement('span');
-        msg.textContent = 'Highlight the selected text:';
-        bar.appendChild(msg);
-        NOTES_HIGHLIGHT_COLORS.forEach((c) => {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'swatch';
-            b.style.background = c.color;
-            b.title = c.title;
-            b.setAttribute('aria-label', 'Highlight ' + c.title);
-            b.addEventListener('click', () => this.applyNotesHighlight(c.model));
-            bar.appendChild(b);
-        });
-        const list = document.createElement('button');
-        list.type = 'button';
-        list.textContent = 'History';
-        list.title = 'List every highlight in this note with its date and time';
-        list.addEventListener('click', () => this.openNotesHistory());
-        bar.appendChild(list);
-        const clear = document.createElement('button');
-        clear.type = 'button';
-        clear.textContent = 'Clear';
-        clear.title = 'Remove the highlight from the selected text';
-        clear.addEventListener('click', () => this.applyNotesHighlight(null));
-        bar.appendChild(clear);
-        const x = document.createElement('button');
-        x.type = 'button';
-        x.textContent = '\u00D7';
-        x.title = 'Close';
-        x.addEventListener('click', () => bar.remove());
-        bar.appendChild(x);
         document.body.appendChild(bar);
+        this.renderNotesCommentBar();
     }
 
-    // Highlights the selected text in a colour (model name from NOTES_HIGHLIGHT_COLORS,
-    // or null to clear) and records the date and time as a history entry.
-    applyNotesHighlight(model) {
+    renderNotesCommentBar() {
+        const bar = document.getElementById('notes-highlight-bar');
+        if (!bar) return;
+        bar.innerHTML = '';
+        const msg = document.createElement('span');
+        msg.textContent = 'Select text, then tap a comment:';
+        bar.appendChild(msg);
+        const mk = (label, title, onClick, cls) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = label;
+            if (title) b.title = title;
+            if (cls) b.className = cls;
+            b.addEventListener('click', onClick);
+            bar.appendChild(b);
+        };
+        this.getNoteCommentPresets().forEach((p) => {
+            mk(p.text, 'Mark the selected text with the date, time and this comment', () => this.applyNotesComment(p.text), 'comment-choice');
+        });
+        mk('+ New comment', 'Define a new comment (and use it on the selected text, if any)', async () => {
+            const picked = this.getNotesSelectionRanges(true);
+            const text = await this.defineNoteComment();
+            if (!text) return;
+            if (picked) this.applyNotesComment(text, picked.ranges);
+            else this.showNotification('Comment added - select text and tap it to use it');
+        }, 'primary');
+        mk('My comments', 'Rename or remove your comments', () => this.manageNoteComments());
+        mk('History', 'List every comment in this note with its date and time', () => this.openNotesHistory());
+        mk('Clear', 'Take the comment off the selected text', () => this.applyNotesComment(null));
+        mk('\u00D7', 'Close', () => bar.remove());
+    }
+
+    // The selected ranges in the note on screen, or null (with a hint unless quiet).
+    getNotesSelectionRanges(quiet) {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return null;
+        const sel = editor.model.document.selection;
+        if (sel.isCollapsed) {
+            if (!quiet) this.showNotification('Select the text you want to comment on first.');
+            return null;
+        }
+        return { editor, ranges: Array.from(sel.getRanges()) };
+    }
+
+    // Marks the selected text (or the given ranges) with a comment - it is highlighted and
+    // gets a history entry holding the date, time and the comment. null clears it again.
+    applyNotesComment(comment, givenRanges) {
         const { editor, scope, tabId } = this.getActiveNotesTarget();
         const tab = this.getNotesTab(scope, tabId);
         if (!editor || !tab) return;
-        const sel = editor.model.document.selection;
-        if (sel.isCollapsed) {
-            this.showNotification('Select the text you want to highlight first.');
-            return;
+        let ranges = givenRanges;
+        if (!ranges) {
+            const picked = this.getNotesSelectionRanges(false);
+            if (!picked) return;
+            ranges = picked.ranges;
         }
-        const ranges = Array.from(sel.getRanges());
         let entry = null;
-        if (model) {
+        if (comment) {
             let text = '';
             ranges.forEach((r) => {
                 for (const it of r.getItems()) if (it.is('$textProxy')) text += it.data + ' ';
             });
             const now = Date.now();
-            entry = { id: this.nextNotesId('hl'), t: now, e: now, k: 'h', col: model };
+            entry = { id: this.nextNotesId('hl'), t: now, e: now, k: 'h', c: comment, m: now };
             const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 80);
             if (snippet) entry.s = snippet;
             if (!Array.isArray(tab.log)) tab.log = [];
@@ -7685,7 +7755,10 @@ class FlowchartViewer {
             this.trimNoteLog(tab);
         }
         editor.model.change((writer) => {
-            editor.execute('highlight', { value: model });
+            for (const r of editor.model.schema.getValidRanges(ranges, 'highlight')) {
+                if (entry) writer.setAttribute('highlight', 'greenMarker', r);
+                else writer.removeAttribute('highlight', r);
+            }
             for (const r of editor.model.schema.getValidRanges(ranges, 'noteStamp')) {
                 if (entry) writer.setAttribute('noteStamp', entry.id, r);
                 else writer.removeAttribute('noteStamp', r);
@@ -7695,9 +7768,9 @@ class FlowchartViewer {
         this._pendingNotesSave = false;
         this.autosave();
         editor.editing.view.focus();
-        // A new highlight would be invisible while the highlights are hidden.
+        // A new comment would be invisible while the highlights are hidden.
         if (entry && !this.notesHistoryShown()) this.setNotesHistoryShown(true, false);
-        if (entry) this.showNotification('Highlighted - ' + this.formatNoteStamp(entry));
+        if (entry) this.showNotification(this.formatNoteStamp(entry) + ' - ' + entry.c);
     }
 
     // Selects the text a history entry was made on, so it can be found in the note.
@@ -7761,7 +7834,11 @@ class FlowchartViewer {
         const tab = this.getNotesTab(scope, tabId);
         if (!tab) return;
         this.dismissNotesKeyboard();
-        const save = () => { this._pendingNotesSave = false; this.autosave(); };
+        const save = () => {
+            this._pendingNotesSave = false;
+            this.autosave();
+            this.getAllNotesEditors().forEach(ed => { if (ed._noteRefreshTimes) ed._noteRefreshTimes(); });
+        };
         const askComment = async (entry) => {
             const value = await this.showNameDialog('Comment on this time stamp (e.g. who asked for it)', entry.c || '', { plain: true, placeholder: 'e.g. Asked for by ...' });
             if (value === null) return false;
@@ -7775,17 +7852,16 @@ class FlowchartViewer {
             // version recorded automatically are left out.
             const log = (Array.isArray(tab.log) ? tab.log : []).filter(x => x.k === 'h' || x.c);
             return {
-                title: `Highlight history - ${tab.name}`,
+                title: `Comment history - ${tab.name}`,
                 searchable: true,
                 searchPlaceholder: 'Search comments and text...',
-                emptyText: 'Nothing highlighted yet - select text and pick a colour with the Highlight button; each highlight is listed here with its date and time.',
+                emptyText: 'No comments yet - select text and tap a comment on the comment bar; each one is listed here with its date and time.',
                 items: log.slice().reverse().map((entry) => {
                     const colour = NOTES_HIGHLIGHT_COLORS.find(c => c.model === entry.col);
                     const bits = [];
-                    if (entry.c) bits.push('\uD83D\uDCAC ' + entry.c);
                     if (entry.s) bits.push('\u201C' + entry.s + '\u201D');
                     return {
-                        label: (colour ? colour.dot + ' ' : '') + this.formatNoteStamp(entry),
+                        label: (colour ? colour.dot + ' ' : '') + this.formatNoteStamp(entry) + (entry.c ? ' - ' + entry.c : ''),
                         sub: bits.join(' \u00B7 '),
                         contentText: (entry.c || '') + ' ' + (entry.s || ''),
                         onClick: async () => {
@@ -7795,11 +7871,11 @@ class FlowchartViewer {
                         },
                         actions: [{
                             label: '\uD83D\uDCAC',
-                            title: 'Add or change a comment',
+                            title: 'Change the comment',
                             onClick: async () => { if (await askComment(entry)) refresh(); }
                         }, {
                             label: '\u2715',
-                            title: 'Delete this entry (and its highlight)',
+                            title: 'Delete this entry (and its marking on the text)',
                             onClick: () => {
                                 if (entry.c && !window.confirm('Delete this entry and its comment?')) return;
                                 this.removeNoteStampFromText(entry.id);
@@ -9051,7 +9127,7 @@ class FlowchartViewer {
             }
             const entry = id && tab.log.find(x => x.id === id);
             if (!entry) return;
-            this.showNotification('Highlighted ' + this.formatNoteStamp(entry) + (entry.c ? ' \u2014 \uD83D\uDCAC ' + entry.c : ''), 4000);
+            this.showNotification(this.formatNoteStamp(entry) + (entry.c ? ' - ' + entry.c : ''), 4000);
         });
         // Typing a lowercase letter at the very start of a line (paragraph, list
         // item, checklist item or title) types it as a capital instead.
