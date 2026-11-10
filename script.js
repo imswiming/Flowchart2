@@ -128,7 +128,37 @@ const NotesMerge = (() => {
         }
     }
 
-    // Tabs are {id, name, content}. Returns the merged list plus any tabs that
+    // A note's edit history: [{id, t: first edit, e: last edit, s: snippet, c: comment,
+    // m: when the comment was last changed, k: 'm' for a hand-made time stamp}].
+    // Entries are matched by id; the same entry edited on both sides keeps the widest
+    // time span and the more recently changed comment. An entry one side deleted is
+    // only dropped if the other side didn't touch it since the base.
+    function mergeLogs(base, local, remote) {
+        if (!Array.isArray(local) && !Array.isArray(remote)) return undefined;
+        const index = (arr) => new Map((arr || []).map(x => [x.id, x]));
+        const bm = index(base), lm = index(local), rm = index(remote);
+        const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const ids = new Set([...(remote || []).map(x => x.id), ...(local || []).map(x => x.id)]);
+        const out = [];
+        ids.forEach((id) => {
+            const l = lm.get(id), r = rm.get(id), b = bm.get(id);
+            if (l && r) {
+                const win = (l.m || 0) > (r.m || 0) ? l : r;
+                const other = win === l ? r : l;
+                const merged = Object.assign({}, win, { t: Math.min(l.t, r.t), e: Math.max(l.e || l.t, r.e || r.t) });
+                if (!merged.s && other.s) merged.s = other.s;
+                out.push(merged);
+                return;
+            }
+            const only = l || r;
+            if (b && same(b, only)) return; // deleted on the other side, untouched here
+            out.push(only);
+        });
+        out.sort((a, b) => a.t - b.t);
+        return out.length ? out : undefined;
+    }
+
+    // Tabs are {id, name, content, log?}. Returns the merged list plus any tabs that
     // had to be split off as conflict copies (already included in tabs).
     function mergeTabs(baseTabs, localTabs, remoteTabs, makeId) {
         const index = (arr) => new Map((arr || []).map(t => [t.id, t]));
@@ -145,11 +175,13 @@ const NotesMerge = (() => {
             }
             const name = (b && l.name !== b.name) ? l.name : r.name;
             const content = mergeHtml(b ? b.content : null, l.content, r.content);
+            const log = mergeLogs(b ? b.log : null, l.log, r.log);
+            const withLog = (tab) => { if (log) tab.log = log; return tab; };
             if (content === null) {
-                out.push({ id: r.id, name, content: r.content });
+                out.push(withLog({ id: r.id, name, content: r.content }));
                 conflicts.push({ id: makeId(), name: `${l.name} (conflict copy)`, content: l.content });
             } else {
-                out.push({ id: r.id, name, content });
+                out.push(withLog({ id: r.id, name, content }));
             }
         });
         (localTabs || []).forEach((l) => {
@@ -163,7 +195,7 @@ const NotesMerge = (() => {
         return { tabs: out, conflicts };
     }
 
-    return { mergeHtml, mergeTabs, splitBlocks };
+    return { mergeHtml, mergeTabs, mergeLogs, splitBlocks };
 })();
 
 // Line icons for the Notes toolbar (24x24, drawn in currentColor - see
@@ -486,10 +518,14 @@ const FlowchartMerge = (() => {
     return { mergeOrder, mergeValue, mergeTrees, mergeData, ensureIds, stable };
 })();
 
+// Edits to a note closer together than this are recorded as one history entry.
+const NOTES_EDIT_GAP_MS = 5 * 60 * 1000;
+
 const NOTES_ICONS = (() => {
     const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
     return {
         titles: svg('<path d="M4 6h16M4 12h16M4 18h10"/>'),
+        history: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
         undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
         redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
         drawing: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.3-.9-.5-1.3-.3-.4-.4-.8-.4-1.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7" r="1"/><circle cx="15.5" cy="7.5" r="1"/>'),
@@ -2924,6 +2960,7 @@ class FlowchartViewer {
                         id: t && t.id,
                         name: t && t.name,
                         content: migrateIfLegacy((t && typeof t.content === 'string') ? t.content : ''),
+                        log: t && t.log,
                     }));
                     this.notesTabs = this.sanitizeNotesTabs(migratedTabs);
                 } else {
@@ -6455,6 +6492,24 @@ class FlowchartViewer {
         return [this.getDefaultNotesTab('Notes 1')];
     }
 
+    // A note's edit history, cleaned up: only well-formed entries, no repeated ids.
+    sanitizeNoteLog(raw) {
+        if (!Array.isArray(raw)) return undefined;
+        const seen = new Set();
+        const out = [];
+        raw.forEach((x) => {
+            if (!x || typeof x.id !== 'string' || seen.has(x.id) || !Number.isFinite(x.t)) return;
+            seen.add(x.id);
+            const entry = { id: x.id, t: x.t, e: Number.isFinite(x.e) ? x.e : x.t };
+            if (typeof x.s === 'string' && x.s) entry.s = x.s;
+            if (typeof x.c === 'string' && x.c) entry.c = x.c;
+            if (Number.isFinite(x.m)) entry.m = x.m;
+            if (x.k === 'm') entry.k = 'm';
+            out.push(entry);
+        });
+        return out.length ? out : undefined;
+    }
+
     // Accepts the current multi-tab save shape (rawArray) or migrates an
     // older single-string "globalNotes" save (legacySingle, already run
     // through migrateLegacyNotesToHtml/HTML-checked by the caller) into a
@@ -6468,7 +6523,10 @@ class FlowchartViewer {
                 seenIds.add(id);
                 const name = (raw && typeof raw.name === 'string' && raw.name.trim()) ? raw.name : `Notes ${i + 1}`;
                 const content = (raw && typeof raw.content === 'string') ? raw.content : '';
-                return { id, name, content };
+                const tab = { id, name, content };
+                const log = this.sanitizeNoteLog(raw && raw.log);
+                if (log) tab.log = log;
+                return tab;
             });
         }
         if (typeof legacySingle === 'string') {
@@ -6552,7 +6610,7 @@ class FlowchartViewer {
         return (name || '').trim().replace(/(^|\s)(\S)/g, (m, space, ch) => space + ch.toUpperCase());
     }
 
-    showNameDialog(title, initial = '') {
+    showNameDialog(title, initial = '', opts = {}) {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             Object.assign(overlay.style, {
@@ -6571,7 +6629,8 @@ class FlowchartViewer {
             const input = document.createElement('input');
             input.type = 'text';
             input.value = initial;
-            input.setAttribute('autocapitalize', 'words');
+            input.setAttribute('autocapitalize', opts.plain ? 'sentences' : 'words');
+            if (opts.placeholder) input.placeholder = opts.placeholder;
             input.setAttribute('autocomplete', 'off');
             input.setAttribute('enterkeyhint', 'done');
             input.spellcheck = false;
@@ -6582,6 +6641,7 @@ class FlowchartViewer {
             });
             // Capitalize as it's typed, wherever the keyboard doesn't already.
             input.addEventListener('input', () => {
+                if (opts.plain) return;
                 const at = input.selectionStart;
                 const fixed = input.value.replace(/(^|\s)(\S)/g, (m, space, ch) => space + ch.toUpperCase());
                 if (fixed !== input.value) {
@@ -6607,7 +6667,7 @@ class FlowchartViewer {
             const ok = mk('OK', true);
             const finish = (value) => { overlay.remove(); resolve(value); };
             cancel.addEventListener('click', () => finish(null));
-            box.addEventListener('submit', (e) => { e.preventDefault(); finish(this.capitalizeNoteName(input.value)); });
+            box.addEventListener('submit', (e) => { e.preventDefault(); finish(opts.plain ? input.value.trim() : this.capitalizeNoteName(input.value)); });
             overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
             input.addEventListener('keydown', (e) => { if (e.key === 'Escape') finish(null); });
             row.append(cancel, ok);
@@ -7030,6 +7090,7 @@ class FlowchartViewer {
         };
 
         row.appendChild(makeBtn('titles', 'Jump to a title', '', () => this.openNotesTitleList()));
+        row.appendChild(makeBtn('history', 'Edit history - when this note was edited, with comments', '', () => this.openNotesHistory()));
         // Pushed to the bottom right of the toolbar (see the CSS): undo and redo
         // (mobile only - desktop has Ctrl+Z / Ctrl+Y), and on a phone the
         // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
@@ -7351,8 +7412,10 @@ class FlowchartViewer {
                 const t = this.getNotesTab(entry.scope, entry.tabId);
                 if (!t) return;
                 const html = editor.getData();
+                const edited = t.content !== html;
                 t.content = html;
                 entry.lastContent = html;
+                if (edited && !this._applyingRemoteGlobalNotes) this.recordNoteEdit(t, editor);
                 if (!this._applyingRemoteGlobalNotes) {
                     this._pendingNotesSave = true;
                     this.scheduleNotesAutosave();
@@ -7382,6 +7445,114 @@ class FlowchartViewer {
     // Saves (and so syncs) a couple of seconds after typing pauses, rather than
     // only when the text loses focus - a note left open on one device would
     // otherwise never reach the others. Also flushed when the page is hidden.
+    // ----- Edit history -----
+    // Every note keeps a list of when it was edited (tab.log, see NotesMerge.mergeLogs):
+    // edits made close together are one entry, and an entry can carry a comment - e.g.
+    // who asked for the change. A comment keeps its entry from growing: the next edit
+    // starts a new one.
+    recordNoteEdit(tab, editor) {
+        if (!tab) return;
+        const now = Date.now();
+        if (!Array.isArray(tab.log)) tab.log = [];
+        let snippet = '';
+        try {
+            const parent = editor.model.document.selection.getFirstPosition().parent;
+            if (parent && parent.getChildren) {
+                for (const ch of parent.getChildren()) if (ch.is('$text')) snippet += ch.data;
+            }
+        } catch (err) { /* no caret - leave the snippet out */ }
+        snippet = snippet.replace(/\s+/g, ' ').trim().slice(0, 80);
+        const last = tab.log[tab.log.length - 1];
+        if (last && last.k !== 'm' && !last.c && now - (last.e || last.t) < NOTES_EDIT_GAP_MS) {
+            last.e = now;
+            if (!last.s && snippet) last.s = snippet;
+            return;
+        }
+        const entry = { id: this.nextNotesId('ed'), t: now, e: now };
+        if (snippet) entry.s = snippet;
+        tab.log.push(entry);
+        if (tab.log.length > 500) tab.log.splice(0, tab.log.length - 500);
+    }
+
+    formatNoteStamp(entry) {
+        const dayOpts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' };
+        const timeOpts = { hour: '2-digit', minute: '2-digit' };
+        const start = new Date(entry.t);
+        let text = `${start.toLocaleDateString(undefined, dayOpts)}, ${start.toLocaleTimeString(undefined, timeOpts)}`;
+        const end = new Date(entry.e || entry.t);
+        if (end - start >= 60000) {
+            text += ' \u2013 ' + (end.toDateString() === start.toDateString()
+                ? end.toLocaleTimeString(undefined, timeOpts)
+                : `${end.toLocaleDateString(undefined, dayOpts)}, ${end.toLocaleTimeString(undefined, timeOpts)}`);
+        }
+        return text;
+    }
+
+    // The open note's edit history: newest first. Tap an entry to add or change its
+    // comment; the footer adds a time stamp of its own.
+    openNotesHistory() {
+        const { scope, tabId } = this.getActiveNotesTarget();
+        const tab = this.getNotesTab(scope, tabId);
+        if (!tab) return;
+        this.dismissNotesKeyboard();
+        const save = () => { this._pendingNotesSave = false; this.autosave(); };
+        const askComment = async (entry) => {
+            const value = await this.showNameDialog('Comment on this time stamp (e.g. who asked for it)', entry.c || '', { plain: true, placeholder: 'e.g. Asked for by ...' });
+            if (value === null) return false;
+            if (value) entry.c = value; else delete entry.c;
+            entry.m = Date.now();
+            save();
+            return true;
+        };
+        this.showNotesListPopup(({ refresh }) => {
+            const log = Array.isArray(tab.log) ? tab.log : [];
+            return {
+                title: `Edit history - ${tab.name}`,
+                searchable: true,
+                searchPlaceholder: 'Search comments...',
+                emptyText: 'No edits recorded yet - from now on each edit is listed here with its date and time.',
+                items: log.slice().reverse().map((entry) => {
+                    const bits = [];
+                    if (entry.c) bits.push('\uD83D\uDCAC ' + entry.c);
+                    else bits.push('Tap to add a comment');
+                    if (entry.k === 'm') bits.push('Time stamp');
+                    else if (entry.s) bits.push('\u201C' + entry.s + '\u201D');
+                    return {
+                        label: this.formatNoteStamp(entry),
+                        sub: bits.join(' \u00B7 '),
+                        contentText: (entry.c || '') + ' ' + (entry.s || ''),
+                        onClick: async () => { if (await askComment(entry)) refresh(); },
+                        actions: [{
+                            label: '\u2715',
+                            title: 'Delete this entry',
+                            onClick: () => {
+                                if (entry.c && !window.confirm('Delete this entry and its comment?')) return;
+                                tab.log = (tab.log || []).filter(x => x.id !== entry.id);
+                                if (!tab.log.length) delete tab.log;
+                                save();
+                                refresh();
+                            }
+                        }]
+                    };
+                }),
+                footer: [{
+                    label: 'Add a time stamp now',
+                    onClick: async () => {
+                        const now = Date.now();
+                        const entry = { id: this.nextNotesId('ed'), t: now, e: now, k: 'm' };
+                        if (!Array.isArray(tab.log)) tab.log = [];
+                        tab.log.push(entry);
+                        if (tab.log.length > 500) tab.log.splice(0, tab.log.length - 500);
+                        save();
+                        refresh();
+                        await askComment(entry);
+                        refresh();
+                    }
+                }]
+            };
+        });
+    }
+
     scheduleNotesAutosave() {
         clearTimeout(this._notesTypingSaveTimer);
         this._notesTypingSaveTimer = setTimeout(() => {
@@ -9441,7 +9612,11 @@ class FlowchartViewer {
                 if (this._notesPaneSyncGuard) return;
                 const newContent = editor.getData();
                 const liveTab = this.getNotesTabsList(node.scope).find(t => t.id === node.tabId);
-                if (liveTab) liveTab.content = newContent;
+                if (liveTab) {
+                    const edited = liveTab.content !== newContent;
+                    liveTab.content = newContent;
+                    if (edited) this.recordNoteEdit(liveTab, editor);
+                }
                 this._pendingNotesSave = true;
                 this.scheduleNotesAutosave();
                 this.syncNotesPanesShowingTab(node.scope, node.tabId, newContent, node.paneId);
