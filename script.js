@@ -7715,7 +7715,13 @@ class FlowchartViewer {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
         const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
+        const hadSelection = !editor.model.document.selection.isCollapsed;
         editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
+        // The text is deselected once it has been highlighted, so the colour shows.
+        if (hadSelection) {
+            const end = editor.model.document.selection.getLastPosition();
+            editor.model.change(writer => writer.setSelection(end));
+        }
         editor.editing.view.focus();
     }
 
