@@ -7114,7 +7114,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
-        row.appendChild(makeBtn('highlight', this.notesHistoryShown() ? 'Comment on the selected text - marks it with the date, time and your comment' : 'Highlight the selected text in yellow', 'notes-highlight-btn', () => this.toggleNotesHighlight()));
+        row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
         // Only shown while the caret is on a Title line (see updateNotesTitleControls).
         // One button: folds every title, or - once they're all folded - unfolds
@@ -7595,6 +7595,13 @@ class FlowchartViewer {
                 };
                 editor.once('ready', dropCommentGreen);
                 editor._noteDropCommentGreen = dropCommentGreen;
+
+                // History mode: the comment bar opens when text gets selected, hides when not.
+                let selTimer = null;
+                editor.model.document.selection.on('change:range', () => {
+                    clearTimeout(selTimer);
+                    selTimer = setTimeout(() => app.syncNotesCommentBar(editor), 80);
+                });
             }
         }
         this._NoteStampPlugin = NoteStampPlugin;
@@ -7611,15 +7618,12 @@ class FlowchartViewer {
         const shown = this.notesHistoryShown();
         document.body.classList.toggle('notes-history-off', !shown);
         root.querySelectorAll('.notes-history-toggle').forEach(b => b.classList.toggle('active', shown));
-        // The highlight button is an ordinary yellow highlight, except in history mode,
-        // where it opens the comment bar.
-        const hlTitle = shown
-            ? 'Comment on the selected text - marks it with the date, time and your comment'
-            : 'Highlight the selected text in yellow';
-        root.querySelectorAll('.notes-highlight-btn').forEach((b) => { b.title = hlTitle; b.setAttribute('aria-label', hlTitle); });
         if (!shown) {
             const bar = document.getElementById('notes-highlight-bar');
             if (bar) bar.remove();
+        } else {
+            // text may already be selected when history mode is switched on
+            this.syncNotesCommentBar(this.getActiveNotesTarget().editor);
         }
         this.getAllNotesEditors().forEach(ed => { if (ed._noteRefreshDefault) ed._noteRefreshDefault(); });
     }
@@ -7705,21 +7709,18 @@ class FlowchartViewer {
         }));
     }
 
-    // The toolbar's highlight button. Normally it toggles a yellow highlight on the selected
-    // text. In history mode (the History button is on) it opens (or closes) a bar with the
-    // user's comments instead: select text, tap a comment, and the text is marked with the
-    // date and time and that comment.
+    // The toolbar's highlight button always just toggles a yellow highlight on the selected
+    // text. (In history mode the comment bar opens by itself when text is selected.)
     toggleNotesHighlight() {
-        if (!this.notesHistoryShown()) {
-            const { editor } = this.getActiveNotesTarget();
-            if (!editor) return;
-            const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
-            editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
-            editor.editing.view.focus();
-            return;
-        }
-        const existing = document.getElementById('notes-highlight-bar');
-        if (existing) { existing.remove(); return; }
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const isHighlighted = editor.commands.get('highlight').value === 'yellowMarker';
+        editor.execute('highlight', { value: isHighlighted ? null : 'yellowMarker' });
+        editor.editing.view.focus();
+    }
+
+    openNotesCommentBar() {
+        if (document.getElementById('notes-highlight-bar')) return;
         const bar = document.createElement('div');
         bar.id = 'notes-highlight-bar';
         // Tapping the bar must not drop the text selection it acts on.
@@ -7728,12 +7729,24 @@ class FlowchartViewer {
         this.renderNotesCommentBar();
     }
 
+    // In history mode the comment bar follows the selection: it opens whenever text is
+    // selected and goes away when nothing is.
+    syncNotesCommentBar(editor) {
+        if (!this.notesHistoryShown()) return;
+        const { editor: active } = this.getActiveNotesTarget();
+        if (!editor || editor !== active || editor.state === 'destroyed') return;
+        const selected = !editor.model.document.selection.isCollapsed;
+        const bar = document.getElementById('notes-highlight-bar');
+        if (selected && !bar) this.openNotesCommentBar();
+        else if (!selected && bar) bar.remove();
+    }
+
     renderNotesCommentBar() {
         const bar = document.getElementById('notes-highlight-bar');
         if (!bar) return;
         bar.innerHTML = '';
         const msg = document.createElement('span');
-        msg.textContent = 'Select text, then tap a comment:';
+        msg.textContent = 'Tap a comment for the selected text:';
         bar.appendChild(msg);
         const mk = (label, title, onClick, cls) => {
             const b = document.createElement('button');
