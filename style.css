@@ -1287,12 +1287,32 @@ body {
         display: flex;
     }
 
+    /* Swapping sides only makes sense for a panel beside the chart. */
+    body.panel-bottom #panel-side-btn {
+        display: none;
+    }
+
+    /* Docked on the right: the panel is the last flex item, with its edge handle on the
+       left and its border/shadow facing the chart. */
+    body.panel-right #reflection-panel {
+        order: 1;
+        border-right: none;
+        border-left: 1px solid var(--border);
+        box-shadow: -2px 0 16px rgba(0, 0, 0, 0.45);
+    }
+
+    body.panel-right #reflection-panel-resize-handle {
+        right: auto;
+        left: -3px;
+    }
+
     body.panel-bottom .reset-view-controls .desktop-controls {
         display: none !important;
     }
 }
 
-#panel-dock-btn {
+#panel-dock-btn,
+#panel-side-btn {
     background: none;
     border: none;
     color: var(--text);
@@ -1303,7 +1323,8 @@ body {
     flex-shrink: 0;
 }
 
-#panel-dock-btn:hover {
+#panel-dock-btn:hover,
+#panel-side-btn:hover {
     background: var(--control-hover);
     border-radius: 4px;
 }
@@ -1311,6 +1332,7 @@ body {
 /* Phones always show the panel full screen: nothing to dock. */
 @media (max-width: 600px) {
     #panel-dock-btn,
+    #panel-side-btn,
     #hamburger-panel-dock {
         display: none !important;
     }

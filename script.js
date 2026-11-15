@@ -613,6 +613,7 @@ class FlowchartViewer {
         this.arrangementBtn = document.getElementById('arrangement-btn');
         this.hamburgerArrangementBtn = document.getElementById('hamburger-arrangement');
         this.panelDockBtn = document.getElementById('panel-dock-btn');
+        this.panelSideBtn = document.getElementById('panel-side-btn');
         this.hamburgerPanelDockBtn = document.getElementById('hamburger-panel-dock');
         this.foldAllBtn = document.getElementById('fold-all-btn');
         this.hamburgerFoldAllBtn = document.getElementById('hamburger-fold-all');
@@ -765,8 +766,12 @@ class FlowchartViewer {
         this._reflectionQuestions = null;
         this._reflectionPanelActive = false;
         this._reflectionPanelWidth = parseInt(localStorage.getItem('reflection-panel-width'), 10) || 340;
-        // Where the left/bottom panel is docked on desktop: 'left' (default) or 'bottom'.
-        this._panelDock = localStorage.getItem('panel-dock') === 'bottom' ? 'bottom' : 'left';
+        // Where the panel is docked on desktop: 'left' (default), 'right' or 'bottom'.
+        // _panelSide remembers which side it returns to when it comes back up from the bottom.
+        const savedDock = localStorage.getItem('panel-dock');
+        this._panelSide = savedDock === 'right' ? 'right'
+            : (savedDock === 'left' ? 'left' : (localStorage.getItem('panel-side') === 'right' ? 'right' : 'left'));
+        this._panelDock = savedDock === 'bottom' ? 'bottom' : this._panelSide;
         this._panelBottomHeight = parseInt(localStorage.getItem('reflection-panel-height'), 10) || 0;
         this.setupReflectionPanel();
 
@@ -938,6 +943,7 @@ class FlowchartViewer {
             this.arrangementBtn.addEventListener('click', () => this.toggleArrangement());
         }
         if (this.panelDockBtn) this.panelDockBtn.addEventListener('click', () => this.togglePanelDock());
+        if (this.panelSideBtn) this.panelSideBtn.addEventListener('click', () => this.swapPanelSide());
         if (this.hamburgerPanelDockBtn) {
             this.hamburgerPanelDockBtn.addEventListener('click', () => {
                 this.togglePanelDock();
@@ -3515,9 +3521,9 @@ class FlowchartViewer {
         const margin = 20;
         // Docked along the bottom, the panel is no obstruction on the left (it spans the
         // whole width underneath the chart), so nodes dock against the plain margin.
-        const bottomDocked = document.body.classList.contains('panel-bottom')
+        const awayFromLeft = (document.body.classList.contains('panel-bottom') || document.body.classList.contains('panel-right'))
             && !window.matchMedia('(max-width: 600px)').matches;
-        if (bottomDocked) return margin;
+        if (awayFromLeft) return margin;
         if (this.reflectionPanel && this.flowchartPanel) {
             const panelStyle = window.getComputedStyle(this.reflectionPanel);
             if (panelStyle.display !== 'none') {
@@ -5345,7 +5351,7 @@ class FlowchartViewer {
                     this._panelBottomHeight = newHeight;
                     this.reflectionPanel.style.height = newHeight + 'px';
                 } else {
-                    const delta = clientX - startX;
+                    const delta = (this._panelDock === 'right' ? -1 : 1) * (clientX - startX);
                     const maxWidth = window.innerWidth * 0.8;
                     const newWidth = Math.max(220, Math.min(startWidth + delta, maxWidth));
                     this._reflectionPanelWidth = newWidth;
@@ -5390,10 +5396,12 @@ class FlowchartViewer {
         }
     }
 
-    // ----- Panel docked left or along the bottom (desktop) -----
+    // ----- Panel docked left, right or along the bottom (desktop) -----
     applyPanelDock() {
         const bottom = this._panelDock === 'bottom';
+        const right = this._panelDock === 'right';
         document.body.classList.toggle('panel-bottom', bottom);
+        document.body.classList.toggle('panel-right', right);
         const panel = this.reflectionPanel;
         if (!panel) return;
         if (bottom) {
@@ -5405,16 +5413,31 @@ class FlowchartViewer {
             panel.style.width = this._reflectionPanelWidth + 'px';
         }
         if (this.panelDockBtn) {
-            this.panelDockBtn.title = bottom ? 'Move this panel to the left of the screen' : 'Move this panel to the bottom of the screen';
+            this.panelDockBtn.title = bottom ? `Move this panel to the ${this._panelSide} of the screen` : 'Move this panel to the bottom of the screen';
             this.panelDockBtn.innerHTML = bottom ? '&#11026;' : '&#11027;';
         }
+        if (this.panelSideBtn) {
+            this.panelSideBtn.title = right ? 'Swap this panel to the left side of the screen' : 'Swap this panel to the right side of the screen';
+        }
         if (this.hamburgerPanelDockBtn) {
-            this.hamburgerPanelDockBtn.innerHTML = bottom ? '&#11026; Panel to left' : '&#11027; Panel to bottom';
+            this.hamburgerPanelDockBtn.innerHTML = bottom ? `&#11026; Panel to ${this._panelSide}` : '&#11027; Panel to bottom';
         }
     }
 
+    // Desktop: the panel's button for swapping which side of the screen it sits on.
+    swapPanelSide() {
+        this._panelSide = this._panelSide === 'right' ? 'left' : 'right';
+        try { localStorage.setItem('panel-side', this._panelSide); } catch (err) { /* storage blocked */ }
+        if (this._panelDock !== 'bottom') this._panelDock = this._panelSide;
+        this.refreshPanelDock();
+    }
+
     togglePanelDock() {
-        this._panelDock = this._panelDock === 'bottom' ? 'left' : 'bottom';
+        this._panelDock = this._panelDock === 'bottom' ? this._panelSide : 'bottom';
+        this.refreshPanelDock();
+    }
+
+    refreshPanelDock() {
         try { localStorage.setItem('panel-dock', this._panelDock); } catch (err) { /* storage blocked */ }
         // Clear the other side's fixed size before re-applying.
         this.reflectionPanel.style.width = '';
