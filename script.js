@@ -3325,6 +3325,52 @@ class FlowchartViewer {
         this.autosave();
     }
 
+    // The branches below one node (not the node itself) that have children of their own.
+    getFoldableDescendants(nodeData) {
+        const out = [];
+        const walk = (n) => {
+            (n.children || []).forEach((c) => {
+                if (!c || typeof c !== 'object') return;
+                if (c.children && c.children.some(k => k && typeof k === 'object')) out.push(c);
+                walk(c);
+            });
+        };
+        if (nodeData) walk(nodeData);
+        return out;
+    }
+
+    // Fold/unfold toggle for everything below a node: while any of its branches is still
+    // open it folds them all (the node itself is left open, so its children show as
+    // folded); once they are all folded it unfolds the whole subtree.
+    toggleChildrenFold(d, keepSelection = false) {
+        if (!d || !d.data || !d.data.children || d.data.children.length === 0) return;
+        const nodeData = d.data;
+        const below = this.getFoldableDescendants(nodeData);
+        const anyOpen = below.some(n => !n._collapsed);
+        if (below.length === 0 && !nodeData._collapsed) return;
+        this.pushUndo();
+        if (anyOpen) {
+            below.forEach((n) => { n._collapsed = true; });
+            delete nodeData._collapsed;
+        } else {
+            const clear = (n) => {
+                delete n._collapsed;
+                (n.children || []).forEach(c => { if (c && typeof c === 'object') clear(c); });
+            };
+            clear(nodeData);
+        }
+        this.renderFlowchart(this.rootData);
+        if (keepSelection) {
+            let found = null;
+            d3.hierarchy(this.rootData).each((node) => { if (node.data === nodeData) found = node; });
+            this.selectedNode = found || null;
+            this.refreshRadialButtons();
+        } else {
+            this.selectedNode = null;
+        }
+        this.autosave();
+    }
+
     hasAnyCollapsedNode() {
         let found = false;
         const walk = (n) => {
@@ -13536,6 +13582,18 @@ class FlowchartViewer {
             deleteRowBtns.push({ label: '→', activate: () => self.swapNodeWithSibling(1, targetDatum), fontSize: 22 });
         }
         if (canFold) deleteRowBtns.push({ label: 'F', activate: activateFold });
+        // Fold/unfold everything below this node: shows ⊟ while something is still open
+        // (tap folds all of it) and ⊞ once it is all folded (tap unfolds all). Only worth
+        // having when there is a branch below to fold, or the node itself is folded.
+        const belowFoldable = canFold ? self.getFoldableDescendants(targetDatum.data) : [];
+        if (canFold && (belowFoldable.length > 0 || targetDatum.data._collapsed)) {
+            const belowOpen = belowFoldable.some(n => !n._collapsed);
+            deleteRowBtns.push({
+                label: belowOpen ? '⊟' : '⊞',
+                activate: () => self.toggleChildrenFold(targetDatum, true),
+                fontSize: 22
+            });
+        }
         deleteRowBtns.push({ label: 'C', activate: activateMakeConnection });
         deleteRowBtns.push({ label: 'M', activate: activateMove });
         if (targetDatum.parent) {
