@@ -13281,7 +13281,9 @@ class FlowchartViewer {
             const kids = d.data.children;
             if (!kids || kids.length === 0) return;
             const collapsed = Boolean(d.data._collapsed);
-            if (!collapsed && !foldSelf.hasVisibleChildren(d)) return;
+            // Any real child counts, even an empty-named one; only the blank "add here"
+            // placeholder stubs don't.
+            if (!collapsed && !kids.some(c => c && !foldSelf.isPlaceholderNodeData(c))) return;
             const sel = d3.select(this);
             const btn = sel.append('g')
                 .attr('class', 'fold-arrow-btn')
