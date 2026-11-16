@@ -3197,7 +3197,8 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
     opacity: 0;
 }
 
-.node:hover .fold-arrow-btn.fold-up {
+.node:hover .fold-arrow-btn.fold-up,
+.fold-arrow-btn.fold-up.show {
     opacity: 1;
 }
 

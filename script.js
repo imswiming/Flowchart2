@@ -13281,6 +13281,30 @@ class FlowchartViewer {
                 });
         });
 
+        // The ▲ shows while the pointer is within a zone twice the size of its node (the
+        // zone is worked out here rather than drawn as an invisible shape, which would
+        // swallow clicks meant for neighbouring nodes).
+        {
+            const flowSvg = d3.select('#flowchart svg');
+            const updateFoldUp = (event) => {
+                flowSvg.selectAll('.node').each(function() {
+                    const btn = this.querySelector('.fold-arrow-btn.fold-up');
+                    if (!btn) return;
+                    let show = false;
+                    if (event) {
+                        const r = this.querySelector('rect').getBoundingClientRect();
+                        const padX = r.width / 2;
+                        const padY = r.height / 2;
+                        show = event.clientX >= r.left - padX && event.clientX <= r.right + padX
+                            && event.clientY >= r.top - padY && event.clientY <= r.bottom + padY;
+                    }
+                    btn.classList.toggle('show', show);
+                });
+            };
+            flowSvg.on('mousemove.foldarrow', updateFoldUp)
+                .on('mouseleave.foldarrow', () => updateFoldUp(null));
+        }
+
         const isIdentity = (t) => t.k === 1 && t.x === 0 && t.y === 0;
         if (fitView || isIdentity(this.transform)) {
             this._fitPending = true;
