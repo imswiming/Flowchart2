@@ -13262,11 +13262,15 @@ class FlowchartViewer {
                 btn.append('text')
                     .attr('x', cx).attr('y', cy + 5)
                     .attr('text-anchor', 'middle')
-                    .attr('font-size', FONT_SIZE + 3)
+                    // Same size as the ▼ on a folded node (inline, because
+                    // `.node text` in style.css would otherwise win over the attribute).
+                    .style('font-size', (FONT_SIZE + 3) + 'px')
                     .attr('fill', '#ffffff')
                     .style('pointer-events', 'none')
                     .style('filter', 'drop-shadow(0 0 2px rgba(0,0,0,0.9))')
                     .text('▲');
+                // Only visible while the pointer is over the node (see style.css).
+                btn.classed('fold-up', true);
             }
             btn.on('mousedown', (event) => event.stopPropagation())
                 .on('dblclick', (event) => event.stopPropagation())

@@ -3190,3 +3190,19 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
     border-color: transparent;
     color: #fff;
 }
+
+/* The fold arrow under an unfolded node only shows while the pointer is over the node
+   (touch screens have no hover, so it is always shown there). */
+.fold-arrow-btn.fold-up {
+    opacity: 0;
+}
+
+.node:hover .fold-arrow-btn.fold-up {
+    opacity: 1;
+}
+
+@media (hover: none) {
+    .fold-arrow-btn.fold-up {
+        opacity: 1;
+    }
+}
