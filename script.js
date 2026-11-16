@@ -13228,6 +13228,54 @@ class FlowchartViewer {
             }
         });
 
+        // Clickable fold arrows. A folded node's ▼ (▶ in LR) unfolds it; an unfolded node
+        // with children gets a ▲ just to its right that folds it again.
+        const foldSelf = this;
+        node.each(function(d) {
+            const kids = d.data.children;
+            if (!kids || kids.length === 0) return;
+            const collapsed = Boolean(d.data._collapsed);
+            if (!collapsed && !foldSelf.hasVisibleChildren(d)) return;
+            const sel = d3.select(this);
+            const midY = boxTop(d) + totalBoxHeight(d) / 2;
+            const btn = sel.append('g')
+                .attr('class', 'fold-arrow-btn')
+                .style('cursor', 'pointer');
+            btn.append('title').text(collapsed ? 'Unfold' : 'Fold');
+            let cx;
+            let cy;
+            if (collapsed) {
+                if (collapseArrowOrientation === 'LR') {
+                    cx = NODE_WIDTH / 2 + 12;
+                    cy = 0;
+                } else {
+                    cx = 0;
+                    cy = d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d) + centerOffset(d) - 5;
+                }
+                // Invisible hit area over the existing ▼ / ▶ indicator.
+                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 14).attr('fill', 'transparent');
+            } else {
+                cx = d._boxWidth / 2 + 14;
+                cy = midY;
+                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11)
+                    .attr('fill', 'rgba(0,0,0,0.55)').attr('stroke', '#999').attr('stroke-width', 1);
+                btn.append('text')
+                    .attr('x', cx).attr('y', cy + 4)
+                    .attr('text-anchor', 'middle')
+                    .attr('font-size', 11)
+                    .attr('fill', '#ffffff')
+                    .style('pointer-events', 'none')
+                    .text('▲');
+            }
+            btn.on('mousedown', (event) => event.stopPropagation())
+                .on('dblclick', (event) => event.stopPropagation())
+                .on('click', (event) => {
+                    event.stopPropagation();
+                    if (foldSelf.nodeBeingEdited) foldSelf.hideNodeEditPopup(true);
+                    foldSelf.toggleNodeCollapse(d);
+                });
+        });
+
         const isIdentity = (t) => t.k === 1 && t.x === 0 && t.y === 0;
         if (fitView || isIdentity(this.transform)) {
             this._fitPending = true;
