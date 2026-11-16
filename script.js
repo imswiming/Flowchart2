@@ -13257,14 +13257,15 @@ class FlowchartViewer {
             } else {
                 cx = d._boxWidth / 2 + 14;
                 cy = midY;
-                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11)
-                    .attr('fill', 'rgba(0,0,0,0.55)').attr('stroke', '#999').attr('stroke-width', 1);
+                // Invisible hit area; only the arrow itself is drawn.
+                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11).attr('fill', 'transparent');
                 btn.append('text')
-                    .attr('x', cx).attr('y', cy + 4)
+                    .attr('x', cx).attr('y', cy + 5)
                     .attr('text-anchor', 'middle')
-                    .attr('font-size', 11)
+                    .attr('font-size', FONT_SIZE + 3)
                     .attr('fill', '#ffffff')
                     .style('pointer-events', 'none')
+                    .style('filter', 'drop-shadow(0 0 2px rgba(0,0,0,0.9))')
                     .text('▲');
             }
             btn.on('mousedown', (event) => event.stopPropagation())
