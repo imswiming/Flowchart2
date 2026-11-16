@@ -13237,7 +13237,6 @@ class FlowchartViewer {
             const collapsed = Boolean(d.data._collapsed);
             if (!collapsed && !foldSelf.hasVisibleChildren(d)) return;
             const sel = d3.select(this);
-            const midY = boxTop(d) + totalBoxHeight(d) / 2;
             const btn = sel.append('g')
                 .attr('class', 'fold-arrow-btn')
                 .style('cursor', 'pointer');
@@ -13255,8 +13254,9 @@ class FlowchartViewer {
                 // Invisible hit area over the existing ▼ / ▶ indicator.
                 btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 14).attr('fill', 'transparent');
             } else {
-                cx = d._boxWidth / 2 + 14;
-                cy = midY;
+                // Underneath the node, at its right-hand corner.
+                cx = d._boxWidth / 2 - 14;
+                cy = boxTop(d) + totalBoxHeight(d) + 11;
                 // Invisible hit area; only the arrow itself is drawn.
                 btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11).attr('fill', 'transparent');
                 btn.append('text')
