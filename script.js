@@ -13281,7 +13281,8 @@ class FlowchartViewer {
                 });
         });
 
-        // The ▲ shows while the pointer is within a zone twice the size of its node (the
+        // The ▲ shows while the pointer is within a zone around its node - a node's width
+        // out to each side, 1.5 node heights above and below (the
         // zone is worked out here rather than drawn as an invisible shape, which would
         // swallow clicks meant for neighbouring nodes).
         {
@@ -13293,8 +13294,8 @@ class FlowchartViewer {
                     let show = false;
                     if (event) {
                         const r = this.querySelector('rect').getBoundingClientRect();
-                        const padX = r.width / 2;
-                        const padY = r.height / 2;
+                        const padX = r.width;
+                        const padY = r.height * 1.5;
                         show = event.clientX >= r.left - padX && event.clientX <= r.right + padX
                             && event.clientY >= r.top - padY && event.clientY <= r.bottom + padY;
                     }
