@@ -3207,3 +3207,22 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
         opacity: 1;
     }
 }
+
+/* Phone start-up: Notes from the first paint (see the script in <head>). */
+@media (max-width: 600px) {
+    html.boot-notes .flowchart-panel {
+        visibility: hidden;
+    }
+
+    html.boot-notes #reflection-panel {
+        display: flex !important;
+        position: static !important;
+        width: 100% !important;
+        height: auto !important;
+        min-height: 100vh;
+    }
+
+    html.boot-notes #left-panel-main {
+        display: none;
+    }
+}

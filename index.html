@@ -13,6 +13,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <script>
+    // Phone: lay the page out as Notes from the very first paint (the app's own
+    // scripts take a moment to load) instead of flashing the flowchart first. The
+    // app swaps this for its real Notes layout as soon as it starts; the timer is
+    // only a safety net so a failed load can never leave the page blank.
+    (function () {
+      try {
+        if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
+          document.documentElement.classList.add('boot-notes');
+          setTimeout(function () { document.documentElement.classList.remove('boot-notes'); }, 10000);
+        }
+      } catch (e) { /* no matchMedia */ }
+    })();
+  </script>
   <title>Flowchart Editor</title>
   <link rel="stylesheet" href="style.css">
   <!-- d3 and CKEditor are served from this site (not a third-party CDN) and

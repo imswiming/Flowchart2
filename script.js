@@ -7800,6 +7800,13 @@ class FlowchartViewer {
             const end = editor.model.document.selection.getLastPosition();
             editor.model.change(writer => writer.setSelection(end));
         }
+        // With the History button off, every highlight colour is hidden - so a
+        // highlight just made would seem to do nothing (it looked like Highlight
+        // didn't work on a phone that had never turned History on). Pressing
+        // Highlight means the colour is wanted, so turn the colours on.
+        if (hadSelection && !isHighlighted && !this.notesHistoryShown()) {
+            this.setNotesHistoryShown(true, false);
+        }
         editor.editing.view.focus();
     }
 
@@ -9121,6 +9128,7 @@ class FlowchartViewer {
     // whenever the person taps into the text or types.
     updateNotesDocScrollMode(on) {
         const had = document.body.classList.contains('notes-doc-scroll');
+        if (on) document.documentElement.classList.remove('boot-notes');
         document.documentElement.classList.toggle('notes-doc-scroll', on);
         document.body.classList.toggle('notes-doc-scroll', on);
         if (on && !had) {
@@ -9257,7 +9265,59 @@ class FlowchartViewer {
 
     // Shared by the embedded editor and every full-screen pane: wires up
     // everything that reacts to what the caret/typing is doing.
+    // On a phone, pasting often arrives as plain text only - the keyboard's
+    // clipboard suggestion (or the system) hands over just the words - so a copied
+    // checklist, bullets, indents and titles come back flat. The editor therefore
+    // remembers the last thing copied or cut inside Notes, formatting included;
+    // when what's pasted is that same text (and arrives without its formatting),
+    // the remembered formatted version goes in instead.
+    wireNotesClipboardMemory(editor) {
+        // Whitespace is ignored altogether: the editor and a phone keyboard put different
+        // line breaks and spaces between lines (and none at all between nested bullets).
+        const norm = (t) => String(t || '').replace(/\s+/g, '');
+        const root = editor.editing.view.getDomRoot();
+        if (root) {
+            const remember = (e) => {
+                // Runs after CKEditor's own copy/cut handler, which has by now put
+                // the formatted version on the clipboard.
+                const dt = e.clipboardData;
+                if (!dt) return;
+                const html = dt.getData('text/html');
+                const plain = norm(dt.getData('text/plain'));
+                if (html && plain.length >= 6) this._notesClip = { html, plain, at: Date.now() };
+            };
+            root.addEventListener('copy', remember);
+            root.addEventListener('cut', remember);
+        }
+        const insertRemembered = (plainText) => {
+            const clip = this._notesClip;
+            if (!clip || norm(plainText).length < 6 || norm(plainText) !== clip.plain) return false;
+            const view = editor.data.processor.toView(clip.html);
+            const model = editor.data.toModel(view);
+            editor.model.change(() => editor.model.insertContent(model));
+            return true;
+        };
+        // A paste event that carries no formatting.
+        editor.editing.view.document.on('clipboardInput', (evt, data) => {
+            const dt = data.dataTransfer;
+            if (!dt || dt.getData('text/html')) return;
+            if (insertRemembered(dt.getData('text/plain'))) {
+                evt.stop();
+                if (data.preventDefault) data.preventDefault();
+            }
+        }, { priority: 'highest' });
+        // Text typed in whole by the keyboard (its clipboard chip) rather than pasted.
+        editor.editing.view.document.on('insertText', (evt, data) => {
+            if (typeof data.text !== 'string' || data.text.length < 6) return;
+            if (insertRemembered(data.text)) {
+                evt.stop();
+                if (data.preventDefault) data.preventDefault();
+            }
+        }, { priority: 'highest' });
+    }
+
     wireNotesEditorFeedback(editor, isEmbedded) {
+        this.wireNotesClipboardMemory(editor);
         editor.editing.view.document.on('click', (evt, data) => {
             const ref = editor._noteTabRef;
             const tab = ref && this.getNotesTab(ref.scope, ref.tabId);
