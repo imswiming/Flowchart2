@@ -13254,8 +13254,8 @@ class FlowchartViewer {
                 // Invisible hit area over the existing ▼ / ▶ indicator.
                 btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 14).attr('fill', 'transparent');
             } else {
-                // Underneath the node, at its right-hand corner.
-                cx = d._boxWidth / 2 - 14;
+                // Underneath the node, just right of the vertical line leaving its bottom.
+                cx = 12;
                 cy = boxTop(d) + totalBoxHeight(d) + 11;
                 // Invisible hit area; only the arrow itself is drawn.
                 btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11).attr('fill', 'transparent');
