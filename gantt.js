@@ -279,6 +279,7 @@
             }
             this.recordGanttHistory();
             this.renderGantt();
+            this.refreshGanttDock();
             this.syncGanttFlow();
             if (structure) this.syncGanttNotes();
             this.autosave();
@@ -507,8 +508,11 @@
                 this.selectedNode = null;
                 this._ganttScrollToToday = true;
                 if (!this._ganttUndo) this.resetGanttHistory();
+                // Bring older Gantt notes up to date (titles, a line under each).
+                if (this.gantt && this.gantt.tasks.length && this.syncGanttNotes()) this.autosave();
                 this.renderGantt();
             } else if (this.rootData) {
+                this.closeGanttDock();
                 this.renderFlowchart(this.rootData);
             }
             // The undo/redo buttons follow whichever view is showing.
@@ -805,7 +809,7 @@
                 const kids = sel.parent ? [] : this.ganttChildren(sel.id);
                 actions.append(
                     el('span', { class: 'gantt-sel-name', text: `${this.ganttNumber(sel)}  ${sel.name}` }),
-                    kids.length ? null : btn(`☑ Checklist ${c.done}/${c.total}`, 'Tick off what\'s done', () => this.openGanttChecklist(sel.id)),
+                    btn(`☑ Checklist ${c.done}/${c.total}`, 'Show the checklist (bottom left)', () => this.openGanttChecklist(sel.id)),
                     btn('✎ Edit', 'Name, dates, owner, links', () => this.openGanttEditor(sel.id)),
                     btn('↑', 'Move up', () => this.moveGanttTask(sel.id, -1)),
                     btn('↓', 'Move down', () => this.moveGanttTask(sel.id, 1)),
@@ -881,7 +885,7 @@
                 row.append(el('span', { class: 'gantt-fold none' }));
             }
             row.append(el('div', { class: 'gc-pct' + (kids.length ? '' : ' clickable') + (complete ? ' done' : ''), title: kids.length ? 'From its subtasks' : 'Open the checklist', text: `${pct}%`,
-                onclick: (e) => { if (kids.length) return; e.stopPropagation(); this.openGanttChecklist(t.id); } }));
+                onclick: (e) => { e.stopPropagation(); this.selectGanttTask(t.id, true); this.openGanttChecklist(t.id); } }));
             return row;
         },
 
@@ -980,7 +984,7 @@
                     node.removeEventListener('pointercancel', onUp);
                     this.hideGanttDragTip();
                     if (moved) { this._ganttSelected = t.id; this.ganttChanged(false); }
-                    else this.selectGanttTask(t.id);
+                    else { this.selectGanttTask(t.id); this.openGanttChecklist(t.id); }
                 };
                 node.addEventListener('pointermove', onMove);
                 node.addEventListener('pointerup', onUp);
@@ -1050,8 +1054,9 @@
                         const eat = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
                         window.addEventListener('click', eat, { capture: true, once: true });
                         setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
-                    } else if (onBody && this._ganttSelected) {
+                    } else if (onBody && (this._ganttSelected || this._ganttDockId)) {
                         this._ganttSelected = null;
+                        this.closeGanttDock();
                         this.renderGantt();
                     }
                 };
@@ -1137,48 +1142,100 @@
             return { pop, body, footer, close };
         },
 
+        // The checklist of a task, in a panel at the bottom left of the screen
+        // (opened by clicking its bar). It stays open while you work on the
+        // chart and follows the selection; a main task with subtasks lists them.
         openGanttChecklist(id) {
-            const t = this.ganttTask(id);
-            if (!t) return;
-            const p = this.ganttPopup(`☑ ${this.ganttNumber(t)}  ${t.name}`);
-            const render = () => {
-                p.body.innerHTML = '';
-                const c = this.ganttCounts(t);
-                const pct = c.total ? Math.round(c.done / c.total * 100) : 0;
-                p.body.append(el('div', { class: 'gantt-ck-progress' },
+            if (!this.ganttTask(id)) return;
+            this._ganttDockId = id;
+            this.renderGanttDock();
+        },
+
+        closeGanttDock() {
+            this._ganttDockId = null;
+            const d = document.getElementById('gantt-checklist-dock');
+            if (d) d.remove();
+        },
+
+        // Redrawn after every change (undo included), unless an item is being typed in.
+        refreshGanttDock() {
+            const d = document.getElementById('gantt-checklist-dock');
+            if (!this._ganttDockId) return;
+            if (!this._ganttMode || !this.ganttTask(this._ganttDockId)) { this.closeGanttDock(); return; }
+            if (d && d.contains(document.activeElement) && document.activeElement.type === 'text') return;
+            this.renderGanttDock();
+        },
+
+        renderGanttDock() {
+            const t = this.ganttTask(this._ganttDockId);
+            if (!t) { this.closeGanttDock(); return; }
+            let d = document.getElementById('gantt-checklist-dock');
+            if (!d) {
+                d = el('div', { id: 'gantt-checklist-dock', class: 'gantt-dock' });
+                document.body.append(d);
+            }
+            d.innerHTML = '';
+            const kids = t.parent ? [] : this.ganttChildren(t.id);
+            const c = this.ganttCounts(t);
+            const pct = c.total ? Math.round(c.done / c.total * 100) : 0;
+            const complete = this.ganttComplete(t);
+            d.style.setProperty('--c', complete ? DONE : this.ganttColor(t));
+            d.append(
+                el('div', { class: 'gantt-dock-head' },
+                    el('span', { class: 'gantt-dock-swatch' }),
+                    el('span', { class: 'gantt-dock-title' + (complete ? ' done' : ''), text: `${t.kind === 'milestone' ? '◆ ' : ''}${t.name}`, title: t.name }),
+                    el('button', { class: 'gantt-dock-x', type: 'button', text: '×', title: 'Close', onclick: () => this.closeGanttDock() })),
+                el('div', { class: 'gantt-ck-progress' },
                     el('div', { class: 'gantt-ck-fill' + (pct === 100 ? ' complete' : ''), style: `width:${pct}%;` }),
                     el('span', { text: `${c.done} of ${c.total} done${pct === 100 ? ' ✓' : ''}` })));
-                if (t.checklist.length === 0) {
-                    p.body.append(el('label', { class: 'gantt-ck-item' },
-                        el('input', { type: 'checkbox', checked: t.done, onchange: (e) => { t.done = e.target.checked; this.ganttChanged(false); render(); } }),
-                        el('span', { text: t.kind === 'milestone' ? 'Milestone reached' : 'Task done (or add checklist items below)' })));
-                }
-                t.checklist.forEach((item) => {
-                    const text = el('input', { class: 'cs-input gantt-ck-text' + (item.done ? ' done' : ''), type: 'text', value: item.text });
-                    text.addEventListener('change', () => { item.text = text.value; this.ganttChanged(false); });
-                    p.body.append(el('div', { class: 'gantt-ck-item' },
-                        el('input', { type: 'checkbox', checked: item.done, onchange: (e) => { item.done = e.target.checked; this.ganttChanged(false); render(); } }),
-                        text,
-                        el('button', { class: 'cs-btn cs-small-btn cs-danger', type: 'button', text: '×', title: 'Remove', onclick: () => {
-                            t.checklist = t.checklist.filter(x => x !== item); this.ganttChanged(false); render();
-                        } })));
+            const body = el('div', { class: 'gantt-dock-body' });
+            d.append(body);
+
+            if (kids.length) {
+                // A main task: its subtasks, each opening its own checklist.
+                kids.forEach((k) => {
+                    const kc = this.ganttCounts(k);
+                    const kp = kc.total ? Math.round(kc.done / kc.total * 100) : 0;
+                    const kdone = this.ganttComplete(k);
+                    body.append(el('button', { class: 'gantt-dock-sub' + (kdone ? ' done' : ''), type: 'button', title: 'Open its checklist',
+                        onclick: () => { this.selectGanttTask(k.id, true); this.openGanttChecklist(k.id); } },
+                        el('span', { class: 'gantt-dock-sub-name', text: `${kdone ? '✓ ' : ''}${k.kind === 'milestone' ? '◆ ' : ''}${k.name}` }),
+                        el('span', { class: 'gantt-dock-mini' }, el('span', { style: `width:${kp}%;` })),
+                        el('span', { class: 'gantt-dock-sub-pct', text: `${kc.done}/${kc.total}` })));
                 });
-                const add = el('input', { class: 'cs-input', type: 'text', placeholder: 'Add an item...' });
-                const doAdd = () => {
-                    const v = add.value.trim();
-                    if (!v) return;
-                    t.checklist.push({ id: uid('ck'), text: v, done: false });
-                    this.ganttChanged(false);
-                    render();
-                    const again = p.body.querySelector('input[placeholder="Add an item..."]');
-                    if (again) again.focus();
-                };
-                add.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
-                p.body.append(el('div', { class: 'cs-row', style: 'margin-top:8px;' }, add,
-                    el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Add', onclick: doAdd })));
+                return;
+            }
+            if (t.checklist.length === 0) {
+                body.append(el('label', { class: 'gantt-ck-item' },
+                    el('input', { type: 'checkbox', checked: t.done, onchange: (e) => { t.done = e.target.checked; this.ganttChanged(false); this.renderGanttDock(); } }),
+                    el('span', { text: t.kind === 'milestone' ? 'Milestone reached' : 'Done (or add checklist items below)' })));
+            }
+            t.checklist.forEach((item) => {
+                const text = el('input', { class: 'cs-input gantt-ck-text' + (item.done ? ' done' : ''), type: 'text', value: item.text });
+                text.addEventListener('change', () => { item.text = text.value; this.ganttChanged(false); });
+                text.addEventListener('keydown', (e) => { if (e.key === 'Enter') text.blur(); });
+                body.append(el('div', { class: 'gantt-ck-item' },
+                    el('input', { type: 'checkbox', checked: item.done, onchange: (e) => { item.done = e.target.checked; this.ganttChanged(false); this.renderGanttDock(); } }),
+                    text,
+                    el('button', { class: 'cs-btn cs-small-btn cs-danger', type: 'button', text: '×', title: 'Remove', onclick: () => {
+                        t.checklist = t.checklist.filter(x => x !== item);
+                        this.ganttChanged(false);
+                        this.renderGanttDock();
+                    } })));
+            });
+            const add = el('input', { class: 'cs-input', type: 'text', placeholder: 'Add an item...' });
+            const doAdd = () => {
+                const v = add.value.trim();
+                if (!v) return;
+                t.checklist.push({ id: uid('ck'), text: v, done: false });
+                add.blur();
+                this.ganttChanged(false);
+                const again = document.querySelector('#gantt-checklist-dock input[placeholder="Add an item..."]');
+                if (again) again.focus();
             };
-            render();
-            p.footer.append(el('button', { class: 'cs-btn', type: 'button', text: 'Close', onclick: p.close }));
+            add.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+            d.append(el('div', { class: 'cs-row gantt-dock-add' }, add,
+                el('button', { class: 'cs-btn cs-primary cs-small-btn', type: 'button', text: 'Add', onclick: doAdd })));
         },
 
         openGanttEditor(id, isNew) {
@@ -1251,7 +1308,15 @@
 
         // ----- Gantt notes: one Title per main task, a Subheading per subtask -----
         ganttNoteLabel(t) {
-            return `${this.ganttNumber(t)}${t.parent ? '' : '.'} ${t.kind === 'milestone' ? '◆ ' : ''}${t.name}`;
+            return `${t.kind === 'milestone' ? '◆ ' : ''}${t.name}`;
+        },
+
+        // Two tasks can share a name: the nth task with this name (at the same
+        // level) goes with the nth heading of it.
+        ganttNoteOccurrence(t) {
+            const label = this.ganttNoteLabel(t);
+            const same = this.ganttOrdered(true).filter(o => !o.parent === !t.parent && this.ganttNoteLabel(o) === label);
+            return Math.max(0, same.indexOf(t));
         },
 
         ganttNotesTab(create) {
@@ -1274,20 +1339,24 @@
         // was written under each one with its task.
         syncGanttNotes() {
             const g = this.gantt;
-            if (!g || g.tasks.length === 0 && !g.notesTabId) return;
+            if (!g || g.tasks.length === 0 && !g.notesTabId) return false;
             const tab = this.ganttNotesTab(true);
-            if (!tab) return;
+            if (!tab) return false;
             const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
             const blocks = Array.from(doc.body.childNodes).filter(n => n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()));
-            const byText = new Map();
-            Object.entries(g.noteTitles || {}).forEach(([id, text]) => { if (!byText.has(text)) byText.set(text, id); });
+            const byText = new Map(); // text -> [task ids, in the order written]
+            Object.entries(g.noteTitles || {}).forEach(([id, text]) => {
+                if (!byText.has(text)) byText.set(text, []);
+                byText.get(text).push(id);
+            });
             const sections = new Map(); // taskId -> { blocks, folded }
             const preamble = [];
             const orphans = [];         // [{ title, blocks }]
             let cur = null;
             blocks.forEach((n) => {
                 const isHead = n.nodeType === 1 && /^H[45]$/.test(n.tagName);
-                const id = isHead ? byText.get(n.textContent.trim()) : null;
+                const queue = isHead ? byText.get(n.textContent.trim()) : null;
+                const id = queue ? queue.find(x => !sections.has(x)) : null;
                 if (id && !sections.has(id)) {
                     cur = { id, blocks: [], folded: n.getAttribute('data-folded') === 'true', title: n.textContent.trim() };
                     sections.set(id, cur);
@@ -1309,7 +1378,10 @@
                 const tag = t.parent ? 'h5' : 'h4';
                 const folded = !t.parent && sec && sec.folded ? ' data-folded="true"' : '';
                 out.push(`<${tag}${folded}>${esc(label)}</${tag}>`);
-                if (sec) sec.blocks.forEach(b => out.push(b.outerHTML || `<p>${esc(b.textContent)}</p>`));
+                // Writing under a heading is ordinary text: an empty normal line
+                // sits under any heading with nothing below it yet.
+                if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(b.outerHTML || `<p>${esc(b.textContent)}</p>`));
+                else out.push('<p>&nbsp;</p>');
             });
             sections.forEach((sec, id) => {
                 if (!live.has(id) && hasContent(sec.blocks)) orphans.push(sec);
@@ -1320,19 +1392,22 @@
             });
             const html = out.join('');
             g.noteTitles = titles;
-            if (html === tab.content) return;
+            if (html === tab.content) return false;
             tab.content = html;
             if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
             if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, html);
+            return true;
         },
 
         ganttHasNoteText(t) {
             const tab = this.ganttNotesTab(false);
             if (!tab || !tab.content) return false;
             const label = this.ganttNoteLabel(t);
+            const tag = t.parent ? 'H5' : 'H4';
             const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
             const kids = Array.from(doc.body.children);
-            const i = kids.findIndex(k => /^H[45]$/.test(k.tagName) && k.textContent.trim() === label);
+            const matches = kids.map((k, j) => (k.tagName === tag && k.textContent.trim() === label ? j : -1)).filter(j => j !== -1);
+            const i = matches.length ? matches[Math.min(this.ganttNoteOccurrence(t), matches.length - 1)] : -1;
             if (i === -1) return false;
             for (let j = i + 1; j < kids.length; j++) {
                 if (/^H[45]$/.test(kids[j].tagName)) break;
@@ -1380,7 +1455,9 @@
                 const root = editor.model.document.getRoot();
                 const heads = Array.from(root.getChildren()).filter(c => c.is('element', 'heading4') || c.is('element', 'heading5'));
                 const textOf = (h) => { let s = ''; for (const it of h.getChildren()) if (it.is('$text')) s += it.data; return s.trim(); };
-                const target = heads.find(h => textOf(h) === label);
+                const want = t.parent ? 'heading5' : 'heading4';
+                const matches = heads.filter(h => h.is('element', want) && textOf(h) === label);
+                const target = matches[Math.min(this.ganttNoteOccurrence(t), matches.length - 1)];
                 if (!target) return;
                 // A subheading sits inside its main task's Title: open that too.
                 if (target.is('element', 'heading5')) {
@@ -1393,6 +1470,12 @@
                     }
                 }
                 this.jumpToNotesTitle(editor, target);
+                // The caret goes on the (normal text) line under the heading, so
+                // typing doesn't add to the heading itself.
+                const next = target.nextSibling;
+                if (next && next.is('element') && !next.is('element', 'heading4') && !next.is('element', 'heading5')) {
+                    try { editor.model.change(w => w.setSelection(w.createPositionAt(next, 0))); } catch (e) { /* not a text block */ }
+                }
                 if (!window.matchMedia('(pointer: coarse)').matches) {
                     try { editor.editing.view.focus(); } catch (e) { /* not on screen */ }
                 }
@@ -1586,7 +1669,8 @@
         if (!app || !app._ganttMode) return;
         if (e.key !== 'Delete' && e.key !== 'Del' && e.key !== 'Backspace') return;
         const a = document.activeElement;
-        const typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
+        const typing = a && ((a.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(a.type)) ||
+            a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
         if (typing) {
             // Ordinary text editing - but keep the flowchart handler out of it.
             if (e.key !== 'Backspace') e.stopImmediatePropagation();

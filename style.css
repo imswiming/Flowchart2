@@ -3918,3 +3918,61 @@ body.gantt-mode #flowchart {
     .gantt-tb-sep { display: none; }
     .gantt-lrow.main .gantt-label { font-size: 13px; }
 }
+
+/* Gantt checklist panel, bottom left */
+.gantt-dock {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    z-index: 4400;
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(60vh, 520px);
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px 10px;
+    box-sizing: border-box;
+    color: #eef4fa;
+    background: #102a47;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-top: 3px solid var(--c, #3cb4dc);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    font-size: 13px;
+}
+
+.gantt-dock-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gantt-dock-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--c, #3cb4dc); flex: 0 0 auto; }
+.gantt-dock-title { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-dock-title.done { text-decoration: line-through; opacity: 0.75; }
+.gantt-dock-x { background: none; border: none; color: #b8c9da; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.gantt-dock-x:hover { color: #fff; }
+.gantt-dock-body { overflow: auto; min-height: 0; flex: 1 1 auto; }
+.gantt-dock .gantt-ck-progress { flex: 0 0 auto; margin-bottom: 8px; }
+.gantt-dock .gantt-ck-item { font-size: 13px; margin-bottom: 4px; }
+.gantt-dock .gantt-ck-text { font-size: 13px !important; padding: 4px 7px !important; }
+.gantt-dock-add { margin: 8px 0 0; }
+.gantt-dock-add .cs-input { padding: 5px 8px; font-size: 13px; }
+
+.gantt-dock-sub {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.gantt-dock-sub:hover { background: rgba(255, 255, 255, 0.1); }
+.gantt-dock-sub-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-dock-sub.done .gantt-dock-sub-name { text-decoration: line-through; color: #2fcf8a; }
+.gantt-dock-mini { flex: 0 0 60px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.gantt-dock-mini span { display: block; height: 100%; background: var(--c, #3cb4dc); }
+.gantt-dock-sub.done .gantt-dock-mini span { background: #2fcf8a; }
+.gantt-dock-sub-pct { flex: 0 0 auto; font-size: 11px; color: #b8c9da; font-variant-numeric: tabular-nums; }
