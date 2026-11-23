@@ -85,13 +85,16 @@ create index if not exists flowchart_members_user on flowchart_members (user_id)
 create table if not exists flowchart_invites (
   code text primary key,
   share_id uuid not null references flowchart_shares(id) on delete cascade,
-  role text not null check (role in ('edit', 'view')),
+  role text not null,
   label text,
   created_at timestamptz not null default now(),
   used_by uuid references auth.users(id) on delete set null,
   used_at timestamptz
 );
 create index if not exists flowchart_invites_share on flowchart_invites (share_id);
+-- 'owner' = a "Can manage" invite (the owner's other devices, or a co-owner).
+alter table flowchart_invites drop constraint if exists flowchart_invites_role_check;
+alter table flowchart_invites add constraint flowchart_invites_role_check check (role in ('owner', 'edit', 'view'));
 
 create table if not exists flowchart_devices (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -146,7 +149,7 @@ drop policy if exists "owner deletes share" on flowchart_shares;
 create policy "members see share" on flowchart_shares for select to authenticated
   using (public.flowchart_share_role(id) is not null);
 create policy "owner deletes share" on flowchart_shares for delete to authenticated
-  using (owner_id = auth.uid());
+  using (public.flowchart_share_role(id) = 'owner');
 
 -- Everyone sees their own memberships; the owner sees everyone's. The owner can
 -- switch a guest between view and edit, or remove them; a guest can leave.
@@ -160,7 +163,8 @@ create policy "owner changes role" on flowchart_members for update to authentica
   using (public.flowchart_share_role(share_id) = 'owner' and role <> 'owner')
   with check (role in ('edit', 'view'));
 create policy "remove member" on flowchart_members for delete to authenticated
-  using (role <> 'owner' and (user_id = auth.uid() or public.flowchart_share_role(share_id) = 'owner'));
+  using ((role <> 'owner' and user_id = auth.uid())
+         or (user_id <> auth.uid() and public.flowchart_share_role(share_id) = 'owner'));
 
 drop policy if exists "owner reads invites" on flowchart_invites;
 drop policy if exists "owner revokes invites" on flowchart_invites;
@@ -188,7 +192,9 @@ begin
         device_name = coalesce(excluded.device_name, public.flowchart_devices.device_name);
 end $$;
 
--- Starts sharing a flowchart: makes the share and its owner. Email accounts only.
+-- Starts sharing a flowchart: makes the share and its owner. No email needed -
+-- an anonymous sign-in on the owner's device is enough (their other devices
+-- join with a "Can manage" invite).
 create or replace function flowchart_create_share(p_name text default null)
 returns uuid
 language plpgsql security definer
@@ -197,9 +203,6 @@ as $$
 declare sid uuid;
 begin
   if auth.uid() is null then raise exception 'Sign in first.'; end if;
-  if coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) then
-    raise exception 'Sign in with your email to share your own flowcharts.';
-  end if;
   insert into public.flowchart_shares (owner_id) values (auth.uid()) returning id into sid;
   insert into public.flowchart_members (share_id, user_id, role, name)
   values (sid, auth.uid(), 'owner', left(nullif(trim(p_name), ''), 80));
@@ -221,7 +224,7 @@ begin
   if public.flowchart_share_role(p_share) is distinct from 'owner' then
     raise exception 'Only the owner can invite people.';
   end if;
-  if p_role is null or p_role not in ('edit', 'view') then raise exception 'Choose view or edit.'; end if;
+  if p_role is null or p_role not in ('owner', 'edit', 'view') then raise exception 'Choose view, edit or manage.'; end if;
   loop
     -- Random bytes from a v4 uuid (skipping its fixed version/variant bytes).
     b := decode(replace(gen_random_uuid()::text, '-', ''), 'hex');

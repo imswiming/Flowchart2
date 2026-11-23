@@ -64,7 +64,7 @@
         if (d < 30) return `${d} day${d === 1 ? '' : 's'} ago`;
         return new Date(t).toLocaleDateString();
     };
-    const roleText = r => r === 'owner' ? 'Owner' : r === 'edit' ? 'Can edit' : 'View only';
+    const roleText = r => r === 'owner' ? 'Can manage' : r === 'edit' ? 'Can edit' : 'View only';
     const friendlyError = (err) => {
         const msg = (err && err.message) || String(err);
         if (/anonymous/i.test(msg) && /disabled|not enabled/i.test(msg)) {
@@ -465,6 +465,7 @@
             if (wasOpen) {
                 this.currentSlotIndex = null;
                 if (this.flowchartList.length === 0) {
+                    this.gantt = null;
                     this.renderFlowchart(this.getSampleData());
                     this.currentSlotIndex = 0;
                     this.saveCurrentFlowchart();
@@ -590,13 +591,27 @@
         },
 
         // ----- Owner actions -----
+        // Who shares: the email sign-in if there is one, otherwise this device
+        // signs in anonymously in the connected project (no email needed). The
+        // owner's other devices then join with a "Can manage" invite.
+        async ownerConnForSharing() {
+            if (this._cloudAuth) return this.shareConn(this.cloudProjectUrl);
+            const { url, key } = this.getCloudConfig();
+            if (!url || !key) throw new Error('Connect the app to your Supabase project first (Cloud Sync > Advanced: Project URL and key).');
+            const have = this.shareConn(url);
+            if (have) return have;
+            const s = await this.sbAuth(url, key, 'signup', { body: { data: {} } });
+            if (!s.access_token) throw new Error('Couldn\'t sign this device in.');
+            this.saveGuestAuth(url, key, this.toShareAuth(s));
+            return this.shareConn(url);
+        },
+
         async startSharing(index) {
-            const conn = this._cloudAuth ? this.shareConn(this.cloudProjectUrl) : null;
-            if (!conn) throw new Error('Sign in with your email in Cloud Sync first.');
+            const conn = await this.ownerConnForSharing();
             if (index === this.currentSlotIndex) this.saveCurrentFlowchart();
             const item = this.flowchartList[index];
             if (!item || item.share) return;
-            const sid = await this.rpc(conn, 'flowchart_create_share', { p_name: conn.email || null });
+            const sid = await this.rpc(conn, 'flowchart_create_share', { p_name: conn.email || localStorage.getItem(GUEST_NAME_KEY) || 'Owner' });
             const { stripped, imageMap } = this.stripImagesFromDataString(item.data || '');
             await this.uploadShareImages(conn, sid, imageMap);
             const ts = Date.now();
@@ -720,9 +735,10 @@
 
             if (!item.share) {
                 pop.append(el('div', { class: 'cs-title', text: `👥 Share "${item.title}"` }));
-                if (!this._cloudAuth) {
+                const cfg = this.getCloudConfig();
+                if (!this._cloudAuth && !(cfg.url && cfg.key)) {
                     pop.append(
-                        el('p', { class: 'cs-text', text: 'To share a flowchart, first sign in with your email in Cloud Sync. The people you invite don\'t need an account or a Supabase of their own - they just enter a code.' }),
+                        el('p', { class: 'cs-text', text: 'Sharing uses your Supabase project: connect it first in Cloud Sync (Advanced: Project URL and key) - no email sign-in needed. The people you invite don\'t need an account or a Supabase of their own - they just enter a code.' }),
                         el('div', { class: 'cs-row' }, el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Open Cloud Sync',
                             onclick: () => { this.closeSharePanel(); this.showCloudSyncPopup(); } })),
                         closeRow);
@@ -755,11 +771,15 @@
         renderOwnerPanel(pop, item, status, setStatus, closeRow) {
             const conn = this.shareConn(item.share.url);
             pop.append(el('div', { class: 'cs-title', text: `👥 Manage access - "${item.title}"` }));
+            if (conn && conn.isAnon) {
+                pop.append(el('p', { class: 'cs-note', text: 'You\'re sharing from this device without an email. To open and manage it from your other devices too, make an invite set to "Can manage" and enter that code on each one.' }));
+            }
 
             // New invite
             const label = el('input', { class: 'cs-input', type: 'text', placeholder: 'Label, e.g. Sam - work laptop', maxlength: '80' });
             const role = el('select', { class: 'cs-input sh-role' },
-                el('option', { value: 'edit', text: 'Can edit' }), el('option', { value: 'view', text: 'View only' }));
+                el('option', { value: 'edit', text: 'Can edit' }), el('option', { value: 'view', text: 'View only' }),
+                el('option', { value: 'owner', text: 'Can manage (your other devices)' }));
             const newBtn = el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'New invite' });
             const result = el('div', { id: 'share-invite-result' });
             const showInvite = (inv) => {
@@ -868,7 +888,7 @@
                             });
                             return sel;
                         })(),
-                    m.role === 'owner' ? null : el('button', { class: 'cs-btn cs-small-btn cs-danger', type: 'button', text: 'Remove', onclick: async () => {
+                    isMe ? null : el('button', { class: 'cs-btn cs-small-btn cs-danger', type: 'button', text: 'Remove', onclick: async () => {
                         if (!confirm(`Remove ${name}? They lose access on every device they use.`)) return;
                         try {
                             await this.sbRest(conn, `flowchart_members?share_id=eq.${enc(item.share.id)}&user_id=eq.${enc(m.user_id)}`, { method: 'DELETE', prefer: 'return=minimal' });
