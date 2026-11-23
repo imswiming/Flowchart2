@@ -14,7 +14,7 @@
 // Only this site's own files are touched - cloud sync calls and anything else
 // go straight to the network.
 
-const CACHE_NAME = 'flowchart-v5';
+const CACHE_NAME = 'flowchart-v6';
 
 const IMMUTABLE = [
     'd3.v7.min.js',
@@ -27,6 +27,7 @@ const REFRESHED = [
     'style.css',
     'script.js',
     'sharing.js',
+    'gantt.js',
 ];
 
 const notifyClients = async (message, navigate) => {

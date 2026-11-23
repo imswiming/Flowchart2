@@ -47,6 +47,7 @@
   <script src="cloud-config.js" defer></script>
   <script src="script.js" defer></script>
   <script src="sharing.js" defer></script>
+  <script src="gantt.js" defer></script>
   <style>
     /* Hamburger menu styles */
     .hamburger-menu {
@@ -365,6 +366,7 @@
         <button class="menu-item" id="hamburger-toggle-placeholders">👻 Hide Placeholders</button>
         <button class="menu-item" id="hamburger-cloud-sync">☁ Cloud Sync</button>
         <button class="menu-item" id="hamburger-share">👥 Share</button>
+        <button class="menu-item" id="hamburger-gantt">📅 Gantt</button>
         <button class="menu-item" id="hamburger-pugh-matrix">📊 Pugh Matrix</button>
         <button class="menu-item" id="hamburger-notes">📝 Notes</button>
         <button class="menu-item" id="hamburger-help">? Help</button>
@@ -377,6 +379,7 @@
         <div class="zoom-btn" id="top-toggle-placeholders-btn" title="Show/Hide Placeholders">👻</div>
         <div class="zoom-btn" id="top-cloud-sync-btn" title="Cloud Sync">☁</div>
         <div class="zoom-btn" id="top-share-btn" title="Share / Manage access">👥</div>
+        <div class="zoom-btn" id="top-gantt-btn" title="Gantt chart">📅</div>
         <div class="zoom-btn" id="top-pugh-matrix-btn" title="Pugh Matrix">📊</div>
         <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
         <div class="zoom-btn" id="top-reset-view-btn" title="Reset View">⟲</div>
@@ -401,6 +404,7 @@
             <div class="reset-view-btn" id="toggle-placeholders-btn">👻 Hide Placeholders</div>
             <div class="reset-view-btn" id="cloud-sync-btn">☁ Cloud Sync</div>
             <div class="reset-view-btn" id="share-btn" title="Share this flowchart / manage who has access">👥 Share</div>
+            <div class="reset-view-btn" id="gantt-btn" title="Switch between the flowchart and its Gantt chart">📅 Gantt</div>
             <div class="reset-view-btn" id="pugh-matrix-btn">📊 Pugh Matrix</div>
             <div class="reset-view-btn" id="notes-btn">📝 Notes</div>
             <div class="reset-view-btn" id="help-btn" title="Help">? Help</div>
@@ -839,6 +843,7 @@ grant execute on function get_db_size() to authenticated;</pre>
         'hamburger-open': 'open-btn',
         'hamburger-cloud-sync': 'cloud-sync-btn',
         'hamburger-share': 'share-btn',
+        'hamburger-gantt': 'gantt-btn',
         'hamburger-pugh-matrix': 'pugh-matrix-btn',
         'hamburger-notes': 'notes-btn',
         'hamburger-help': 'help-btn'

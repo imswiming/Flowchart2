@@ -932,6 +932,9 @@ class FlowchartViewer {
         this.rehydrateAllFromImageDb().catch(err => console.error('Could not read saved pictures:', err));
         // Flowcharts shared with other people (sharing.js).
         if (typeof this.setupSharing === 'function') this.setupSharing();
+        // Gantt chart view (gantt.js).
+        this.gantt = null;
+        if (typeof this.setupGantt === 'function') this.setupGantt();
 
         // Set up event listeners
         if (this.topUndoBtn) this.topUndoBtn.addEventListener('click', () => this.undo());
@@ -2866,6 +2869,7 @@ class FlowchartViewer {
                         this.saveFlowchartList();
                         this.showStoragePopup();
                         if (this.flowchartList.length === 0) {
+                            this.gantt = null;
                             this.renderFlowchart(this.getSampleData());
                             this.currentSlotIndex = 0;
                             this.saveCurrentFlowchart();
@@ -2908,6 +2912,7 @@ class FlowchartViewer {
             this.saveCurrentFlowchart();
         }
         this.resetReflectionState();
+        this.gantt = null;
 
         const defaultData = {
             name: "New Flowchart",
@@ -3032,6 +3037,8 @@ class FlowchartViewer {
                 // (matched by name, same as when a row is first added) so
                 // resyncMorphRows has something live to actually follow.
                 this.relinkMorphNodeRefs();
+                // This flowchart's Gantt chart (gantt.js), if it has one.
+                this.gantt = typeof this.sanitizeGantt === 'function' ? this.sanitizeGantt(parsed.gantt) : (parsed.gantt || null);
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
                 // migrate those to HTML once on load; anything already HTML (or
@@ -12154,8 +12161,10 @@ class FlowchartViewer {
         // two devices' edits to the same flowchart be merged (see FlowchartMerge).
         FlowchartMerge.ensureIds(this.rootData);
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt } = node;
             const out = { name };
+            // Nodes mirroring the Gantt chart (gantt.js) remember their task.
+            if (_gantt) out._gantt = _gantt;
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
             if (_isPlaceholder) out._isPlaceholder = true;
@@ -12186,7 +12195,8 @@ class FlowchartViewer {
             activeNotesTabId: this.activeNotesTabId,
             notesPinned: this.notesPinned,
             notesDrawings: this.notesDrawings,
-            notesImages: this.notesImages
+            notesImages: this.notesImages,
+            gantt: this.gantt || undefined
         }, null, 2);
     }
 
