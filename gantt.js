@@ -277,10 +277,63 @@
                     }
                 });
             }
+            this.recordGanttHistory();
             this.renderGantt();
             this.syncGanttFlow();
             if (structure) this.syncGanttNotes();
             this.autosave();
+        },
+
+        // ----- Undo / redo (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y, and the undo/redo buttons) -----
+        // A snapshot of the tasks is kept after every change; zooming and panning
+        // are not changes. A whole drag is one step.
+        ganttSnapshot() { return JSON.stringify(this.ganttTasks()); },
+
+        resetGanttHistory() {
+            this._ganttUndo = [];
+            this._ganttRedo = [];
+            this._ganttLastSnap = this.ganttSnapshot();
+            this.updateUndoRedoButtons();
+        },
+
+        recordGanttHistory() {
+            if (this._ganttRestoring) return;
+            if (!this._ganttUndo) this.resetGanttHistory();
+            const now = this.ganttSnapshot();
+            if (now === this._ganttLastSnap) return;
+            this._ganttUndo.push(this._ganttLastSnap);
+            if (this._ganttUndo.length > 100) this._ganttUndo.shift();
+            this._ganttRedo = [];
+            this._ganttLastSnap = now;
+            this.updateUndoRedoButtons();
+        },
+
+        restoreGanttSnapshot(snap) {
+            const g = this.ensureGantt();
+            g.tasks = JSON.parse(snap);
+            if (this._ganttSelected && !this.ganttTask(this._ganttSelected)) this._ganttSelected = null;
+            this._ganttLastSnap = snap;
+            this._ganttRestoring = true;
+            try {
+                const old = document.getElementById('gantt-popup');
+                if (old) old.remove();
+                this.ganttChanged(true);
+            } finally {
+                this._ganttRestoring = false;
+            }
+            this.updateUndoRedoButtons();
+        },
+
+        undoGantt() {
+            if (!this._ganttUndo || !this._ganttUndo.length) return;
+            this._ganttRedo.push(this.ganttSnapshot());
+            this.restoreGanttSnapshot(this._ganttUndo.pop());
+        },
+
+        redoGantt() {
+            if (!this._ganttRedo || !this._ganttRedo.length) return;
+            this._ganttUndo.push(this.ganttSnapshot());
+            this.restoreGanttSnapshot(this._ganttRedo.pop());
         },
 
         applyGanttTemplate(key) {
@@ -356,6 +409,16 @@
             this.openGanttEditor(task.id, true);
         },
 
+        // Deletes the selected task (with its subtasks); Ctrl+Z brings it back.
+        deleteGanttSelected() {
+            const t = this._ganttSelected && this.ganttTask(this._ganttSelected);
+            if (!t) return false;
+            const kids = t.parent ? 0 : this.ganttChildren(t.id).length;
+            this.deleteGanttTask(t.id);
+            this.showNotification(`Deleted "${t.name}"${kids ? ` and its ${kids} subtask${kids === 1 ? '' : 's'}` : ''} - Ctrl+Z to undo.`, 4000);
+            return true;
+        },
+
         deleteGanttTask(id) {
             const g = this.gantt;
             if (!g) return;
@@ -389,6 +452,7 @@
 
         // ----- View switching -----
         setupGantt() {
+            window.__flowchartApp = this;
             this._ganttMode = false;
             this._ganttSelected = null;
             const panel = document.getElementById('flowchart-panel');
@@ -437,11 +501,18 @@
             const top = document.getElementById('top-gantt-btn');
             if (top) { top.textContent = want ? '🔀' : '📅'; top.title = want ? 'Back to the flowchart' : 'Gantt chart'; }
             if (want) {
+                // A flowchart node left selected must not be deleted by keys
+                // pressed in the Gantt view.
+                if (this.selectedNode && typeof this.deselectNode === 'function') this.deselectNode();
+                this.selectedNode = null;
                 this._ganttScrollToToday = true;
+                if (!this._ganttUndo) this.resetGanttHistory();
                 this.renderGantt();
             } else if (this.rootData) {
                 this.renderFlowchart(this.rootData);
             }
+            // The undo/redo buttons follow whichever view is showing.
+            this.updateUndoRedoButtons();
         },
 
         // ----- Drawing the chart -----
@@ -707,6 +778,8 @@
             const bar = el('div', { class: 'gantt-toolbar' },
                 el('div', { class: 'gantt-title', text: `📅 ${item ? item.title : 'Gantt chart'}` }),
                 btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleGanttMode(false)),
+                btn('↩', 'Undo (Ctrl+Z)', () => this.undoGantt(), (this._ganttUndo && this._ganttUndo.length) ? '' : 'disabled'),
+                btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoGantt(), (this._ganttRedo && this._ganttRedo.length) ? '' : 'disabled'),
                 btn('+ Task', 'Add a main task', () => this.newGanttTask('task', null), 'primary'),
                 btn('+ Subtask', 'Add a subtask to the selected task', () => {
                     const s = this._ganttSelected && this.ganttTask(this._ganttSelected);
@@ -738,12 +811,9 @@
                     btn('↓', 'Move down', () => this.moveGanttTask(sel.id, 1)),
                     btn('🌳 Show in flowchart', 'Open the flowchart with this task unfolded and everything else folded', () => this.showGanttTaskInFlowchart(sel.id)),
                     btn('📅 Gantt flowchart', 'Open the whole Gantt branch of the flowchart', () => this.showGanttTaskInFlowchart(null)),
-                    btn('🗑', 'Delete', async () => {
-                        const ok = await this.showConfirmDialog(`Delete "${sel.name}"${kids.length ? ' and its subtasks' : ''}?`);
-                        if (ok) this.deleteGanttTask(sel.id);
-                    }, 'danger'));
+                    btn('🗑', 'Delete (Delete key) - Ctrl+Z brings it back', () => this.deleteGanttSelected(), 'danger'));
             } else {
-                actions.append(el('span', { class: 'gantt-hint', text: 'Tap a bar to select it. Drag bars to move them, drag their ends to change dates. Scroll the mouse wheel (or pinch) to zoom; drag any empty space to pan; Shift + wheel scrolls up and down.' }));
+                actions.append(el('span', { class: 'gantt-hint', text: 'Tap a bar or a name to select it (Delete key removes it, Ctrl+Z undoes). Drag bars to move them, drag their ends to change dates. Scroll the mouse wheel (or pinch) to zoom; drag any empty space to pan; Shift + wheel scrolls up and down.' }));
             }
             return el('div', { class: 'gantt-top' }, bar, actions);
         },
@@ -1472,16 +1542,83 @@
     FlowchartViewer.prototype.loadFlowchartFromList = function (...args) {
         const before = this.currentSlotIndex;
         const r = origLoad.apply(this, args);
-        if (before !== this.currentSlotIndex) this._ganttSelected = null;
+        if (before !== this.currentSlotIndex) {
+            this._ganttSelected = null;
+            this.resetGanttHistory();
+        } else {
+            // Same flowchart reloaded (e.g. someone else's change synced in).
+            this._ganttLastSnap = this.ganttSnapshot();
+        }
         if (this._ganttMode) this.renderGantt();
         return r;
     };
+
+    // In the Gantt view, undo/redo (the buttons and Ctrl+Z / Ctrl+Shift+Z, which
+    // script.js already sends here) act on the chart instead of the tree.
+    const origUndo = FlowchartViewer.prototype.undo;
+    const origRedo = FlowchartViewer.prototype.redo;
+    const origButtons = FlowchartViewer.prototype.updateUndoRedoButtons;
+    FlowchartViewer.prototype.undo = function (...args) {
+        return this._ganttMode ? this.undoGantt() : origUndo.apply(this, args);
+    };
+    FlowchartViewer.prototype.redo = function (...args) {
+        return this._ganttMode ? this.redoGantt() : origRedo.apply(this, args);
+    };
+    FlowchartViewer.prototype.updateUndoRedoButtons = function (...args) {
+        if (!this._ganttMode) return origButtons.apply(this, args);
+        const canUndo = !!(this._ganttUndo && this._ganttUndo.length);
+        const canRedo = !!(this._ganttRedo && this._ganttRedo.length);
+        [[this.undoBtn, canUndo], [this.topUndoBtn, canUndo], [this.redoBtn, canRedo], [this.topRedoBtn, canRedo]].forEach(([b, on]) => {
+            if (!b) return;
+            b.style.opacity = on ? '1' : '0.5';
+            b.style.pointerEvents = on ? 'auto' : 'none';
+        });
+        document.querySelectorAll('#gantt-view .gantt-tb-btn').forEach((b) => {
+            if (b.textContent === '↩') b.classList.toggle('disabled', !canUndo);
+            if (b.textContent === '↪') b.classList.toggle('disabled', !canRedo);
+        });
+    };
+    // Delete / Backspace removes the selected task (picked by clicking its bar or
+    // its name on the left). In the Gantt view these keys never reach the
+    // flowchart's own Delete handler, which would remove a hidden node.
+    document.addEventListener('keydown', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || !app._ganttMode) return;
+        if (e.key !== 'Delete' && e.key !== 'Del' && e.key !== 'Backspace') return;
+        const a = document.activeElement;
+        const typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
+        if (typing) {
+            // Ordinary text editing - but keep the flowchart handler out of it.
+            if (e.key !== 'Backspace') e.stopImmediatePropagation();
+            return;
+        }
+        e.stopImmediatePropagation();
+        if (document.getElementById('gantt-popup')) return;
+        if (app.deleteGanttSelected()) e.preventDefault();
+    }, true);
+
+    // Also Ctrl+Y, and Cmd+Z / Cmd+Shift+Z on a Mac (script.js handles Ctrl+Z / Ctrl+Shift+Z).
+    document.addEventListener('keydown', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || !app._ganttMode) return;
+        const a = document.activeElement;
+        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return;
+        const k = (e.key || '').toLowerCase();
+        if (e.metaKey && !e.ctrlKey && k === 'z') {
+            e.preventDefault();
+            if (e.shiftKey) app.redoGantt(); else app.undoGantt();
+        } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && k === 'y') {
+            e.preventDefault();
+            app.redoGantt();
+        }
+    });
 
     // A brand-new flowchart starts without a Gantt chart.
     const origNew = FlowchartViewer.prototype.createNewFlowchart;
     FlowchartViewer.prototype.createNewFlowchart = function (...args) {
         const r = origNew.apply(this, args);
         this._ganttSelected = null;
+        this.resetGanttHistory();
         if (this._ganttMode) this.renderGantt();
         return r;
     };
