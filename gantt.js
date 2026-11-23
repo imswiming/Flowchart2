@@ -406,9 +406,15 @@
             const view = document.getElementById('gantt-view');
             if (view && window.ResizeObserver) {
                 let lastW = 0;
+                let lastH = 0;
                 new ResizeObserver(() => {
                     const w = view.clientWidth;
-                    if (this._ganttMode && w && Math.abs(w - lastW) > 2) { lastW = w; this.renderGantt(); }
+                    const h = view.clientHeight;
+                    if (this._ganttMode && w && (Math.abs(w - lastW) > 2 || Math.abs(h - lastH) > 2)) {
+                        lastW = w;
+                        lastH = h;
+                        this.renderGantt();
+                    }
                 }).observe(view);
             } else {
                 window.addEventListener('resize', () => { if (this._ganttMode) this.renderGantt(); });
@@ -481,18 +487,28 @@
             this._ganttGeom = { r0, ppd, LIST_W };
 
             // Rows: main tasks taller than subtasks, with a gap above each group.
+            // When the whole plan fits on screen, the rows stretch to fill the
+            // height (up to 3x); a longer plan keeps normal rows and scrolls.
             const rows = this.ganttOrdered(false);
-            const tops = [];
-            const heights = [];
-            let y = 6;
-            rows.forEach((t, i) => {
-                if (!t.parent && i > 0) y += 10;
-                tops.push(y);
-                const h = t.parent ? ROW_SUB : ROW_MAIN;
-                heights.push(h);
-                y += h;
-            });
-            const bodyH = Math.max(y + 16, 140);
+            const layout = (f) => {
+                const tops = []; const heights = [];
+                let y = 6 * f;
+                rows.forEach((t, i) => {
+                    if (!t.parent && i > 0) y += 10 * f;
+                    tops.push(y);
+                    const h = (t.parent ? ROW_SUB : ROW_MAIN) * f;
+                    heights.push(h);
+                    y += h;
+                });
+                return { tops, heights, end: y + 16 * f };
+            };
+            const natural = layout(1);
+            const barRoom = view.querySelector('.gantt-top, .gantt-toolbar');
+            const avail = view.clientHeight - (barRoom ? barRoom.offsetHeight : 0) - HEAD_H - 14;
+            const fit = clamp(avail / natural.end, 1, 3);
+            const { tops, heights } = fit > 1.02 ? layout(fit) : natural;
+            this._ganttRowScale = fit > 1.02 ? fit : 1;
+            const bodyH = Math.max(fit > 1.02 ? avail : natural.end, 140);
             this._ganttRows = { rows, tops, heights };
 
             const scroll = el('div', { class: 'gantt-scroll' });
@@ -764,9 +780,10 @@
             const kids = t.parent ? [] : this.ganttChildren(t.id);
             const complete = this.ganttComplete(t);
             const pct = Math.round(this.ganttProgress(t) * 100);
+            const grow = Math.min(Math.sqrt(this._ganttRowScale || 1), 1.4);
             const row = el('div', {
                 class: 'gantt-lrow' + (t.parent ? ' sub' : ' main') + (complete ? ' complete' : '') + (t.id === this._ganttSelected ? ' selected' : ''),
-                style: `top:${top}px;height:${h}px;`,
+                style: `top:${top}px;height:${h}px;font-size:${Math.round(grow * 100)}%;`,
                 title: `${this.ganttNumber(t)}  ${t.name}${t.assignee ? ' - ' + t.assignee : ''} (${pct}% done)`,
                 onclick: () => this.selectGanttTask(t.id)
             });
@@ -819,7 +836,9 @@
             }
             const x = xOf(sp.s);
             const w = Math.max((sp.e - sp.s + 1) * ppd, 8);
-            const barH = t.parent ? 7 : 13;
+            // Thicker bars when the rows are stretched to fill the screen.
+            const grow = Math.min(Math.sqrt(this._ganttRowScale || 1), 1.6);
+            const barH = Math.round((t.parent ? 7 : 13) * grow);
             const b = el('div', {
                 class: 'gantt-bar' + (t.parent ? ' sub' : ' main') + (complete ? ' complete' : '') + (sel ? ' selected' : ''),
                 style: `left:${x}px;top:${mid - barH / 2}px;width:${w}px;height:${barH}px;--c:${color};`,

@@ -3599,11 +3599,11 @@ body.gantt-mode #flowchart {
     text-overflow: ellipsis;
 }
 
-.gantt-lrow.main .gantt-label { font-size: 15px; }
-.gantt-lrow.sub .gantt-label { font-size: 11.5px; color: var(--g-sub); }
+.gantt-lrow.main .gantt-label { font-size: 1.07em; }
+.gantt-lrow.sub .gantt-label { font-size: 0.82em; color: var(--g-sub); }
 .gantt-lrow.complete .gantt-label { text-decoration: line-through; opacity: 0.7; }
 
-.gantt-tick { color: #2fcf8a; font-weight: 700; font-size: 12px; }
+.gantt-tick { color: #2fcf8a; font-weight: 700; font-size: 0.86em; }
 .gantt-ms-mark { font-size: 10px; }
 
 .gantt-fold {
@@ -3619,7 +3619,7 @@ body.gantt-mode #flowchart {
 .gc-pct {
     flex: 0 0 34px;
     text-align: right;
-    font-size: 10.5px;
+    font-size: 0.75em;
     color: var(--g-sub);
     font-variant-numeric: tabular-nums;
 }
