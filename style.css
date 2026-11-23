@@ -3644,7 +3644,10 @@ body.gantt-mode #flowchart {
     cursor: grab;
 }
 
-.gantt-body.panning { cursor: grabbing; }
+.gantt-scroll.panning,
+.gantt-scroll.panning * { cursor: grabbing !important; }
+.gantt-list, .gantt-head { cursor: grab; }
+.gantt-lrow { cursor: pointer; }
 
 .gantt-vline {
     position: absolute;

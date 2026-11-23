@@ -655,6 +655,13 @@
             rows.forEach((t, i) => body.append(this.buildGanttBar(t, tops[i], heights[i], xOf)));
             bodyRow.append(body);
             view.append(scroll);
+            // Fill the window: the grid, list and today line run to the bottom.
+            const room = scroll.clientHeight - HEAD_H;
+            if (room > bodyH) {
+                bodyRow.style.height = `${room}px`;
+                body.style.height = `${room}px`;
+                svg.setAttribute('height', room);
+            }
 
             this.wireGanttScroll(scroll, body);
             if (this._ganttScrollToToday) {
@@ -720,7 +727,7 @@
                         if (ok) this.deleteGanttTask(sel.id);
                     }, 'danger'));
             } else {
-                actions.append(el('span', { class: 'gantt-hint', text: 'Tap a bar to select it. Drag bars to move them, drag their ends to change dates. Ctrl + scroll (or pinch) zooms; drag the background to pan.' }));
+                actions.append(el('span', { class: 'gantt-hint', text: 'Tap a bar to select it. Drag bars to move them, drag their ends to change dates. Scroll the mouse wheel (or pinch) to zoom; drag any empty space to pan; Shift + wheel scrolls up and down.' }));
             }
             return el('div', { class: 'gantt-top' }, bar, actions);
         },
@@ -904,32 +911,64 @@
         hideGanttDragTip() { const tip = document.getElementById('gantt-drag-tip'); if (tip) tip.style.display = 'none'; },
 
         wireGanttScroll(scroll, body) {
-            // Ctrl/⌘ + wheel (and trackpad pinch) zooms around the pointer.
+            // Mouse wheel zooms around the pointer (Shift + wheel scrolls up and
+            // down; a trackpad's sideways swipe still scrolls sideways).
+            let wheelFactor = 1;
+            let wheelX = 0;
+            let wheelPending = false;
             scroll.addEventListener('wheel', (e) => {
-                if (!(e.ctrlKey || e.metaKey)) return;
+                if (e.shiftKey && !(e.ctrlKey || e.metaKey)) return;
+                if (!(e.ctrlKey || e.metaKey) && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
                 e.preventDefault();
-                this.zoomGantt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);
+                const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+                wheelFactor *= clamp(Math.exp(-dy * 0.0016), 0.6, 1.6);
+                wheelX = e.clientX;
+                if (wheelPending) return;
+                wheelPending = true;
+                requestAnimationFrame(() => {
+                    wheelPending = false;
+                    const f = wheelFactor;
+                    wheelFactor = 1;
+                    if (Math.abs(f - 1) > 0.001) this.zoomGantt(f, wheelX, true);
+                });
             }, { passive: false });
-            // Mouse: drag the background to pan.
-            body.addEventListener('pointerdown', (e) => {
+            // Mouse: drag any empty spot (timeline, task list, header) to pan.
+            // A press that doesn't move is still an ordinary click.
+            scroll.addEventListener('pointerdown', (e) => {
                 if (e.pointerType !== 'mouse' || e.button !== 0) return;
+                if (e.target.closest('.gantt-bar, .gantt-milestone, button, input, select, a, .gc-pct.clickable, .gc-note, .gantt-fold')) return;
                 const sx = e.clientX, sy = e.clientY, l = scroll.scrollLeft, t = scroll.scrollTop;
                 let moved = false;
-                try { body.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
-                body.classList.add('panning');
+                const onBody = !!e.target.closest('.gantt-body');
                 const move = (ev) => {
-                    if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) moved = true;
+                    if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+                    if (!moved) {
+                        moved = true;
+                        scroll.classList.add('panning');
+                        document.body.style.userSelect = 'none';
+                    }
                     scroll.scrollLeft = l - (ev.clientX - sx);
                     scroll.scrollTop = t - (ev.clientY - sy);
                 };
                 const up = () => {
-                    body.removeEventListener('pointermove', move);
-                    body.removeEventListener('pointerup', up);
-                    body.classList.remove('panning');
-                    if (!moved && this._ganttSelected) { this._ganttSelected = null; this.renderGantt(); }
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
+                    window.removeEventListener('pointercancel', up);
+                    scroll.classList.remove('panning');
+                    document.body.style.userSelect = '';
+                    if (moved) {
+                        // Swallow the click that follows a drag (it would select a row).
+                        const eat = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+                        window.addEventListener('click', eat, { capture: true, once: true });
+                        setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
+                    } else if (onBody && this._ganttSelected) {
+                        this._ganttSelected = null;
+                        this.renderGantt();
+                    }
                 };
-                body.addEventListener('pointermove', move);
-                body.addEventListener('pointerup', up);
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', up);
+                window.addEventListener('pointercancel', up);
             });
             // Touch: two fingers pinch to zoom (one finger scrolls natively).
             const pts = new Map();
