@@ -930,6 +930,8 @@ class FlowchartViewer {
         this.flowchartList = [];
         this.loadFlowchartList();
         this.rehydrateAllFromImageDb().catch(err => console.error('Could not read saved pictures:', err));
+        // Flowcharts shared with other people (sharing.js).
+        if (typeof this.setupSharing === 'function') this.setupSharing();
 
         // Set up event listeners
         if (this.topUndoBtn) this.topUndoBtn.addEventListener('click', () => this.undo());
@@ -1446,6 +1448,16 @@ class FlowchartViewer {
             hashes = Array.from(this.findImageRefsInDataString(item.data));
             if (hashes.length === 0) return;
         }
+        // A shared flowchart's pictures are kept with it (sharing.js).
+        if (item.share && typeof this.fetchShareImages === 'function') {
+            try {
+                const got = await this.fetchShareImages(item, hashes);
+                item.data = this.rehydrateImagesInDataString(item.data, got);
+            } catch (err) {
+                console.error('Failed to fetch shared images/drawings:', err);
+            }
+            return;
+        }
         // Anything still missing has to come from the cloud, if connected.
         if (!(this.cloudApiKey && this.cloudProjectUrl && this.cloudSyncId)) return;
         if (!this._uploadedImageHashes) this._uploadedImageHashes = new Set();
@@ -1515,6 +1527,8 @@ class FlowchartViewer {
     }
 
     scheduleCloudPush() {
+        // Shared flowcharts sync on their own (sharing.js), signed in or not.
+        if (typeof this.scheduleSharePush === 'function') this.scheduleSharePush();
         if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return;
         clearTimeout(this._cloudPushTimer);
         this._cloudPushTimer = setTimeout(() => this.cloudPush(), 2000);
@@ -1642,6 +1656,8 @@ class FlowchartViewer {
         const refresh = p.get('refresh_token');
         history.replaceState(null, '', location.pathname + location.search);
         if (!access || !refresh) return;
+        // A guest confirming the email they added to a shared flowchart (sharing.js).
+        if (typeof this.takeGuestAuthRedirect === 'function' && await this.takeGuestAuthRedirect(p)) return;
         const user = await this.cloudAuthFetch('user', { token: access });
         this.completeSignIn({
             access_token: access,
@@ -1744,7 +1760,7 @@ class FlowchartViewer {
     // First sign-in for an account: its row doesn't exist yet, so it's created from
     // what's already on this device (pictures follow on the next push).
     async createCloudRowForUser() {
-        const list = this.flowchartList.map(item => ({
+        const list = this.ownFlowcharts().map(item => ({
             title: item.title,
             data: this.stripImagesFromDataString(item.data || '').stripped
         }));
@@ -1996,7 +2012,7 @@ class FlowchartViewer {
             // just text/structure, typically tiny regardless of how many photos or
             // drawings are attached anywhere in the flowchart list.
             const newImageMap = {};
-            const strippedList = this.flowchartList.map(item => {
+            const strippedList = this.ownFlowcharts().map(item => {
                 const { stripped, imageMap } = this.stripImagesFromDataString(item.data || '');
                 Object.assign(newImageMap, imageMap);
                 return { title: item.title, data: stripped };
@@ -2184,7 +2200,7 @@ class FlowchartViewer {
                     const base = this.loadSyncBase();
                     let keepLocalOnly = true;
                     if (!base) {
-                        const localOnlyItems = this.flowchartList.filter(local =>
+                        const localOnlyItems = this.ownFlowcharts().filter(local =>
                             !remoteList.some(r => r.title === local.title)
                         );
                         if (localOnlyItems.length > 0) {
@@ -2202,12 +2218,12 @@ class FlowchartViewer {
                     // Whatever was changed here since the last sync is merged with the
                     // cloud's copy (three-way: what the cloud held then, this device
                     // now, the cloud now) instead of the cloud's list replacing it.
-                    const merged = this.mergeFlowchartLists(base, this.flowchartList, remoteList, { keepLocalOnly });
+                    const merged = this.mergeFlowchartLists(base, this.ownFlowcharts(), remoteList, { keepLocalOnly });
                     this.saveNotesBasesFromList(remoteList);
                     this.saveSyncBase(remoteList);
 
                     this._applyingRemote = true;
-                    this.flowchartList = merged.list;
+                    this.flowchartList = this.withSharedFlowcharts(merged.list);
                     this._lastPushedDataJson = JSON.stringify({ flowchartList: remoteList.map(i => ({ title: i.title, data: i.data })) });
                     this.saveFlowchartList();
                     localStorage.setItem('cloud-sync-known-remote-at', String(remoteUpdatedAt));
@@ -2259,6 +2275,30 @@ class FlowchartViewer {
     // ----- Merging the flowchart list (see FlowchartMerge) -----
     // `cloud-sync-base-list` is the list as the cloud last held it (image-free, so
     // small) - the common ancestor for the three-way merge.
+    // Flowcharts shared with other people (sharing.js) sync through rows of their
+    // own, so the account's own list row leaves them out...
+    ownFlowcharts() {
+        return this.flowchartList.filter(item => !(item && item.share));
+    }
+
+    // ...and they're put back where they were after that list is merged.
+    withSharedFlowcharts(ownList) {
+        const list = ownList.slice();
+        this.flowchartList.forEach((item, i) => {
+            if (item && item.share) list.splice(Math.min(i, list.length), 0, item);
+        });
+        // Titles must stay unique (flowcharts are matched by title).
+        list.forEach((item) => {
+            if (item.share && ownList.some(o => o.title === item.title)) {
+                let n = 1;
+                const t = () => (n === 1 ? `${item.share.title} (shared)` : `${item.share.title} (shared ${n})`);
+                while (list.some(o => o !== item && o.title === t())) n++;
+                item.title = t();
+            }
+        });
+        return list;
+    }
+
     loadSyncBase() {
         try {
             const v = JSON.parse(localStorage.getItem('cloud-sync-base-list') || 'null');
@@ -2791,8 +2831,12 @@ class FlowchartViewer {
                 renameBtn.style.cursor = 'pointer';
                 
                 renameBtn.onclick = () => {
-                    const newTitle = prompt('Enter new name:', titleSpan.textContent);
+                    const newTitle = prompt('Enter new name:', item.share ? item.share.title : titleSpan.textContent);
                     if (newTitle && newTitle.trim()) {
+                        if (item.share && this.renameSharedFlowchart(index, newTitle.trim())) {
+                            this.showStoragePopup();
+                            return;
+                        }
                         this.flowchartList[index].title = newTitle.trim();
                         this.saveFlowchartList();
                         this.showStoragePopup();
@@ -2808,6 +2852,10 @@ class FlowchartViewer {
                 deleteBtn.style.cursor = 'pointer';
                 
                 deleteBtn.onclick = () => {
+                    if (item.share) {
+                        this.deleteSharedFlowchart(index);
+                        return;
+                    }
                     if (confirm(`Delete "${titleSpan.textContent}"?`)) {
                         this.flowchartList.splice(index, 1);
                         if (this.currentSlotIndex === index) {
@@ -2827,8 +2875,25 @@ class FlowchartViewer {
                     }
                 };
                 
+                // Sharing (sharing.js): who it's shared with, and Manage access.
+                const shareBtn = document.createElement('button');
+                shareBtn.className = 'storage-share-btn';
+                shareBtn.textContent = item.share ? (item.share.role === 'owner' ? '👥 Access' : '👥 Shared') : '👥 Share';
+                shareBtn.title = item.share
+                    ? (item.share.role === 'owner' ? 'Shared - manage who has access' : `Shared with you (${item.share.role === 'edit' ? 'can edit' : 'view only'})`)
+                    : 'Share this flowchart with other people';
+                shareBtn.onclick = () => this.openSharePanel(index);
+                if (item.share) {
+                    deleteBtn.textContent = item.share.role === 'owner' ? 'Delete' : 'Leave';
+                    const badge = document.createElement('span');
+                    badge.className = 'storage-share-badge';
+                    badge.textContent = item.share.role === 'owner' ? 'shared' : (item.share.role === 'edit' ? 'shared with you' : 'view only');
+                    titleSpan.appendChild(badge);
+                }
+
                 slot.appendChild(titleSpan);
                 slot.appendChild(selectBtn);
+                if (typeof this.openSharePanel === 'function') slot.appendChild(shareBtn);
                 slot.appendChild(renameBtn);
                 slot.appendChild(deleteBtn);
                 this.storageSlots.appendChild(slot);
@@ -6550,7 +6615,18 @@ class FlowchartViewer {
     // The tab currently feeding the single embedded editor - self-heals (same
     // pattern as get pughMatrix()) if the active id or the whole list is ever
     // missing/empty, e.g. the tab it pointed at was just deleted.
+    // Global notes are your own: they're hidden while a flowchart someone else
+    // shared with you is open (sharing.js), so only its own notes show.
+    globalNotesHidden() {
+        return typeof this.hideGlobalNotes === 'function' && this.hideGlobalNotes();
+    }
+
+    visibleGlobalNotesTabs() {
+        return this.globalNotesHidden() ? [] : this.globalNotesTabs;
+    }
+
     getActiveNotesTab() {
+        if (this._activeNotesScope === 'global' && this.globalNotesHidden()) this._activeNotesScope = 'chart';
         const scope = this._activeNotesScope;
         let list = this.getNotesTabsList(scope);
         if (!Array.isArray(list) || list.length === 0) {
@@ -6835,7 +6911,7 @@ class FlowchartViewer {
     // longer match a note (it was deleted) are dropped.
     getPinnedNotes() {
         const all = [
-            ...this.globalNotesTabs.map(tab => ({ scope: 'global', tab })),
+            ...this.visibleGlobalNotesTabs().map(tab => ({ scope: 'global', tab })),
             ...this.notesTabs.map(tab => ({ scope: 'chart', tab })),
         ];
         if (this.notesPinned === null) return all;
@@ -9001,7 +9077,7 @@ class FlowchartViewer {
             const isTabbed = (scope, id) => tabbed.some(e => e.scope === scope && e.tab.id === id);
             const all = [
                 ...tabbed.map(e => ({ ...e, tabbed: true })),
-                ...this.globalNotesTabs.filter(tab => !isTabbed('global', tab.id)).map(tab => ({ scope: 'global', tab })).sort(byName),
+                ...this.visibleGlobalNotesTabs().filter(tab => !isTabbed('global', tab.id)).map(tab => ({ scope: 'global', tab })).sort(byName),
                 ...this.notesTabs.filter(tab => !isTabbed('chart', tab.id)).map(tab => ({ scope: 'chart', tab })).sort(byName),
             ];
             return {
@@ -9049,7 +9125,7 @@ class FlowchartViewer {
                     ]
                 })),
                 footer: [
-                    {
+                    ...(this.globalNotesHidden() ? [] : [{
                         label: '+ New global note',
                         onClick: async () => {
                             const name = await this.showNameDialog('Name the new global note');
@@ -9058,7 +9134,7 @@ class FlowchartViewer {
                             if (assigning) pick('global', this.getActiveNotesTabId('global'));
                             close();
                         }
-                    },
+                    }]),
                     {
                         label: '+ New note (this flowchart)',
                         onClick: async () => {
@@ -9718,6 +9794,7 @@ class FlowchartViewer {
         if (node.type === 'leaf') {
             if (typeof node.paneId !== 'string' || !node.paneId) return null;
             const scope = node.scope === 'global' ? 'global' : 'chart';
+            if (scope === 'global' && this.globalNotesHidden()) return null;
             if (!this.getNotesTab(scope, node.tabId)) return null;
             return { type: 'leaf', paneId: node.paneId, scope, tabId: node.tabId };
         }
@@ -9992,7 +10069,7 @@ class FlowchartViewer {
             });
             return group;
         };
-        select.appendChild(buildOptGroup('Global', 'global', this.globalNotesTabs));
+        if (!this.globalNotesHidden()) select.appendChild(buildOptGroup('Global', 'global', this.globalNotesTabs));
         select.appendChild(buildOptGroup('This Flowchart', 'chart', this.notesTabs));
         select.addEventListener('change', () => {
             const [scope, tabId] = select.value.split(/:(.+)/);

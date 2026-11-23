@@ -3226,3 +3226,130 @@ body.notes-history-off .ck.ck-content [data-note-times]::after {
         display: none;
     }
 }
+
+/* ===== Sharing (sharing.js) - same look as the Cloud Sync menu ===== */
+.sh-popup {
+    width: min(480px, 94vw);
+}
+
+.sh-section {
+    margin: 10px 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.sh-role {
+    flex: 0 0 auto !important;
+    width: auto;
+    padding: 6px 8px;
+    font-size: 13px;
+}
+
+.sh-invite {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--control-bg);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+}
+
+.sh-code {
+    margin: 4px 0 8px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 26px;
+    font-weight: bold;
+    letter-spacing: 3px;
+    user-select: all;
+}
+
+.sh-code-small {
+    font-family: ui-monospace, Consolas, monospace;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.sh-code-input {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 20px !important;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.sh-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sh-member {
+    padding: 8px 10px;
+    background: var(--control-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.sh-member-head,
+.sh-invite-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.sh-member-name {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.sh-devices {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+}
+
+.sh-badge,
+.storage-share-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    font-size: 11px;
+    border-radius: 10px;
+    background: rgba(0, 166, 126, 0.18);
+    border: 1px solid rgba(0, 166, 126, 0.5);
+}
+
+.storage-share-badge {
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+#share-banner {
+    position: fixed;
+    left: 50%;
+    top: 12px;
+    transform: translateX(-50%);
+    z-index: 1500;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--popup-bg);
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 70vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+#share-banner.sh-view {
+    border-color: #e8a317;
+}
+
+@media (max-width: 600px) {
+    #share-banner {
+        top: auto;
+        bottom: 10px;
+    }
+}
