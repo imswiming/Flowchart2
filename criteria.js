@@ -237,10 +237,13 @@
         },
 
         // ----- Picking several nodes (Shift + click) -----
+        // The yellow outline: on the Shift-picked nodes, and on the selected node.
         paintCritPicks() {
             const picks = this._critPicks;
             if (typeof d3 === 'undefined') return;
-            d3.selectAll('#flowchart g.node').classed('crit-picked', d => !!(picks && picks.size && d && picks.has(d.data)));
+            const sel = this.selectedNode && this.selectedNode.data;
+            d3.selectAll('#flowchart g.node').classed('crit-picked', d => !!(d && d.data && (
+                (picks && picks.size && picks.has(d.data)) || (sel && d.data === sel && !this.isPlaceholderNodeData(d.data)))));
         },
 
         clearCritPicks() {
@@ -515,6 +518,17 @@
     };
 
     // Saving always writes the real tree.
+    // Selecting / deselecting a node moves the yellow outline.
+    ['selectNode', 'deselectNode'].forEach((name) => {
+        const orig = proto[name];
+        if (!orig) return;
+        proto[name] = function (...args) {
+            const r = orig.apply(this, args);
+            this.paintCritPicks();
+            return r;
+        };
+    });
+
     // Saving always writes the real tree: the view's stand-in swapped out, and
     // nodes showing their criteria in place saved with their real children.
     const withRealChildren = (app, fn) => {
@@ -581,6 +595,14 @@
         if (picks.has(d.data)) picks.delete(d.data); else picks.add(d.data);
         app.paintCritPicks();
         if (picks.size > 1) app.showNotification(`${picks.size} nodes picked - 🎯 on one of them shows their criteria side by side. Esc clears.`, 3500);
+    }, true);
+
+    // A drag or click on the chart can drop the selection without going
+    // through deselectNode (script.js's pan handler): keep the outline in step.
+    document.addEventListener('pointerup', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || !e.target || !e.target.closest || !e.target.closest('#flowchart')) return;
+        setTimeout(() => app.paintCritPicks(), 0);
     }, true);
 
     document.addEventListener('keydown', (e) => {
