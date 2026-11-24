@@ -7503,6 +7503,7 @@ class FlowchartViewer {
                     { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
                     { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
                     { model: 'heading5', view: 'h5', title: 'Subheading', class: 'ck-heading_heading5' },
+                    { model: 'heading6', view: 'h6', title: 'Minor heading', class: 'ck-heading_heading6' },
                 ],
             },
             // The Highlight button's colours (see NOTES_HIGHLIGHT_COLORS).
@@ -7717,7 +7718,7 @@ class FlowchartViewer {
                         for (const item of writer.createRangeIn(root).getItems()) {
                             if (!item.is('$textProxy') || item.hasAttribute('noteStamp') || !/\S/.test(item.data)) { flush(); continue; }
                             // titles and subheadings are left alone
-                            if (item.parent.is('element', 'heading4') || item.parent.is('element', 'heading5')) { flush(); continue; }
+                            if (item.parent.is('element', 'heading4') || item.parent.is('element', 'heading5') || item.parent.is('element', 'heading6')) { flush(); continue; }
                             const r = model.createRangeOn(item);
                             if (run && run.end.isEqual(r.start)) run = writer.createRange(run.start, r.end);
                             else { flush(); run = r; }
@@ -9171,7 +9172,7 @@ class FlowchartViewer {
         this.dismissNotesKeyboard();
         // Titles and subheadings, in the order they appear in the note.
         const titles = Array.from(editor.model.document.getRoot().getChildren())
-            .filter(c => c.is('element', 'heading4') || c.is('element', 'heading5'));
+            .filter(c => c.is('element', 'heading4') || c.is('element', 'heading5') || c.is('element', 'heading6'));
         this.showNotesListPopup(({ close }) => ({
             title: 'Titles',
             searchable: true,
@@ -9180,10 +9181,11 @@ class FlowchartViewer {
             items: titles.map((t) => {
                 let text = '';
                 for (const item of t.getChildren()) if (item.is('$text')) text += item.data;
-                const isSub = t.is('element', 'heading5');
+                const isSub = t.is('element', 'heading5') || t.is('element', 'heading6');
+                const isMinor = t.is('element', 'heading6');
                 return {
                     label: text.trim() || (isSub ? '(untitled subheading)' : '(untitled)'),
-                    sub: isSub ? 'Subheading' : (t.getAttribute('folded') ? 'Folded' : ''),
+                    sub: isMinor ? 'Minor heading' : isSub ? 'Subheading' : (t.getAttribute('folded') ? 'Folded' : ''),
                     indent: isSub,
                     onClick: () => { close(); this.jumpToNotesTitle(editor, t); }
                 };
@@ -10192,6 +10194,7 @@ class FlowchartViewer {
                     { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
                     { model: 'heading4', view: 'h4', title: 'Title', class: 'ck-heading_heading4' },
                     { model: 'heading5', view: 'h5', title: 'Subheading', class: 'ck-heading_heading5' },
+                    { model: 'heading6', view: 'h6', title: 'Minor heading', class: 'ck-heading_heading6' },
                 ],
             },
             highlight: {

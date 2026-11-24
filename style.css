@@ -418,6 +418,17 @@ body {
     flex-shrink: 0;
 }
 
+/* Minor heading: one level below a Subheading (Gantt checklist items use it). */
+#notes-editor-wrap .ck.ck-content h6, .notes-editor-wrap-el .ck.ck-content h6 {
+    font-size: 16px !important;
+    font-weight: bold !important;
+    margin-bottom: 0;
+    margin-left: 28px !important;
+    color: var(--muted, #9aa6b2);
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+}
+
 #notes-editor-wrap .ck.ck-content ul, .notes-editor-wrap-el .ck.ck-content ul,
 #notes-editor-wrap .ck.ck-content ol , .notes-editor-wrap-el .ck.ck-content ol {
     padding-left: 2.8em;

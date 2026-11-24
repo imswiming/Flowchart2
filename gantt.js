@@ -772,6 +772,7 @@
             }
             this._ganttR0 = r0;
             this._ganttPpd = ppd;
+            this.positionGanttDock();
         },
 
         buildGanttToolbar() {
@@ -1151,6 +1152,24 @@
             this.renderGanttDock();
         },
 
+        // In the timeline's bottom-left corner, just right of the task list (on a
+        // phone: the bottom of the screen).
+        positionGanttDock() {
+            const d = document.getElementById('gantt-checklist-dock');
+            const sc = document.querySelector('#gantt-view .gantt-scroll');
+            if (!d) return;
+            if (!sc || window.innerWidth <= 600 || !this._ganttGeom) {
+                d.style.left = ''; d.style.bottom = ''; d.style.width = '';
+                return;
+            }
+            const r = sc.getBoundingClientRect();
+            const scrollbar = sc.offsetHeight - sc.clientHeight;
+            const left = r.left + this._ganttGeom.LIST_W + 12;
+            d.style.left = `${Math.round(left)}px`;
+            d.style.bottom = `${Math.round(window.innerHeight - r.bottom + scrollbar + 12)}px`;
+            d.style.width = `${Math.round(Math.max(220, Math.min(320, r.right - left - 12)))}px`;
+        },
+
         closeGanttDock() {
             this._ganttDockId = null;
             const d = document.getElementById('gantt-checklist-dock');
@@ -1175,6 +1194,7 @@
                 document.body.append(d);
             }
             d.innerHTML = '';
+            this.positionGanttDock();
             const kids = t.parent ? [] : this.ganttChildren(t.id);
             const c = this.ganttCounts(t);
             const pct = c.total ? Math.round(c.done / c.total * 100) : 0;
@@ -1212,14 +1232,14 @@
             }
             t.checklist.forEach((item) => {
                 const text = el('input', { class: 'cs-input gantt-ck-text' + (item.done ? ' done' : ''), type: 'text', value: item.text });
-                text.addEventListener('change', () => { item.text = text.value; this.ganttChanged(false); });
+                text.addEventListener('change', () => { item.text = text.value; this.ganttChanged(true); });
                 text.addEventListener('keydown', (e) => { if (e.key === 'Enter') text.blur(); });
                 body.append(el('div', { class: 'gantt-ck-item' },
-                    el('input', { type: 'checkbox', checked: item.done, onchange: (e) => { item.done = e.target.checked; this.ganttChanged(false); this.renderGanttDock(); } }),
+                    el('input', { type: 'checkbox', checked: item.done, onchange: (e) => { item.done = e.target.checked; this.ganttChanged(true); this.renderGanttDock(); } }),
                     text,
                     el('button', { class: 'cs-btn cs-small-btn cs-danger', type: 'button', text: '×', title: 'Remove', onclick: () => {
                         t.checklist = t.checklist.filter(x => x !== item);
-                        this.ganttChanged(false);
+                        this.ganttChanged(true);
                         this.renderGanttDock();
                     } })));
             });
@@ -1229,7 +1249,7 @@
                 if (!v) return;
                 t.checklist.push({ id: uid('ck'), text: v, done: false });
                 add.blur();
-                this.ganttChanged(false);
+                this.ganttChanged(true);
                 const again = document.querySelector('#gantt-checklist-dock input[placeholder="Add an item..."]');
                 if (again) again.focus();
             };
@@ -1335,8 +1355,9 @@
             return tab;
         },
 
-        // Rewrites the titles of the Gantt notes to match the chart, keeping what
-        // was written under each one with its task.
+        // Rewrites the headings of the Gantt notes to match the chart: a Title per
+        // main task, a Subheading per subtask and a Minor heading per checklist
+        // item (✓ once ticked), keeping what was written under each one with it.
         syncGanttNotes() {
             const g = this.gantt;
             if (!g || g.tasks.length === 0 && !g.notesTabId) return false;
@@ -1344,20 +1365,23 @@
             if (!tab) return false;
             const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
             const blocks = Array.from(doc.body.childNodes).filter(n => n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()));
-            const byText = new Map(); // text -> [task ids, in the order written]
+            // Headings written last time: text -> [ids, in order]. Tasks are
+            // Titles/Subheadings ('T'), checklist items Minor headings ('C').
+            const kindOfTag = tag => (tag === 'H6' ? 'C' : 'T');
+            const byText = new Map();
             Object.entries(g.noteTitles || {}).forEach(([id, text]) => {
-                if (!byText.has(text)) byText.set(text, []);
-                byText.get(text).push(id);
+                const key = `${id.startsWith('ck:') ? 'C' : 'T'}|${text}`;
+                if (!byText.has(key)) byText.set(key, []);
+                byText.get(key).push(id);
             });
-            const sections = new Map(); // taskId -> { blocks, folded }
+            const sections = new Map(); // id -> { blocks, folded, title }
             const preamble = [];
-            const orphans = [];         // [{ title, blocks }]
             let cur = null;
             blocks.forEach((n) => {
-                const isHead = n.nodeType === 1 && /^H[45]$/.test(n.tagName);
-                const queue = isHead ? byText.get(n.textContent.trim()) : null;
+                const isHead = n.nodeType === 1 && /^H[456]$/.test(n.tagName);
+                const queue = isHead ? byText.get(`${kindOfTag(n.tagName)}|${n.textContent.trim()}`) : null;
                 const id = queue ? queue.find(x => !sections.has(x)) : null;
-                if (id && !sections.has(id)) {
+                if (id) {
                     cur = { id, blocks: [], folded: n.getAttribute('data-folded') === 'true', title: n.textContent.trim() };
                     sections.set(id, cur);
                     return;
@@ -1366,36 +1390,39 @@
                 else preamble.push(n);
             });
             const hasContent = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
+            const html = b => b.outerHTML || `<p>${esc(b.textContent)}</p>`;
             const out = [];
-            preamble.forEach(b => out.push(b.outerHTML || `<p>${esc(b.textContent)}</p>`));
+            preamble.forEach(b => out.push(html(b)));
             const titles = {};
             const live = new Set();
-            this.ganttOrdered(true).forEach((t) => {
-                live.add(t.id);
-                const label = this.ganttNoteLabel(t);
-                titles[t.id] = label;
-                const sec = sections.get(t.id);
-                const tag = t.parent ? 'h5' : 'h4';
-                const folded = !t.parent && sec && sec.folded ? ' data-folded="true"' : '';
-                out.push(`<${tag}${folded}>${esc(label)}</${tag}>`);
+            const writeSection = (id, tag, label, folded) => {
+                live.add(id);
+                titles[id] = label;
+                const sec = sections.get(id);
+                out.push(`<${tag}${folded && sec && sec.folded ? ' data-folded="true"' : ''}>${esc(label)}</${tag}>`);
                 // Writing under a heading is ordinary text: an empty normal line
                 // sits under any heading with nothing below it yet.
-                if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(b.outerHTML || `<p>${esc(b.textContent)}</p>`));
+                if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(html(b)));
                 else out.push('<p>&nbsp;</p>');
+            };
+            this.ganttOrdered(true).forEach((t) => {
+                writeSection(t.id, t.parent ? 'h5' : 'h4', this.ganttNoteLabel(t), !t.parent);
+                t.checklist.forEach((item) => {
+                    if (!item.text.trim()) return;
+                    writeSection(`ck:${item.id}`, 'h6', `${item.done ? '✓ ' : ''}${item.text.trim()}`, false);
+                });
             });
             sections.forEach((sec, id) => {
-                if (!live.has(id) && hasContent(sec.blocks)) orphans.push(sec);
-            });
-            orphans.forEach((sec) => {
+                if (live.has(id) || !hasContent(sec.blocks)) return;
                 out.push(`<h4>Removed: ${esc(sec.title)}</h4>`);
-                sec.blocks.forEach(b => out.push(b.outerHTML || `<p>${esc(b.textContent)}</p>`));
+                sec.blocks.forEach(b => out.push(html(b)));
             });
-            const html = out.join('');
+            const result = out.join('');
             g.noteTitles = titles;
-            if (html === tab.content) return false;
-            tab.content = html;
+            if (result === tab.content) return false;
+            tab.content = result;
             if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
-            if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, html);
+            if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, result);
             return true;
         },
 
@@ -1411,6 +1438,7 @@
             if (i === -1) return false;
             for (let j = i + 1; j < kids.length; j++) {
                 if (/^H[45]$/.test(kids[j].tagName)) break;
+                if (kids[j].tagName === 'H6') continue;
                 if (kids[j].textContent.trim() || kids[j].querySelector('img')) return true;
             }
             return false;
