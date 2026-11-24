@@ -7631,6 +7631,8 @@ class FlowchartViewer {
 
             editor.ui.focusTracker.on('change:isFocused', (evt, name, isFocused) => {
                 if (isFocused) {
+                    const root = editor.editing.view.getDomRoot();
+                    if (root) this.keepNotesHardLeft(root);
                     this.foldNotesSection();
                 } else if (this._pendingNotesSave) {
                     this._pendingNotesSave = false;
@@ -9357,7 +9359,24 @@ class FlowchartViewer {
         const viewEl = editor.editing.mapper.toViewElement(titleEl);
         const dom = viewEl && editor.editing.view.domConverter.mapViewToDom(viewEl);
         this.lockNotesMenu(1000);
-        if (dom) dom.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        if (dom) {
+            dom.scrollIntoView({ block: 'start', inline: 'start', behavior: 'smooth' });
+            this.keepNotesHardLeft(dom);
+        }
+    }
+
+    // Jumping to (or focusing) text in the notes scrolls up and down only: the
+    // notes stay panned hard left. Checked again while a smooth scroll and the
+    // editor's own scroll-to-caret settle.
+    keepNotesHardLeft(fromEl) {
+        const reset = () => {
+            for (let n = fromEl; n && n !== document.documentElement; n = n.parentElement) {
+                if (n.scrollLeft) n.scrollLeft = 0;
+            }
+            if (window.scrollX) window.scrollTo(0, window.scrollY);
+        };
+        reset();
+        [60, 250, 600, 1000].forEach(ms => setTimeout(reset, ms));
     }
 
     // ---- Mobile Notes: document-level scrolling + auto-hiding top menu ----
