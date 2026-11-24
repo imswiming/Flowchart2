@@ -121,11 +121,6 @@
             if (!document.getElementById('share-join-popup')) {
                 document.body.appendChild(el('div', { id: 'share-join-popup', class: 'cs-popup sh-popup', style: 'display:none;' }));
             }
-            if (!document.getElementById('share-banner')) {
-                const banner = el('div', { id: 'share-banner', style: 'display:none;', title: 'Sharing - who can open this flowchart',
-                    onclick: () => this.openSharePanel(this.currentSlotIndex) });
-                document.body.appendChild(banner);
-            }
             // (The ☰ menu's Share item clicks share-btn - see index.html.)
             ['share-btn', 'top-share-btn'].forEach((id) => {
                 const b = document.getElementById(id);
@@ -248,11 +243,65 @@
             };
         },
 
+        // This device's guest sign-in for a project, whether or not it's also
+        // signed in there with an email.
+        guestConn(url) {
+            url = normUrl(url);
+            const g = this.loadGuestAuths()[url];
+            if (!g || !g.auth || !g.auth.user || !g.auth.user.id) return null;
+            return {
+                url, key: g.key, kind: 'guest', userId: g.auth.user.id,
+                email: g.auth.user.email || '', isAnon: !g.auth.user.email,
+                token: () => this.guestToken(url)
+            };
+        },
+
+        // The sign-in a shared flowchart is opened with: the one it was shared
+        // or joined with (share.uid), else whichever this device has.
+        shareConnOf(item) {
+            const uid = item.share.uid;
+            const main = this.shareConn(item.share.url);
+            if (!uid || (main && main.userId === uid)) return main;
+            const guest = this.guestConn(item.share.url);
+            return guest && guest.userId === uid ? guest : null;
+        },
+
         allShareConns() {
             const urls = new Set(Object.keys(this.loadGuestAuths()));
             if (this._cloudAuth && this.cloudProjectUrl) urls.add(normUrl(this.cloudProjectUrl));
             this.sharedItems().forEach(i => urls.add(normUrl(i.share.url)));
-            return Array.from(urls).map(u => this.shareConn(u)).filter(Boolean);
+            const out = [];
+            urls.forEach((u) => {
+                const main = this.shareConn(u);
+                if (main) out.push(main);
+                const guest = this.guestConn(u);
+                if (guest && (!main || guest.userId !== main.userId)) out.push(guest);
+            });
+            return out;
+        },
+
+        // Signed in with an email on a device that shared (or joined) flowcharts
+        // before that, without one: the ones it owns are handed to the email
+        // account too, so every device signed in with it gets them. Ones it
+        // joined as a guest stay with the guest sign-in.
+        async linkGuestShares(main) {
+            const guest = this.guestConn(main.url);
+            if (!guest || main.kind !== 'main' || guest.userId === main.userId) return;
+            const list = c => this.sbRest(c, `flowchart_members?user_id=eq.${enc(c.userId)}&select=share_id,role`);
+            const [theirs, mine] = [await list(guest), await list(main)];
+            const have = new Map((mine || []).map(r => [r.share_id, r.role]));
+            for (const r of (theirs || [])) {
+                const item = this.findSharedItem(r.share_id);
+                if (r.role === 'owner' && have.get(r.share_id) !== 'owner') {
+                    const code = await this.rpc(guest, 'flowchart_create_invite', { p_share: r.share_id, p_role: 'owner', p_label: 'My email account' });
+                    await this.rpc(main, 'flowchart_claim_invite', {
+                        p_code: code, p_name: (typeof this.kbMyName === 'function' && this.kbMyName()) || main.email, p_device_id: this.deviceId(), p_device_name: this.deviceName()
+                    });
+                    have.set(r.share_id, 'owner');
+                }
+                if (item) item.share.uid = have.has(r.share_id) ? main.userId : guest.userId;
+            }
+            this.saveFlowchartList();
         },
 
         async guestToken(url) {
@@ -339,7 +388,7 @@
         },
 
         async fetchShareImages(item, hashes) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             const out = {};
             if (!conn || hashes.length === 0) return out;
             const prefix = imgPrefixOf(item.share.id);
@@ -374,11 +423,12 @@
                 if (forceDiscover || Date.now() - this._shareLastDiscover > DISCOVER_MS) {
                     this._shareLastDiscover = Date.now();
                     for (const conn of conns) {
-                        try { await this.discoverShares(conn); } catch (err) { console.error('Checking shared flowcharts failed:', err); }
+                        try { await this.linkGuestShares(conn); await this.discoverShares(conn); } catch (err) { console.error('Checking shared flowcharts failed:', err); }
                     }
                 }
                 for (const conn of conns) {
-                    const items = this.sharedItems().filter(i => normUrl(i.share.url) === conn.url);
+                    const usesThis = (i) => { const c = normUrl(i.share.url) === conn.url && this.shareConnOf(i); return !!(c && c.userId === conn.userId); };
+                    const items = this.sharedItems().filter(usesThis);
                     if (items.length === 0) continue;
                     try {
                         const rows = await this.sbRest(conn, `${this.CLOUD_TABLE}?id=in.(${items.map(i => enc(rowIdOf(i.share.id))).join(',')})&select=id,updated_at`);
@@ -406,7 +456,10 @@
             const mine = new Map((rows || []).map(r => [r.share_id, r]));
             let changed = false;
             // Lost access (removed, left on another device, or no longer shared).
-            this.sharedItems().filter(i => normUrl(i.share.url) === conn.url && !mine.has(i.share.id)).forEach((item) => {
+            this.sharedItems().filter((i) => {
+                const c = normUrl(i.share.url) === conn.url && this.shareConnOf(i);
+                return c && c.userId === conn.userId && !mine.has(i.share.id);
+            }).forEach((item) => {
                 const wasOwner = item.share.role === 'owner';
                 this.removeListItem(this.flowchartList.indexOf(item));
                 const st = this.loadShareState();
@@ -418,6 +471,9 @@
             for (const [id, m] of mine) {
                 const item = this.findSharedItem(id);
                 if (item) {
+                    const used = this.shareConnOf(item);
+                    if (used && used.userId !== conn.userId) continue; // opened with the other sign-in
+                    if (!item.share.uid) { item.share.uid = conn.userId; changed = true; }
                     if (item.share.role !== m.role) {
                         item.share.role = m.role;
                         changed = true;
@@ -432,7 +488,7 @@
                 this.flowchartList.push({
                     title: this.uniqueTitle(title),
                     data: row.data.data,
-                    share: { id, url: conn.url, key: conn.key, role: m.role, title }
+                    share: { id, url: conn.url, key: conn.key, role: m.role, title, uid: conn.userId }
                 });
                 const st = this.loadShareState();
                 st[id] = { knownAt: Number(row.updated_at) || 0, base: row.data.data, title };
@@ -555,7 +611,7 @@
             try {
                 for (const item of this.sharedItems()) {
                     if (item.share.role === 'view') continue;
-                    const conn = this.shareConn(item.share.url);
+                    const conn = this.shareConnOf(item);
                     if (!conn) continue;
                     try {
                         const state = this.loadShareState();
@@ -624,7 +680,7 @@
                 method: 'POST', prefer: 'return=minimal',
                 body: [{ id: rowIdOf(sid), updated_at: ts, data: { title: item.title, data: stripped } }]
             });
-            item.share = { id: sid, url: conn.url, key: conn.key, role: 'owner', title: item.title };
+            item.share = { id: sid, url: conn.url, key: conn.key, role: 'owner', title: item.title, uid: conn.userId };
             const st = this.loadShareState();
             st[sid] = { knownAt: ts, base: stripped, title: item.title };
             this.saveShareState(st);
@@ -638,7 +694,7 @@
 
         // Back to an ordinary flowchart of the owner's; everyone else loses it.
         async stopSharing(item) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             if (!conn) throw new Error('Sign in again first.');
             const id = item.share.id;
             await this.sbRest(conn, `${this.CLOUD_TABLE}?id=like.${enc(rowIdOf(id) + '*')}`, { method: 'DELETE', prefer: 'return=minimal' });
@@ -653,7 +709,7 @@
         },
 
         async leaveShare(item) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             if (conn) {
                 await this.sbRest(conn, `flowchart_members?share_id=eq.${enc(item.share.id)}&user_id=eq.${enc(conn.userId)}`, { method: 'DELETE', prefer: 'return=minimal' });
             }
@@ -698,18 +754,8 @@
         },
 
         // ----- Banner over a shared flowchart -----
-        updateShareBanner() {
-            const banner = document.getElementById('share-banner');
-            if (!banner) return;
-            const item = this.currentSharedItem();
-            if (!item) { banner.style.display = 'none'; return; }
-            const r = item.share.role;
-            banner.textContent = r === 'owner' ? '👥 Shared - Manage access'
-                : r === 'edit' ? '👥 Shared with you - you can edit'
-                : '👥 Shared with you - view only (changes here aren\'t saved)';
-            banner.className = r === 'view' ? 'sh-view' : '';
-            banner.style.display = 'block';
-        },
+        // No banner over the flowchart any more: the 👥 button opens the panel.
+        updateShareBanner() { /* nothing to draw */ },
 
         // ----- The Sharing / Manage access panel -----
         openSharePanel(index) {
@@ -750,7 +796,10 @@
                     return;
                 }
                 const btn = el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Start sharing' });
+                const myName = el('input', { class: 'cs-input', type: 'text', maxlength: '80', placeholder: 'Your name' });
+                myName.value = (typeof this.kbMyName === 'function' && this.kbMyName()) || '';
                 btn.addEventListener('click', async () => {
+                    if (myName.value.trim()) localStorage.setItem(GUEST_NAME_KEY, myName.value.trim());
                     btn.disabled = true;
                     setStatus('Setting up sharing...');
                     try {
@@ -765,6 +814,8 @@
                 });
                 pop.append(
                     el('p', { class: 'cs-text', text: 'Invite people to this flowchart with a code. They see and work on this flowchart and its own notes only - never your global notes or your other flowcharts.' }),
+                    el('label', { class: 'cs-label', text: 'Your name (shown on what you add and change)' }),
+                    el('div', { class: 'cs-row' }, myName),
                     el('div', { class: 'cs-row' }, btn), status, closeRow);
                 return;
             }
@@ -774,7 +825,7 @@
         },
 
         renderOwnerPanel(pop, item, status, setStatus, closeRow) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             pop.append(el('div', { class: 'cs-title', text: `👥 Manage access - "${item.title}"` }));
             if (conn && conn.isAnon) {
                 pop.append(el('p', { class: 'cs-note', text: 'You\'re sharing from this device without an email. To open and manage it from your other devices too, make an invite set to "Can manage" and enter that code on each one.' }));
@@ -861,7 +912,7 @@
         },
 
         async loadAccessList(item, people, invites, setStatus) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             let data;
             try {
                 data = await this.rpc(conn, 'flowchart_share_access', { p_share: item.share.id });
@@ -939,7 +990,7 @@
         },
 
         renderGuestPanel(pop, item, status, setStatus, closeRow) {
-            const conn = this.shareConn(item.share.url);
+            const conn = this.shareConnOf(item);
             pop.append(
                 el('div', { class: 'cs-title', text: `👥 "${item.title}"` }),
                 el('p', { class: 'cs-text', text: `This flowchart is shared with you. ${item.share.role === 'edit' ? 'You can edit it; everyone with access sees your changes.' : 'You can view it; changes you make here aren\'t saved.'}` }));
@@ -1159,7 +1210,12 @@
                 // Wait for any sync already running, then look again.
                 for (let i = 0; i < 40 && this._shareBusy; i++) await new Promise(r => setTimeout(r, 150));
                 this._shareBusy = true;
-                try { await this.discoverShares(conn); } finally { this._shareBusy = false; }
+                try {
+                    await this.discoverShares(conn);
+                    // Joined again with this sign-in: that's the one it opens with.
+                    const again = this.findSharedItem(shareId);
+                    if (again) { again.share.uid = conn.userId; this.saveFlowchartList(); }
+                } finally { this._shareBusy = false; }
             } finally {
                 this._joiningShareId = null;
             }
@@ -1210,7 +1266,6 @@
     FlowchartViewer.prototype.loadFlowchartFromList = function (...args) {
         const r = origLoad.apply(this, args);
         this.refreshGlobalNotesVisibility();
-        if (typeof this.updateShareBanner === 'function' && document.getElementById('share-banner')) this.updateShareBanner();
         return r;
     };
 })();

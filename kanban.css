@@ -508,3 +508,60 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-sheet .cs-title { margin-bottom: 4px; }
 .kb-sheet > .cs-row:last-child { position: sticky; bottom: -14px; background: var(--popup-bg); padding: 8px 0 2px; margin-top: 6px !important; }
 .kb-sheet .kb-facts { grid-column: 1 / -1; }
+
+/* The sync status and storage bar, readable on the light board. */
+body.kanban-mode #cloud-sync-status { z-index: 101; padding: 3px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.92); color: #172b4d !important; box-shadow: 0 1px 3px rgba(9, 30, 66, 0.25); }
+body.kanban-mode #cloud-sync-status-text { opacity: 1 !important; color: #172b4d; }
+body.kanban-mode #cloud-usage-mini { background: #c1c7d0 !important; }
+
+/* Card buttons: dark, so they show on the white card. */
+.kb-card-flow { color: var(--kb-text); opacity: 0.6; }
+.kb-avatar.kb-editor { box-shadow: 0 0 0 1.5px #fff, 0 0 0 2.5px #b3b9c4; }
+
+/* Labels on a card (click to change) and the label box. */
+button.kb-chip { border: none; font-family: inherit; cursor: pointer; }
+button.kb-chip:hover { filter: brightness(1.1); }
+.kb-chip-add { border: 1px dashed #b3b9c4; border-radius: 3px; background: none; color: var(--kb-sub); font: inherit; font-size: 11px; line-height: 16px; padding: 0 5px; cursor: pointer; display: none; }
+.kb-chip-add:hover { color: var(--kb-text); border-color: #626f86; }
+.kb-chips.none { margin-bottom: 0; }
+@media (hover: hover) { .kb-card:hover .kb-chip-add { display: inline-block; } .kb-card:hover .kb-chips.none { margin-bottom: 8px; } }
+.kb-card.selected .kb-chip-add { display: inline-block; }
+.kb-label-box { position: fixed; z-index: 4700; width: 250px; max-height: 60vh; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 8px; background: #fff; color: #172b4d; box-shadow: 0 8px 28px rgba(9, 30, 66, 0.35); font: 13px -apple-system, "Segoe UI", system-ui, Roboto, sans-serif; }
+.kb-label-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-label-list { overflow: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.kb-label-row { display: flex; align-items: center; gap: 6px; }
+.kb-label-chip { flex: 1 1 auto; text-align: left; padding: 3px 7px; opacity: 0.8; }
+.kb-label-chip.on { opacity: 1; box-shadow: 0 0 0 2px #172b4d; }
+.kb-label-del { border: none; background: none; color: #626f86; cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; }
+.kb-label-del:hover { background: #ffeceb; color: #ae2e24; }
+.kb-label-new { padding: 6px 8px; font: inherit; color: #172b4d; background: #fff; border: 1px solid #8590a2; border-radius: 4px; }
+.kb-label-new:focus { outline: 2px solid #0c66e4; outline-offset: -1px; }
+.kb-label-foot { display: flex; justify-content: flex-end; }
+.kb-label-foot .kb-btn { color: #172b4d; background: #f1f2f4; border: none; border-radius: 4px; padding: 5px 12px; cursor: pointer; font: inherit; }
+.kb-chip-x { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; margin-left: -4px; font-size: 11px; }
+.kb-chip-x:hover { color: #ff9a92; }
+
+/* Links on a card. */
+.kb-lk { display: flex; flex-direction: column; gap: 2px; }
+.kb-lk:has(.kb-link-row) { margin-bottom: 6px; }
+.kb-link-row { display: flex; align-items: center; gap: 4px; font-size: 12.5px; }
+.kb-lk-a { flex: 1 1 auto; min-width: 0; color: var(--kb-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-lk-btn { border: none; background: none; color: var(--kb-sub); cursor: pointer; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.kb-lk-btn:hover { background: #dcdfe4; color: var(--kb-text); }
+.kb-lk-add { margin-left: 0; margin-bottom: 4px; }
+.kb-lk-add:focus { display: block; }
+
+/* Archive list. */
+.kb-arch { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }
+.kb-arch-main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* Card notes: their own pill, two kinds of checklist, and tick boxes. */
+.matrix-tab.kb-card-tab .matrix-tab-label { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-card-check { display: none !important; }
+body.kb-card-notes .nt-card-check { display: inline-flex !important; }
+
+/* Tick boxes on the cards: white with a dark outline (the browser's dark theme
+   would draw them dark); green with a white tick once done. */
+.kb-cl-item input[type="checkbox"] { appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 15px; height: 15px; background: #fff; border: 1.5px solid #172b4d; border-radius: 3px; display: inline-grid; place-content: center; }
+.kb-cl-item input[type="checkbox"]:checked { background: #1f845a; border-color: #1f845a; }
+.kb-cl-item input[type="checkbox"]:checked::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }

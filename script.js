@@ -584,6 +584,8 @@ const NOTES_ICONS = (() => {
     const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
     return {
         titles: svg('<path d="M4 6h16M4 12h16M4 18h10"/>'),
+        photo: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5L6 19"/>'),
+        cardCheck: svg('<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 12l3.5 3.5L17 9"/>'),
         history: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
         undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
         redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
@@ -7431,6 +7433,7 @@ class FlowchartViewer {
 
         row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
+        row.appendChild(makeBtn('photo', 'Insert a photo at the cursor', 'notes-mobile-only', () => this.insertNotesPhoto()));
         row.appendChild(makeBtn('search', 'Search this note', 'notes-search-btn', () => this.openNotesSearch()));
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', 'nt-checklist', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
@@ -7454,6 +7457,8 @@ class FlowchartViewer {
 
     renderNotesPanel() {
         if (!this.notesPanelBody) return;
+        this.rememberNotesScroll();
+        this._notesScrollKey = null;
         this.notesPanelBody.innerHTML = '';
         this.notesPanelBody.style.height = this._notesPanelHeight + 'px';
 
@@ -7517,6 +7522,8 @@ class FlowchartViewer {
     // The pool is capped; the least recently used are dropped.
     destroyEmbeddedEditors() {
         clearTimeout(this._notesPrewarmTimer);
+        this.rememberNotesScroll();
+        this._notesScrollKey = null;
         if (this._embeddedEditors) {
             this._embeddedEditors.forEach((entry) => {
                 entry.dead = true;
@@ -7559,14 +7566,53 @@ class FlowchartViewer {
         // CKEditor rewrites that element's class/style back to what it had when the
         // editor was built every time it gains or loses focus, which would hide
         // (or show) the note again at the wrong moment.
+        const switching = this._notesScrollKey !== entry.key;
+        if (switching) this.rememberNotesScroll();
         this._embeddedEditors.forEach(e => { e.holder.style.display = e === entry ? '' : 'none'; });
         this.notesEditor = entry.editor;
         // Anything that changed this note elsewhere while its editor sat hidden
         // (sync, a Full Screen pane) is picked up now.
         this.syncEmbeddedEntry(entry);
+        this._notesScrollKey = entry.key;
+        if (switching) this.restoreNotesScroll(entry);
         this.updateNotesTitleControls();
         this.trimEmbeddedEditors();
         this.schedulePrewarm();
+    }
+
+    // Where each note was scrolled to, so coming back to it shows the same place.
+    // On a phone the page itself scrolls; otherwise the notes area (or the note
+    // inside it) does.
+    notesScrollBoxes(entry) {
+        const wrap = document.getElementById('notes-editor-wrap');
+        const content = entry && entry.holder && entry.holder.querySelector('.ck-content');
+        return { wrap, content };
+    }
+
+    rememberNotesScroll() {
+        const key = this._notesScrollKey;
+        const entry = key && this._embeddedEditors && this._embeddedEditors.get(key);
+        if (!entry || entry.holder.style.display === 'none') return;
+        if (!this._notesScroll) this._notesScroll = new Map();
+        const { wrap, content } = this.notesScrollBoxes(entry);
+        this._notesScroll.set(key, {
+            wrap: wrap ? wrap.scrollTop : 0,
+            content: content ? content.scrollTop : 0,
+            page: document.body.classList.contains('notes-doc-scroll') ? window.scrollY : null
+        });
+    }
+
+    restoreNotesScroll(entry) {
+        const at = (this._notesScroll && this._notesScroll.get(entry.key)) || { wrap: 0, content: 0, page: 0 };
+        const put = () => {
+            if (this._notesScrollKey !== entry.key) return;
+            const { wrap, content } = this.notesScrollBoxes(entry);
+            if (wrap) wrap.scrollTop = at.wrap;
+            if (content) content.scrollTop = at.content;
+            if (document.body.classList.contains('notes-doc-scroll') && at.page !== null) window.scrollTo(0, at.page);
+        };
+        put();
+        requestAnimationFrame(put);
     }
 
     // Brings a (possibly hidden) editor in line with its note's stored content.
@@ -9125,9 +9171,18 @@ class FlowchartViewer {
                         try { app.decorateNotesEditor(editor); } catch (e) { /* drawn next change */ }
                     }
                 };
+                // A line added or removed (Enter, Backspace): straight away, so the new
+                // line is never shown outside its box. Plain typing: in a moment.
                 let decorateTimer = null;
-                editor.model.document.on('change:data', () => { clearTimeout(decorateTimer); decorateTimer = setTimeout(decorate, 150); }, { priority: 'lowest' });
-                editor.once('ready', decorate);
+                let lineCount = -1;
+                editor.model.document.on('change:data', () => {
+                    clearTimeout(decorateTimer);
+                    const docRoot = editor.model.document.getRoot();
+                    const n = docRoot ? docRoot.childCount : 0;
+                    if (n !== lineCount) { lineCount = n; decorate(); }
+                    decorateTimer = setTimeout(decorate, 150);
+                }, { priority: 'lowest' });
+                editor.once('ready', () => { const r0 = editor.model.document.getRoot(); lineCount = r0 ? r0.childCount : 0; decorate(); });
                 editor._noteDecorate = decorate;
 
                 // Enter at the end of a folded title: open it, so the new line
@@ -9902,6 +9957,39 @@ class FlowchartViewer {
     // up. Targets whichever editor/tab was captured by startNewNotesDrawing (the
     // embedded one, or a full-screen pane's) rather than always the embedded one,
     // so Insert Drawing lands in the tab it was actually triggered from.
+    // Picks a photo (camera or gallery) and puts it where the cursor was - the
+    // note and the spot are kept from before the picker took over the screen.
+    insertNotesPhoto() {
+        const target = this.getActiveNotesTarget();
+        if (!target.editor) return;
+        const ed = target.editor;
+        const path = ed.model.document.selection.getFirstPosition().path.slice();
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+        input.addEventListener('change', () => {
+            const file = input.files && input.files[0];
+            input.remove();
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+                const dataUrl = await this.compressImageDataUrl(reader.result);
+                this.getNotesMediaMap('image', target.scope)[id] = { dataUrl };
+                if (target.scope === 'global') this.saveGlobalNotesMedia();
+                if (ed.state !== 'destroyed') {
+                    try { ed.model.change(w => w.setSelection(ed.model.createPositionFromPath(ed.model.document.getRoot(), path))); } catch (err) { /* the note changed - where the cursor is now */ }
+                    this._notesDrawingInsertTarget = target;
+                }
+                this.insertNotesMediaMarker('image', id);
+            };
+            reader.readAsDataURL(file);
+        });
+        input.click();
+    }
+
     insertNotesMediaMarker(type, id) {
         const marker = `[[${type}:${id}]]`;
         const target = this._notesDrawingInsertTarget || this.getActiveNotesTarget();
@@ -13681,10 +13769,12 @@ class FlowchartViewer {
             // Past MAX_CENTERED_LINES, growing the box wider (instead of just
             // taller) keeps it from getting disproportionately tall.
             let boxWidth = NODE_WIDTH;
-            let lines = wrapAtWidth(d.data.name, boxWidth);
+            // A Kanban checklist item has a tick box on its left (kanban.js).
+            const inset = typeof d.data._kanban === 'string' && d.data._kanban.startsWith('ck:') ? 14 : 0;
+            let lines = wrapAtWidth(d.data.name, boxWidth - inset);
             while (lines.length > MAX_CENTERED_LINES) {
                 boxWidth += WIDTH_STEP;
-                lines = wrapAtWidth(d.data.name, boxWidth);
+                lines = wrapAtWidth(d.data.name, boxWidth - inset);
             }
             d._boxWidth = boxWidth;
             d._lines = lines;
@@ -14341,7 +14431,7 @@ class FlowchartViewer {
     // This is a real in-page substitute: a small modal built the same
     // dynamically-created/inline-styled way as showNotification below, resolving
     // true/false by which button (or Escape/clicking the backdrop) closed it.
-    showConfirmDialog(message) {
+    showConfirmDialog(message, okLabel = 'Delete') {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             Object.assign(overlay.style, {
@@ -14385,7 +14475,7 @@ class FlowchartViewer {
             cancelBtn.addEventListener('click', () => finish(false));
 
             const okBtn = document.createElement('button');
-            okBtn.textContent = 'Delete';
+            okBtn.textContent = okLabel;
             Object.assign(okBtn.style, {
                 background: '#c0392b', color: '#fff', border: 'none',
                 borderRadius: '5px', padding: '6px 14px', cursor: 'pointer',

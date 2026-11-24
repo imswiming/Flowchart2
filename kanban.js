@@ -31,13 +31,22 @@
     const AVATAR_COLORS = ['#e2735a', '#4c9aff', '#36b37e', '#9f8fef', '#f5a623', '#00b8d9', '#e774bb', '#8f7ee7', '#57d9a3', '#ff8f73'];
 
     const kbNorm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    // Every card's node in the flowchart has this colour (green once done).
+    const CARD_COLOR = '#6e5dc6';
+    const CARD_EMOJI = '🃏';
+    const ckItem = i => Object.assign({ id: i.id, text: String(i.text || ''), done: !!i.done }, typeof i.note === 'string' && i.note ? { note: i.note } : {});
+    const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const blocksHaveText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
+    const blocksHtml = bs => bs.map(b => b.outerHTML || `<p>${escHtml(b.textContent)}</p>`).join('');
     const ROW_DIVIDER = '━━━━━━';
     // A link's address: web addresses as they are, file paths as file:// links.
     const kbHref = (u) => {
         const s = String(u || '').trim();
-        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^mailto:/i.test(s)) return s;
+        // Only these kinds of address: anything else (javascript: and the like,
+        // which someone sharing the board could have put there) isn't run.
+        if (/^(https?|file|ftp):\/\//i.test(s) || /^mailto:/i.test(s)) return s;
         if (/^[a-z]:[\\/]/i.test(s) || s.startsWith('\\\\') || s.startsWith('/')) return 'file:///' + s.replace(/\\/g, '/').replace(/^\/+/, '');
-        return 'https://' + s;
+        return 'https://' + s.replace(/^[a-z][a-z0-9+.-]*:(\/\/)?/i, '');
     };
     // Browsers don't let a web page open files on the computer: for a file the
     // path is copied too, to paste into File Explorer / Finder.
@@ -161,7 +170,7 @@
             const labelIds = new Set(labels.map(l => l.id));
             const ts = v => (Number.isFinite(v) ? v : null);
             let maxNum = 0;
-            const cards = (Array.isArray(raw.cards) ? raw.cards : []).filter(c => c && typeof c.id === 'string').map((c) => {
+            const oneCard = (c) => {
                 const num = Number.isFinite(c.num) ? c.num : 0;
                 maxNum = Math.max(maxNum, num);
                 return {
@@ -183,19 +192,30 @@
                     due: typeof c.due === 'string' ? c.due : '',
                     blocked: !!c.blocked,
                     blockReason: typeof c.blockReason === 'string' ? c.blockReason : '',
-                    checklist: Array.isArray(c.checklist) ? c.checklist.filter(i => i && typeof i.id === 'string').map(i => ({ id: i.id, text: String(i.text || ''), done: !!i.done })) : [],
+                    checklist: Array.isArray(c.checklist) ? c.checklist.filter(i => i && typeof i.id === 'string').map(ckItem) : [],
                     // The checklists for the other columns it has been in.
-                    colChecklists: (c.colChecklists && typeof c.colChecklists === 'object') ? Object.fromEntries(Object.entries(c.colChecklists).filter(([kk, v]) => colIds.has(kk) && Array.isArray(v) && v.length).map(([kk, v]) => [kk, v.filter(i => i && typeof i.id === 'string').map(i => ({ id: i.id, text: String(i.text || ''), done: !!i.done }))])) : undefined,
+                    colChecklists: (c.colChecklists && typeof c.colChecklists === 'object') ? Object.fromEntries(Object.entries(c.colChecklists).filter(([kk, v]) => colIds.has(kk) && Array.isArray(v) && v.length).map(([kk, v]) => [kk, v.filter(i => i && typeof i.id === 'string').map(ckItem)])) : undefined,
                     // The card's own notes, per column it has been in (only those with text).
                     notes: (c.notes && typeof c.notes === 'object') ? Object.fromEntries(Object.entries(c.notes).filter(([kk, v]) => colIds.has(kk) && typeof v === 'string' && v)) : undefined,
                     created: ts(c.created) || now(), started: ts(c.started), finished: ts(c.finished), moved: ts(c.moved) || ts(c.created) || now()
                 };
-            });
+            };
+            const cardList = v => (Array.isArray(v) ? v : []).filter(c => c && typeof c.id === 'string');
+            const cards = cardList(raw.cards).map(oneCard);
+            // Archived cards: off the board, kept whole - with their node (and
+            // everything built under it) from the flowchart.
+            const onBoard = new Set(cards.map(c => c.id));
+            const archived = cardList(raw.archived).filter(c => !onBoard.has(c.id)).map(c => Object.assign(oneCard(c), {
+                archivedAt: ts(c.archivedAt) || now(), archivedBy: typeof c.archivedBy === 'string' ? c.archivedBy : '',
+                node: c.node && typeof c.node === 'object' ? c.node : null
+            }));
             // Cards without a number get the next ones.
             let next = Math.max(maxNum + 1, Number.isFinite(raw.nextNum) ? raw.nextNum : 1);
             cards.forEach((c) => { if (!c.num) c.num = next++; });
             return {
-                rows, columns, cards, labels,
+                rows, columns, cards, archived, labels,
+                // The old Kanban notes tab has been put away (kbRetireNotes).
+                notesRetired: !!raw.notesRetired,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
                 nextNum: next,
                 groupBy: ['assignee', 'label', 'category'].includes(raw.groupBy) ? raw.groupBy : 'none',
@@ -236,12 +256,15 @@
             const item = this.flowchartList && this.flowchartList[this.currentSlotIndex];
             let email = '';
             try {
-                const conn = item && item.share && typeof this.shareConn === 'function' ? this.shareConn(item.share.url) : null;
+                const conn = item && item.share && typeof this.shareConnOf === 'function' ? this.shareConnOf(item) : null;
                 email = (conn && conn.email) || '';
             } catch (e) { /* not signed in */ }
             if (!email && this._cloudAuth && this._cloudAuth.user) email = this._cloudAuth.user.email || '';
             const local = email.split('@')[0] || '';
-            return local ? local.replace(/[._-]+/g, ' ').replace(/\w/g, ch => ch.toUpperCase()) : '';
+            if (local) return local.replace(/[._-]+/g, ' ').replace(/(^|\s)\w/g, ch => ch.toUpperCase());
+            // Sharing without an email or a name: still somebody, so what they
+            // add and change is marked as theirs.
+            return item && item.share && item.share.role === 'owner' ? 'Owner' : '';
         },
         kbAssignees() {
             const set = new Set();
@@ -271,7 +294,8 @@
         },
 
         kanbanChanged(fromNotes) {
-            this.pullKbCardTabEdits();
+            this._kbInChange = true;
+            try { this.pullKbCardTabEdits(); } finally { this._kbInChange = false; }
             this.kbStampCards();
             this.recordKanbanHistory();
             this.renderKanban();
@@ -284,7 +308,7 @@
 
         kanbanSnapshot() {
             const k = this.kanban;
-            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, labels: k.labels, prefix: k.prefix, nextNum: k.nextNum } : null);
+            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, archived: k.archived || [], labels: k.labels, prefix: k.prefix, nextNum: k.nextNum } : null);
         },
         resetKanbanHistory() {
             this._kbUndo = [];
@@ -305,7 +329,8 @@
         restoreKanbanSnapshot(snap) {
             const data = JSON.parse(snap);
             const old = this.kanban || {};
-            this.kanban = data ? this.sanitizeKanban(Object.assign(data, { groupBy: old.groupBy, notesTabId: old.notesTabId, noteTitles: old.noteTitles, noteCols: old.noteCols, cardTabId: old.cardTabId })) : null;
+            this.kanban = data ? this.sanitizeKanban(Object.assign(data, { groupBy: old.groupBy, notesTabId: old.notesTabId, noteTitles: old.noteTitles, noteCols: old.noteCols, cardTabId: old.cardTabId, notesRetired: old.notesRetired })) : null;
+            this.kbReturnArchivedNodes(old.archived);
             if (this._kbSelected && !this.kbCard(this._kbSelected)) this._kbSelected = null;
             this._kbLastSnap = snap;
             const pop = document.getElementById('kanban-popup');
@@ -333,7 +358,7 @@
             this.kanban = {
                 rows: [{ id: 'r0', name: '' }],
                 columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), row: 'r0', name, wip: wip || 0, policy: policy || '' })),
-                cards: [], labels: [], prefix: 'KB', nextNum: 1, groupBy: 'none',
+                cards: [], archived: old.archived || [], labels: [], prefix: 'KB', nextNum: 1, groupBy: 'none', notesRetired: true,
                 // The notes tab stays; what was written under old cards goes under "Removed".
                 notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {},
                 noteCols: {}, cardTabId: old.cardTabId || null
@@ -492,6 +517,229 @@
             return true;
         },
 
+        // ----- Archive -----
+        // Takes a card off the board without losing anything: its details, notes,
+        // checklists and its node in the flowchart (with what's under it) are
+        // kept and come back with it.
+        kbFindNode(id) {
+            const kids = n => [].concat(n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || []));
+            const walk = (n) => {
+                for (const c of kids(n)) {
+                    if (!c) continue;
+                    if (c._kanban === id) return c;
+                    const f = walk(c);
+                    if (f) return f;
+                }
+                return null;
+            };
+            const branch = this.findKanbanFlowRoot();
+            return branch ? walk(branch) : null;
+        },
+
+        archiveKanbanCard(id) {
+            const k = this.kanban;
+            const card = this.kbCard(id);
+            if (!card) return;
+            this.pullKbCardTabEdits();
+            const node = this.kbFindNode(id);
+            if (node && node._kbColView) this.kbColViewOff(node);
+            if (node && node._critOn && typeof this.critInlineOff === 'function') this.critInlineOff(node, false);
+            if (!k.archived) k.archived = [];
+            k.archived.unshift(Object.assign({}, card, { archivedAt: now(), archivedBy: this.kbMyName(), node: node ? JSON.parse(JSON.stringify(node)) : null }));
+            k.cards = k.cards.filter(c => c !== card);
+            if (this._kbSelected === id) this._kbSelected = null;
+            if (this._kbCardTabFor === id) this._kbCardTabFor = null;
+            this.kanbanChanged();
+            this.showNotification(`Archived "${card.title}" - 🗄 on the board brings it back.`, 4500);
+        },
+
+        // Puts the flowchart nodes of cards that came back from the archive into
+        // the branch, for the next sync to place under their column.
+        kbReturnArchivedNodes(list) {
+            const branch = this.findKanbanFlowRoot();
+            (list || []).forEach((c) => {
+                if (!c.node || !this.kbCard(c.id) || this.kbFindNode(c.id)) return;
+                const copy = JSON.parse(JSON.stringify(c.node));
+                if (branch) branch.children = (branch.children || []).concat(copy);
+                else this._kbPendingNodes = (this._kbPendingNodes || []).concat(copy);
+            });
+        },
+
+        restoreKanbanCard(id) {
+            const k = this.kanban;
+            const a = (k.archived || []).find(c => c.id === id);
+            if (!a) return;
+            k.archived = k.archived.filter(c => c !== a);
+            const card = Object.assign({}, a);
+            ['archivedAt', 'archivedBy', 'node'].forEach((f) => { delete card[f]; });
+            if (!this.kbColumn(card.column)) card.column = k.columns[0].id;
+            card.labels = card.labels.filter(l => this.kbLabel(l));
+            k.cards.push(card);
+            this.kbReturnArchivedNodes([a]);
+            this._kbSelected = card.id;
+            this.kanbanChanged();
+            this.showNotification(`"${card.title}" is back in "${this.kbColumn(card.column).name}".`);
+        },
+
+        openKanbanArchive() {
+            const p = this.kbPopup('🗄 Archived cards');
+            const draw = () => {
+                p.body.innerHTML = '';
+                const list = this.kanban.archived || [];
+                if (!list.length) p.body.append(el('p', { class: 'cs-muted', text: 'Nothing archived. 🗄 on a card puts it here; everything about it is kept.' }));
+                list.forEach((c) => {
+                    const col = this.kbColumn(c.column);
+                    p.body.append(el('div', { class: 'kb-arch' },
+                        el('div', { class: 'kb-arch-main' }, el('b', { text: c.title }),
+                            el('div', { class: 'cs-muted cs-small', text: `${col ? col.name : 'Column gone'} · archived ${new Date(c.archivedAt).toLocaleDateString()}${c.archivedBy ? ` by ${c.archivedBy}` : ''}` })),
+                        el('button', { class: 'cs-btn cs-primary', type: 'button', text: '↩ Restore', onclick: () => { this.restoreKanbanCard(c.id); draw(); } }),
+                        el('button', { class: 'cs-btn kb-danger', type: 'button', text: '🗑', title: 'Delete for good', onclick: async () => {
+                            if (!(await this.showConfirmDialog(`Delete "${c.title}" for good, with its notes and flowchart? (Ctrl+Z on the board still brings it back until you close the site.)`))) return;
+                            this.kanban.archived = this.kanban.archived.filter(x => x !== c);
+                            this.kanbanChanged();
+                            draw();
+                        } })));
+                });
+            };
+            draw();
+            p.footer.append(el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Close', onclick: p.close }));
+        },
+
+        // ----- Labels -----
+        async kbDeleteLabel(id) {
+            const k = this.kanban;
+            const l = this.kbLabel(id);
+            if (!l) return false;
+            const used = k.cards.filter(c => c.labels.includes(id)).length;
+            if (used && !(await this.showConfirmDialog(`Delete the label "${l.name}"? It comes off ${used} card${used === 1 ? '' : 's'}.`))) return false;
+            k.labels = k.labels.filter(x => x.id !== id);
+            k.cards.concat(k.archived || []).forEach((c) => { c.labels = c.labels.filter(x => x !== id); });
+            if (this._kbLabelFilter === id) this._kbLabelFilter = '';
+            this.kanbanChanged();
+            return true;
+        },
+
+        // A small box beside the card: pick labels, add a new one, delete saved ones.
+        openKbLabelPicker(cardId, anchor, done) {
+            const old = document.getElementById('kb-label-box');
+            if (old) old.remove();
+            const card0 = this.kbCard(cardId);
+            if (!card0) { if (done) done(); return; }
+            const box = el('div', { id: 'kb-label-box', class: 'kb-label-box' });
+            let closed = false;
+            let busy = false; // a question about deleting a label is open
+            const close = () => {
+                if (closed) return;
+                closed = true;
+                box.remove();
+                document.removeEventListener('pointerdown', outside, true);
+                if (done) done();
+            };
+            const outside = (e) => {
+                if (busy || box.contains(e.target)) return;
+                close();
+            };
+            const input = el('input', { class: 'kb-label-new', type: 'text', placeholder: 'New label, or Enter for none', maxlength: '40' });
+            const listEl = el('div', { class: 'kb-label-list' });
+            const toggle = (id) => {
+                const card = this.kbCard(cardId);
+                if (!card) { close(); return; }
+                card.labels = card.labels.includes(id) ? card.labels.filter(x => x !== id) : card.labels.concat(id);
+                this.kanbanChanged();
+                draw();
+            };
+            const draw = () => {
+                const card = this.kbCard(cardId);
+                listEl.innerHTML = '';
+                const q = input.value.trim().toLowerCase();
+                this.kanban.labels.filter(l => !q || l.name.toLowerCase().includes(q)).forEach((l) => {
+                    const on = card && card.labels.includes(l.id);
+                    listEl.append(el('div', { class: 'kb-label-row' },
+                        el('button', { class: 'kb-chip kb-label-chip' + (on ? ' on' : ''), type: 'button', style: this.kbChipStyle(l), text: (on ? '✓ ' : '') + l.name, onclick: () => toggle(l.id) }),
+                        el('button', { class: 'kb-label-del', type: 'button', text: '✕', title: `Delete the label "${l.name}" from the board`, onclick: async () => { busy = true; try { await this.kbDeleteLabel(l.id); } finally { busy = false; } if (box.isConnected) draw(); } })));
+                });
+                if (!this.kanban.labels.length) listEl.append(el('div', { class: 'kb-create-hint', text: 'No labels yet - type one.' }));
+            };
+            input.addEventListener('input', draw);
+            input.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const l = this.kbLabelByName(input.value, true);
+                const card = this.kbCard(cardId);
+                if (l && card && !card.labels.includes(l.id)) { card.labels.push(l.id); this.kanbanChanged(); }
+                close();
+            });
+            box.append(el('div', { class: 'kb-label-title', text: `Label for "${card0.title}"` }), listEl, input,
+                el('div', { class: 'kb-label-foot' }, el('button', { class: 'kb-btn', type: 'button', text: 'Done', onclick: close })));
+            draw();
+            document.body.append(box);
+            const r = anchor || { left: window.innerWidth / 2 - 120, bottom: 120, top: 120 };
+            box.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - box.offsetWidth - 8, r.left))) + 'px';
+            box.style.top = Math.round(Math.max(8, Math.min(window.innerHeight - box.offsetHeight - 8, r.bottom + 4))) + 'px';
+            document.addEventListener('pointerdown', outside, true);
+            setTimeout(() => { if (box.isConnected) input.focus(); }, 0);
+        },
+
+        // ----- Links and files on a card -----
+        // The selected card lists its links by name; "+ Add link" shows with the
+        // checklist's add box (address, Enter, then a name, Enter).
+        buildKanbanCardLinks(card) {
+            const box = el('div', { class: 'kb-lk' });
+            if (!Array.isArray(card.links)) card.links = [];
+            if (card.id === this._kbSelected) {
+                card.links.forEach((l) => {
+                    const row = el('div', { class: 'kb-link-row' });
+                    const show = () => {
+                        row.innerHTML = '';
+                        row.append(
+                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `🔗 ${l.label || l.url}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
+                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
+                    };
+                    const rename = () => {
+                        const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
+                        let over = false;
+                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); this.kanbanChanged(); } else show(); };
+                        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+                        inp.addEventListener('blur', () => finish(true));
+                        row.innerHTML = '';
+                        row.append(inp);
+                        inp.focus();
+                        inp.select();
+                    };
+                    show();
+                    box.append(row);
+                });
+            }
+            const add = el('input', { class: 'kb-cl-add kb-lk-add', type: 'text', placeholder: '+ Add link or file' });
+            let url = '';
+            const commit = (label) => {
+                const u = url;
+                url = '';
+                if (!u) return;
+                card.links.push({ label, url: u });
+                this._kbSelected = card.id;
+                this.kanbanChanged();
+            };
+            add.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Escape') { url = ''; add.value = ''; add.placeholder = '+ Add link or file'; add.blur(); return; }
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                if (!url) {
+                    if (!add.value.trim()) return;
+                    url = add.value.trim();
+                    add.value = '';
+                    add.placeholder = 'Name for it (optional), Enter';
+                } else commit(add.value.trim());
+            });
+            add.addEventListener('blur', () => { if (url) commit(add.value.trim()); });
+            box.append(add);
+            return box;
+        },
+
         // ----- Mode -----
         setupKanban() {
             this._kanbanMode = false;
@@ -610,7 +858,8 @@
                 el('div', { class: 'kb-head-actions' },
                     btn('↩', 'Undo (Ctrl+Z)', () => this.undoKanban(), 'kb-undo' + (canUndo ? '' : ' disabled')),
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
-                    this.kanban ? btn('📝', 'Notes: the selected card\'s own notes, or the Kanban notes (a title per column and card)', () => (this._kbSelected ? this.openKbCardNotes(this._kbSelected, { focus: true }) : this.openKanbanNotes(null))) : null,
+                    this.kanban ? btn('📝', 'Card notes: the selected card\'s notes for each column', () => this.openKanbanNotes(null)) : null,
+                    this.kanban ? btn(`🗄${(this.kanban.archived || []).length ? ' ' + this.kanban.archived.length : ''}`, 'Archived cards: bring them back', () => this.openKanbanArchive()) : null,
                     this.kanban ? btn('🌳', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
@@ -838,10 +1087,12 @@
                     : null,
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
                 this.buildKanbanCardChecklist(card),
-                card.labels.length ? el('div', { class: 'kb-chips' }, ...card.labels.map((id) => {
+                this.buildKanbanCardLinks(card),
+                // Labels: click one to change it, "+ label" to add one.
+                el('div', { class: 'kb-chips' + (card.labels.length ? '' : ' none') }, ...card.labels.map((id) => {
                     const l = this.kbLabel(id);
-                    return l ? el('span', { class: 'kb-chip', style: this.kbChipStyle(l), text: l.name }) : null;
-                })) : null,
+                    return l ? el('button', { class: 'kb-chip', type: 'button', style: this.kbChipStyle(l), text: l.name, title: 'Change the labels', onclick: (e) => { e.stopPropagation(); this.openKbLabelPicker(card.id, e.currentTarget.getBoundingClientRect()); } }) : null;
+                }), el('button', { class: 'kb-chip-add', type: 'button', text: '+ label', title: 'Add a label', onclick: (e) => { e.stopPropagation(); this.openKbLabelPicker(card.id, e.currentTarget.getBoundingClientRect()); } })),
                 el('div', { class: 'kb-card-foot' },
                     card.checklist.length ? el('span', { class: 'kb-meta' + (ckDone === card.checklist.length ? ' full' : ''), text: `☑ ${ckDone}/${card.checklist.length}`, title: 'Checklist' }) : null,
                     card.due ? el('span', { class: 'kb-meta' + (overdue ? ' overdue' : ''), text: `🗓 ${fmtDue(card.due)}`, title: overdue ? 'Overdue' : 'Due' }) : null,
@@ -854,12 +1105,16 @@
                     // Opens the card's details (along the bottom of the screen).
                     el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
                         onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '🗄', title: 'Archive: off the board, everything kept',
+                        onclick: (e) => { e.stopPropagation(); this.archiveKanbanCard(card.id); } }),
                     // Opens the flowchart on this card's node.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
                         onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
+                    // On a shared board: the bubble of whoever last changed it, too.
+                    this.kbIsShared() && (card.editedBy || card.createdBy) && (card.editedBy || card.createdBy) !== card.assignee
+                        ? (() => { const a = avatar(card.editedBy || card.createdBy, 'sm kb-editor'); a.title = `${card.editedBy ? 'Last changed' : 'Added'} by ${card.editedBy || card.createdBy}`; return a; })() : null,
                     card.assignee ? avatar(card.assignee) : null));
             this.wireKanbanDrag(node, card);
-            node.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.openKanbanCard(card.id); } });
             return node;
         },
 
@@ -914,7 +1169,7 @@
             const open = () => {
                 box.innerHTML = '';
                 const ta = el('textarea', { class: 'kb-create-input', rows: '2', placeholder: 'What needs to be done?' });
-                const add = () => {
+                const add = (pick) => {
                     const title = ta.value.trim();
                     if (!title) return false;
                     const fields = { title, column: col.id };
@@ -923,13 +1178,23 @@
                     else if (this.kbIsShared() && this.kbMyName()) fields.assignee = this.kbMyName();
                     if (lane.label) fields.labels = [lane.label.id];
                     if (lane.category) fields.category = lane.category;
-                    this.kanban.cards.push(this.kbNewCard(fields));
-                    this._kbReopenCreate = col.id + '|' + (lane.key === null ? '' : lane.key);
-                    this.kanbanChanged();
+                    const card = this.kbNewCard(fields);
+                    this.kanban.cards.push(card);
+                    const reopen = col.id + '|' + (lane.key === null ? '' : lane.key);
+                    const r0 = box.getBoundingClientRect();
+                    const at = { left: r0.left, top: r0.top, bottom: r0.bottom };
+                    // Typed and Entered: pick (or type) its label, then on to the next card.
+                    if (pick && !lane.label) {
+                        this.kanbanChanged();
+                        this.openKbLabelPicker(card.id, at, () => { this._kbReopenCreate = reopen; this.renderKanbanBoard(this.kbScrollState()); });
+                    } else {
+                        this._kbReopenCreate = reopen;
+                        this.kanbanChanged();
+                    }
                     return true;
                 };
                 ta.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(); }
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(true); }
                     if (e.key === 'Escape') { e.preventDefault(); this.renderKanbanBoard(this.kbScrollState()); }
                 });
                 ta.addEventListener('blur', () => setTimeout(() => {
@@ -949,7 +1214,7 @@
         // ----- Drag and drop (mouse, pen, and touch after a short hold) -----
         wireKanbanDrag(node, card) {
             node.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0 || e.target.closest('button, input, textarea, select')) return;
+                if (e.button !== 0 || e.target.closest('button, input, textarea, select, a')) return;
                 const sx = e.clientX, sy = e.clientY;
                 const touch = e.pointerType === 'touch';
                 let dragging = false;
@@ -1076,7 +1341,7 @@
             const k = this.kanban;
             if (!k) return null;
             let tab = k.notesTabId ? (this.notesTabs || []).find(x => x.id === k.notesTabId) : null;
-            if (!tab && create && typeof this.getDefaultNotesTab === 'function') {
+            if (!tab && create && !k.notesRetired && k.notesTabId && typeof this.getDefaultNotesTab === 'function') {
                 tab = this.getDefaultNotesTab('Kanban notes');
                 tab.content = '<p>Notes for the Kanban board: a title for each column and each card. They follow the board - write under them.</p>';
                 this.notesTabs.push(tab);
@@ -1090,8 +1355,8 @@
 
         syncKanbanNotes() {
             const k = this.kanban;
-            if (!k || (!k.cards.length && !k.notesTabId)) return false;
-            const tab = this.kanbanNotesTab(true);
+            if (!k || k.notesRetired || !k.notesTabId) return false;
+            const tab = this.kanbanNotesTab(false);
             if (!tab) return false;
             const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
             const blocks = Array.from(doc.body.childNodes).filter(n => n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()));
@@ -1204,30 +1469,39 @@
             });
         },
 
+        // Never listed with the ordinary tabs (the card notes have their own pill;
+        // what's left of the old Kanban notes is in the notes list).
         isHiddenNotesTab(tab) {
-            return !!(tab && this.kanban && tab.id === this.kanban.cardTabId);
+            return !!(tab && this.kanban && (tab.id === this.kanban.cardTabId || (this.kanban.notesRetired && tab.id === this.kanban.notesTabId)));
+        },
+
+        kbColItems(card, colId) {
+            return colId === card.column ? card.checklist : ((card.colChecklists && card.colChecklists[colId]) || []);
         },
 
         writeKbCardTab(card) {
             const tab = this.kbCardTab(true);
             if (!tab || !card) return null;
-            const escH = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-            const parts = [`<p><strong>${escH(card.title)}</strong> - notes for each column</p>`];
-            // Its links and files, as links (part of the page's heading, not of any column).
-            (card.links || []).forEach((l) => { parts.push(`<p>${ROW_DIVIDER.slice(0, 1)}🔗 <a href="${escH(kbHref(l.url))}">${escH(l.label || l.url)}</a></p>`); });
-            const multi = this.kbMultiRow();
+            const parts = [];
+            // Its links and files (above the columns, not part of any of them).
+            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(l.label ? `${l.label} - ${l.url}` : l.url)}</p>`); });
+            const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
-                // Rows divided by a line with the row's name (not part of any column's notes).
+                // Several rows: divided by a line with the row's name.
                 if (multi && col.row !== lastRow) {
                     const r = this.kanban.rows.find(x => x.id === col.row);
-                    parts.push(`<p>${ROW_DIVIDER} ${escH((r && r.name) || 'Row')} ${ROW_DIVIDER}</p>`);
+                    parts.push(`<p>${ROW_DIVIDER} ${escHtml((r && r.name) || 'Row')} ${ROW_DIVIDER}</p>`);
                     lastRow = col.row;
                 }
                 // Only the column the card is in starts open (written folded, so a
                 // later refresh of the note can't undo it).
-                parts.push(`<h4${col.id === card.column ? '' : ' data-folded="true"'}>${escH(col.name)}</h4>`);
+                parts.push(`<h4${col.id === card.column ? '' : ' data-folded="true"'}>${escHtml(col.name)}</h4>`);
                 parts.push((card.notes && card.notes[col.id]) || '<p>&nbsp;</p>');
+                this.kbColItems(card, col.id).forEach((it) => {
+                    if (!it.text.trim()) return;
+                    parts.push(`<h6${it.done ? ' data-done="true"' : ''}>${escHtml(kbNorm(it.text))}</h6>`, it.note || '<p>&nbsp;</p>');
+                });
             });
             const content = parts.join('');
             this._kbCardTabFor = card.id;
@@ -1240,37 +1514,82 @@
             return tab;
         },
 
-        // Text typed in a card's tab goes back into the card.
+        // Text typed in a card's tab goes back into the card; a card checklist
+        // line added, renamed or removed there is on the card and in the
+        // flowchart too.
         pullKbCardTabEdits() {
             const tab = this.kbCardTab(false);
             const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
-            if (!tab || !card || tab.content === this._kbCardTabSeen) return;
+            if (!tab || !card) return;
+            if (typeof this.flushNotesEditors === 'function') this.flushNotesEditors();
+            if (tab.content === this._kbCardTabSeen) return;
             this._kbCardTabSeen = tab.content;
             const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
             const cols = this.kanban.columns;
             let i = -1;
-            const bodies = cols.map(() => []);
+            const parts = cols.map(() => ({ body: [], items: [] }));
             Array.from(doc.body.childNodes).forEach((n) => {
                 if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
                 if ((n.textContent || '').trim().startsWith(ROW_DIVIDER.slice(0, 1))) return;
-                if (i >= 0 && i < cols.length && (n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) bodies[i].push(n);
+                if (i < 0 || i >= cols.length || !(n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) return;
+                const p = parts[i];
+                if (n.nodeType === 1 && n.tagName === 'H6') p.items.push({ text: kbNorm(n.textContent).replace(/^✓\s*/, ''), blocks: [] });
+                else if (p.items.length) p.items[p.items.length - 1].blocks.push(n);
+                else p.body.push(n);
             });
-            const hasText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
+            // A column's Title is missing or doubled: not a layout to read back.
+            if (i !== cols.length - 1) return;
             let changed = false;
+            let listChanged = false;
             cols.forEach((col, j) => {
-                const text = hasText(bodies[j]) ? bodies[j].map(b => b.outerHTML || `<p>${b.textContent}</p>`).join('') : '';
-                const before = (card.notes && card.notes[col.id]) || '';
-                if (text === before) return;
-                if (!card.notes) card.notes = {};
-                if (text) card.notes[col.id] = text; else delete card.notes[col.id];
-                changed = true;
+                const text = blocksHaveText(parts[j].body) ? blocksHtml(parts[j].body) : '';
+                if (text !== ((card.notes && card.notes[col.id]) || '')) {
+                    if (!card.notes) card.notes = {};
+                    if (text) card.notes[col.id] = text; else delete card.notes[col.id];
+                    changed = true;
+                }
+                // Lines that still read the same are the same items; what's left
+                // over is matched in order (renamed), then added or removed.
+                const old = this.kbColItems(card, col.id).filter(x => x.text.trim());
+                const lines = parts[j].items;
+                const pair = new Map();
+                const used = new Set();
+                lines.forEach((ln) => {
+                    const it = ln.text && old.find(x => !used.has(x) && kbNorm(x.text) === ln.text);
+                    if (it) { pair.set(ln, it); used.add(it); }
+                });
+                const rest = old.filter(x => !used.has(x));
+                lines.forEach((ln) => { if (!pair.has(ln) && rest.length) pair.set(ln, rest.shift()); });
+                const next = [];
+                lines.forEach((ln) => {
+                    let it = pair.get(ln);
+                    if (!it) {
+                        if (!ln.text) return; // a line just started
+                        it = { id: uid('ck'), text: ln.text, done: false };
+                        listChanged = true;
+                    } else if (ln.text && ln.text !== kbNorm(it.text)) {
+                        it.text = ln.text;
+                        listChanged = true;
+                    }
+                    const note = blocksHaveText(ln.blocks) ? blocksHtml(ln.blocks) : '';
+                    if (note !== (it.note || '')) { if (note) it.note = note; else delete it.note; changed = true; }
+                    next.push(it);
+                });
+                if (next.length !== old.length || next.some((x, n) => x !== old[n])) {
+                    listChanged = true;
+                    if (col.id === card.column) card.checklist = next;
+                    else {
+                        if (!card.colChecklists) card.colChecklists = {};
+                        if (next.length) card.colChecklists[col.id] = next; else delete card.colChecklists[col.id];
+                        if (!Object.keys(card.colChecklists).length) delete card.colChecklists;
+                    }
+                }
             });
-            if (!changed) return;
             if (card.notes && !Object.keys(card.notes).length) delete card.notes;
-            // Its current column's text shows in the Kanban notes too.
-            this._kbCardWins = new Set([card.id]);
-            try { this.syncKanbanNotes(); } finally { this._kbCardWins = null; }
-            this.autosave();
+            if (listChanged) {
+                // Called from kanbanChanged itself: that goes on to do the rest.
+                if (!this._kbInChange) this.kanbanChanged(true);
+            } else if (changed && !this._kbInChange) this.autosave();
         },
 
         notesPanelShowing() {
@@ -1325,12 +1644,14 @@
             // The Gantt notes get the same boxes, one per subtask (gantt.js).
             const isGantt = !isKb && !!(this.gantt && ref && ref.tabId === this.gantt.notesTabId);
             const isMaster = isKb || isGantt;
-            if (!isMaster && !editor._kbDecorated) return;
+            const isCard = !isMaster && !!(this.kanban && ref && ref.tabId === this.kanban.cardTabId);
+            if (isCard) this.kbWireCardNotes(editor);
+            if (!isMaster && !isCard && !editor._kbDecorated) return;
             const view = editor.editing.view;
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -1411,6 +1732,7 @@
                 });
                 close();
             }
+            if (isCard) kids.forEach((el) => { if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item']); });
             view.change((writer) => {
                 kids.forEach((el) => {
                     const want = plan.get(el) || [];
@@ -1429,7 +1751,93 @@
                     }
                 });
             });
-            editor._kbDecorated = isMaster;
+            editor._kbDecorated = isMaster || isCard;
+        },
+
+        kbWireCardNotes(editor) {
+            if (editor._kbCardWired) return;
+            editor._kbCardWired = true;
+            const isCardNote = () => { const r = editor._noteTabRef || editor.config.get('noteTab'); return !!(r && this.kanban && r.tabId === this.kanban.cardTabId); };
+            const dom = editor.editing.view.getDomRoot();
+            // A click on an item's box ticks it: which column, and which item in it.
+            if (dom) dom.addEventListener('mousedown', (e) => {
+                const h = e.target && e.target.closest && e.target.closest('h6.kb-nc-card-item');
+                if (!h || !isCardNote() || e.clientX > h.getBoundingClientRect().left + 40) return;
+                const all = Array.from(dom.children);
+                let colAt = -1;
+                let itemAt = -1;
+                for (const x of all) {
+                    if (x.tagName === 'H4') { colAt++; itemAt = -1; }
+                    if (x.tagName === 'H6') itemAt++;
+                    if (x === h) break;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                this.pullKbCardTabEdits();
+                const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+                const col = this.kanban.columns[colAt];
+                const it = card && col && this.kbColItems(card, col.id).filter(x => x.text.trim())[itemAt];
+                if (!it) return;
+                it.done = !it.done;
+                this.kanbanChanged();
+            }, true);
+            let from = null;
+            const enter = editor.commands.get('enter');
+            editor.editing.view.document.on('enter', (evt, data) => {
+                from = null;
+                if (!isCardNote()) return;
+                const sel = editor.model.document.selection;
+                const block = sel.getFirstPosition().parent;
+                if (!sel.isCollapsed || !block.is('element', 'heading6')) return;
+                if (block.isEmpty) {
+                    // Enter on an empty item: the list ends, back to normal text.
+                    editor.execute('paragraph');
+                    data.preventDefault();
+                    evt.stop();
+                    return;
+                }
+                if (sel.getFirstPosition().isAtEnd) from = block;
+            }, { priority: 'highest' });
+            if (enter) enter.on('afterExecute', (evt, data) => {
+                if (!from) return;
+                from = null;
+                const block = editor.model.document.selection.getFirstPosition().parent;
+                if (!block.isEmpty) return;
+                if (block.is('element', 'paragraph')) data.writer.rename(block, 'heading6');
+                data.writer.removeAttribute('ganttDone', block);
+            }, { priority: 'lowest' });
+        },
+
+        // Is the note being edited a card's?
+        kbInCardNotes() {
+            const t = this.getActiveNotesTarget && this.getActiveNotesTarget();
+            return !!(t && t.scope === 'chart' && this.kanban && this.kanban.cardTabId && t.tabId === this.kanban.cardTabId);
+        },
+
+        // The selected lines become items of the card's checklist, or - when
+        // they all already are - normal text again.
+        kbToggleCardCheck() {
+            const { editor } = this.getActiveNotesTarget();
+            if (!editor) return;
+            const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
+            const top = blocks[0];
+            let title = null;
+            for (let b = top; b; b = b.parent && !b.parent.is('rootElement') ? b.parent : b.previousSibling) if (b.is('element', 'heading4')) { title = b; break; }
+            if (!title) { this.showNotification('Put the cursor under a column\'s title first.'); return; }
+            const all = blocks.every(b => b.is('element', 'heading6'));
+            editor.model.change((writer) => {
+                blocks.forEach((b) => {
+                    if (b.is('element', 'heading4')) return;
+                    ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent'].forEach((a) => { if (b.hasAttribute(a)) writer.removeAttribute(a, b); });
+                    if (all) { writer.removeAttribute('ganttDone', b); writer.rename(b, 'paragraph'); }
+                    else if (!b.is('element', 'heading6')) writer.rename(b, 'heading6');
+                });
+                // Somewhere to type after the list.
+                const last = blocks[blocks.length - 1];
+                const after = last.nextSibling;
+                if (!all && last.parent && last.parent.is('rootElement') && (!after || /^heading4$/.test(after.name))) writer.insertElement('paragraph', last, 'after');
+            });
+            editor.editing.view.focus();
         },
 
         // The notes' Card button: the line the cursor is on becomes a new card in
@@ -1446,7 +1854,7 @@
             if (!text) { this.showNotification('Put the cursor on a line with some text first.'); return; }
             if (!this.kanban) this.newKanbanBoard(TEMPLATES.basic.columns);
             const first = this.kbRowCols(this.kbRows()[0].id)[0];
-            const inMaster0 = scope === 'chart' && tabId === this.kanban.notesTabId;
+            const inMaster0 = scope === 'chart' && (tabId === this.kanban.notesTabId || tabId === this.kanban.cardTabId);
             // From another note: labelled with the Title the line is under.
             let labels = [];
             if (!inMaster0 && block) {
@@ -1493,7 +1901,13 @@
                 if (!item) return;
                 const rect = this.querySelector('rect');
                 if (!rect || this.querySelector('.kb-ck-box')) return;
-                const x = +rect.getAttribute('x') + 8;
+                // The box sits right beside the text, the two centred together.
+                const textEl = this.querySelector(':scope > text');
+                let half = 0;
+                try { half = textEl ? textEl.getBBox().width / 2 : 0; } catch (e) { /* not on screen */ }
+                const left = +rect.getAttribute('x') + 6;
+                const shift = Math.max(10, left + 20 + half);
+                const x = half ? Math.max(left, Math.min(10, shift) - half - 20) : left;
                 const y = +rect.getAttribute('y') + (+rect.getAttribute('height')) / 2 - 7;
                 const g = d3.select(this).append('g').attr('class', 'kb-ck-box').style('cursor', 'pointer');
                 g.append('title').text(item.done ? 'Done - untick' : 'Tick off');
@@ -1502,34 +1916,70 @@
                 if (item.done) g.append('path').attr('d', `M${x + 3},${y + 7.5} l3,3 l5,-6`).attr('fill', 'none').attr('stroke', '#fff').attr('stroke-width', 2).attr('stroke-linecap', 'round');
                 g.on('mousedown', ev => ev.stopPropagation()).on('dblclick', ev => ev.stopPropagation())
                     .on('click', (ev) => { ev.stopPropagation(); app.kbToggleItem(id.slice(3)); });
-                d3.select(this).select('text').style('text-decoration', item.done ? 'line-through' : null);
+                d3.select(this).select('text').attr('transform', `translate(${half ? Math.max(0, x + 20 + half) : 10},0)`).style('text-decoration', item.done ? 'line-through' : null);
             });
         },
 
         kanbanNotesOpen() {
             const k = this.kanban;
-            if (!k || !k.notesTabId) return false;
+            if (!k || !k.notesTabId || k.notesRetired) return false;
             const panel = document.getElementById('reflection-panel');
             const panelOpen = this._leftPanelMode === 'notes' && this._notesTabActive &&
                 !!panel && panel.offsetParent !== null && getComputedStyle(panel).display !== 'none';
             return panelOpen && this._activeNotesScope === 'chart' && this.getActiveNotesTabId('chart') === k.notesTabId;
         },
 
+        // The board's notes: a card's own (the one asked for, else the selected
+        // one, else the last one shown, else the first).
         openKanbanNotes(cardId) {
             if (!this.kanban) return;
-            const tab = this.kanbanNotesTab(true);
-            if (!tab) return;
-            this.syncKanbanNotes();
-            this.autosave();
-            this._activeNotesScope = 'chart';
-            this.setActiveNotesTabId('chart', tab.id);
-            this.openNotesPanel();
-            if (typeof this.renderNotesPanel === 'function') this.renderNotesPanel();
-            setTimeout(() => {
-                this.showEmbeddedEditor('chart', tab.id);
-                this.renderNotesTabBar();
-                if (cardId) this.focusKanbanNoteTitle(cardId, true);
-            }, 60);
+            const id = [cardId, this._kbSelected, this._kbCardTabFor].find(x => x && this.kbCard(x)) || (this.kbCards()[0] || {}).id;
+            if (!id) { this.showNotification('Add a card first - each card has its own notes.'); return; }
+            this.openKbCardNotes(id, { focus: true });
+        },
+
+        // The old "Kanban notes" tab (every card in one note) is put away: what
+        // was under each card and checklist item moves to the card's own notes.
+        // Anything else written there stays in a note called "Kanban notes (old)".
+        kbRetireNotes() {
+            const k = this.kanban;
+            if (!k || k.notesRetired) return;
+            const tab = k.notesTabId ? (this.notesTabs || []).find(x => x.id === k.notesTabId) : null;
+            if (tab) {
+                // Writes the text under each card into the card.
+                this.syncKanbanNotes();
+                const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
+                const byText = new Map();
+                Object.entries(k.noteTitles || {}).forEach(([id, text]) => {
+                    const key = `${id.startsWith('col:') ? 'H4' : id.startsWith('ck:') ? 'H6' : 'H5'}|${kbNorm(text)}`;
+                    if (!byText.has(key)) byText.set(key, []);
+                    byText.get(key).push(id);
+                });
+                let cur = null;
+                const left = [];
+                const itemText = new Map();
+                Array.from(doc.body.childNodes).forEach((n) => {
+                    const isHead = n.nodeType === 1 && /^H[456]$/.test(n.tagName);
+                    const q = isHead ? byText.get(`${n.tagName}|${kbNorm(n.textContent)}`) : null;
+                    if (q && q.length) { cur = q.shift(); return; }
+                    if (cur && cur.startsWith('ck:')) { if (!itemText.has(cur)) itemText.set(cur, []); itemText.get(cur).push(n); return; }
+                    if (cur && !cur.startsWith('col:') && !isHead) return; // a card's text: already in the card
+                    if (/^Notes for the Kanban board:/.test((n.textContent || '').trim())) return;
+                    left.push(n);
+                });
+                itemText.forEach((bs, id) => {
+                    if (!blocksHaveText(bs)) return;
+                    k.cards.forEach(c => c.checklist.forEach((it) => { if (`ck:${it.id}` === id && !it.note) it.note = blocksHtml(bs); }));
+                });
+                if (blocksHaveText(left)) { tab.name = 'Kanban notes (old)'; tab.content = blocksHtml(left); }
+                else this.notesTabs = this.notesTabs.filter(x => x !== tab);
+                if (Array.isArray(this.notesPinned)) this.notesPinned = this.notesPinned.filter(x => x !== `chart:${k.notesTabId}`);
+                if (this.activeNotesTabId === k.notesTabId) {
+                    const next = this.notesTabs.find(x => x.id !== k.notesTabId && x.id !== k.cardTabId) || this.notesTabs[0];
+                    if (next) this.activeNotesTabId = next.id;
+                }
+            }
+            k.notesRetired = true;
         },
 
         // Selecting a card while the Kanban notes are open goes to its heading.
@@ -1589,7 +2039,7 @@
         // front is optional); a column's Title renames the column.
         pullKanbanNotesEdits() {
             const k = this.kanban;
-            const tab = k && k.notesTabId ? this.kanbanNotesTab(false) : null;
+            const tab = k && k.notesTabId && !k.notesRetired ? this.kanbanNotesTab(false) : null;
             if (!tab || !tab.content || tab.content === this._kbNotesSeen) return;
             this._kbNotesSeen = tab.content;
             const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
@@ -1664,14 +2114,13 @@
                 top.children.splice(at, 0, branch);
             }
             branch.name = title;
+            if (this._kbPendingNodes) { branch.children = (branch.children || []).concat(this._kbPendingNodes); this._kbPendingNodes = null; }
             const DONE_GREEN = '#2e9e5b';
             const cardNode = (card) => {
                 const done = this.kbIsDone(card);
-                const col = this.kbColumn(card.column);
-                const l = card.labels.length ? this.kbLabel(card.labels[0]) : null;
                 return {
-                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (card.assignee ? ` (${card.assignee})` : '')}`,
-                    color: done ? DONE_GREEN : (l ? l.color : '#5e6c84')
+                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (card.assignee ? ` (${card.assignee})` : '')} ${CARD_EMOJI}`,
+                    color: done ? DONE_GREEN : CARD_COLOR
                 };
             };
             const itemNode = (it, card) => ({ name: `${it.done ? '✓ ' : ''}${it.text.trim()}`, color: it.done ? DONE_GREEN : cardNode(card).color });
@@ -1904,7 +2353,7 @@
                         cardNode._kanban = card.id;
                         changed = true;
                     } else if (card) {
-                        let t = strip(cardNode.name).replace(/^⛔\s*/, '').replace(/\s*✓$/, '');
+                        let t = strip(cardNode.name).replace(/(\s*🃏)+\s*$/u, '').replace(/^⛔\s*/, '').replace(/\s*✓$/, '');
                         if (card.assignee && t.endsWith(` (${card.assignee})`)) t = t.slice(0, -(card.assignee.length + 3));
                         t = t.trim();
                         if (t && t !== card.title) { card.title = t; changed = true; }
@@ -2060,17 +2509,6 @@
             this._kbSelected = id;
             const k = this.kanban;
             const p = this.kbPopup('Card');
-            // Along the bottom of the screen rather than a popup in the middle -
-            // under the board only, clear of the Notes column.
-            p.pop.classList.add('kb-sheet');
-            const placeSheet = () => {
-                if (!p.pop.isConnected) { window.removeEventListener('resize', placeSheet); return; }
-                const panel = document.getElementById('flowchart-panel');
-                const left = panel ? Math.max(0, Math.round(panel.getBoundingClientRect().left)) : 0;
-                p.pop.style.left = left + 'px';
-            };
-            placeSheet();
-            window.addEventListener('resize', placeSheet);
             const row = (label, ...inputs) => el('div', null, el('label', { class: 'cs-label', text: label }), el('div', { class: 'cs-row' }, ...inputs));
             const title = el('input', { class: 'cs-input', type: 'text', value: card.title });
             const desc = el('textarea', { class: 'cs-input kb-desc', rows: '3', placeholder: 'Details, acceptance criteria, links...' });
@@ -2095,7 +2533,12 @@
                 linkBox.innerHTML = '';
                 links.forEach((l, i) => {
                     linkBox.append(el('div', { class: 'kb-ck-item' },
-                        el('a', { class: 'kb-link-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: l.label || l.url, title: l.url, onclick: (e) => kbOpenLink(e, l.url, this) }),
+                        (() => {
+                            const nm = el('input', { class: 'cs-input', type: 'text', value: l.label, placeholder: 'Name (optional)' });
+                            nm.addEventListener('input', () => { l.label = nm.value.trim(); });
+                            return nm;
+                        })(),
+                        el('a', { class: 'kb-link-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: l.url, title: l.url, onclick: (e) => kbOpenLink(e, l.url, this) }),
                         el('button', { class: 'cs-btn kb-ck-del', type: 'button', text: '✕', title: 'Remove', onclick: () => { links.splice(i, 1); drawLinks(); } })));
                 });
                 const url = el('input', { class: 'cs-input', type: 'text', placeholder: 'https://... or C:\\folder\\file.pdf' });
@@ -2113,7 +2556,9 @@
                 chips.innerHTML = '';
                 k.labels.forEach((l) => {
                     chips.append(el('button', { type: 'button', class: 'kb-chip kb-chip-btn' + (chosen.has(l.id) ? ' on' : ''), style: this.kbChipStyle(l), text: (chosen.has(l.id) ? '✓ ' : '') + l.name,
-                        onclick: () => { if (chosen.has(l.id)) chosen.delete(l.id); else chosen.add(l.id); drawChips(); } }));
+                        onclick: () => { if (chosen.has(l.id)) chosen.delete(l.id); else chosen.add(l.id); drawChips(); } }),
+                        el('button', { type: 'button', class: 'kb-chip-x', text: '✕', title: `Delete the label "${l.name}" from the board`,
+                            onclick: async () => { if (await this.kbDeleteLabel(l.id)) { chosen.delete(l.id); drawChips(); } } }));
                 });
             };
             drawChips();
@@ -2188,9 +2633,10 @@
             title.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
             p.footer.append(
                 el('button', { class: 'cs-btn kb-danger', type: 'button', text: '🗑 Delete', onclick: () => { p.close(); this._kbSelected = card.id; this.deleteKanbanSelected(); } }),
+                el('button', { class: 'cs-btn', type: 'button', text: '🗄 Archive', title: 'Take it off the board; everything is kept', onclick: () => { save(); this.archiveKanbanCard(card.id); } }),
                 el('span', { class: 'kb-spacer' }),
                 el('button', { class: 'cs-btn', type: 'button', text: '🌳', title: 'Show this card in the flowchart', onclick: () => { save(); this.showKanbanCardInFlowchart(card.id); } }),
-                el('button', { class: 'cs-btn', type: 'button', text: '📝 Notes', title: 'Save, then open the notes for this card', onclick: () => { save(); this.openKanbanNotes(card.id); } }),
+                el('button', { class: 'cs-btn', type: 'button', text: '📝 Notes', title: 'Save, then open the notes for this card', onclick: () => { save(); this.openKbCardNotes(card.id, { focus: true }); } }),
                 el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }),
                 el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Save', onclick: save }));
             this.renderKanbanBoard(this.kbScrollState());
@@ -2431,6 +2877,90 @@
         return r;
     };
 
+    // A card's node moved under another column (or under something in one): the
+    // card moves there as if dragged on the board, so its own chart and
+    // checklist for that column come out (or start fresh). Ctrl+Z puts it back.
+    const origMoveNode = FlowchartViewer.prototype.moveNodeTo;
+    if (origMoveNode) {
+        FlowchartViewer.prototype.moveNodeTo = function (movingD, newParentD, ...rest) {
+            const id = movingD && movingD.data && movingD.data._kanban;
+            const card = id && this.kanban && !this._critView ? this.kbCard(id) : null;
+            if (card && newParentD && !movingD.descendants().includes(newParentD)) {
+                let col = null;
+                for (let a = newParentD; a; a = a.parent) {
+                    const k = a.data && a.data._kanban;
+                    if (k && k.startsWith('col:')) { col = this.kbColumn(k.slice(4)); break; }
+                }
+                if (col && col.id !== card.column) {
+                    const node = movingD.data;
+                    if (node._kbColView) this.kbColViewOff(node);
+                    this.pushUndo();
+                    const top = this.undoStack[this.undoStack.length - 1];
+                    if (top) top.kbMove = { id: card.id, from: card.column, to: col.id };
+                    // Dropped on a group in that column: it goes into the group.
+                    const g = newParentD.data;
+                    if (!g._kanban && g._id) {
+                        if (!node._colParent || typeof node._colParent !== 'object') node._colParent = {};
+                        node._colParent[col.id] = g._id;
+                    }
+                    this.kbMoveCard(card.id, col.id, null);
+                    this.renderFlowchart(this.rootData);
+                    this.hideNodeEditPopup(false);
+                    this.showNotification(`Moved "${card.title}" to "${col.name}".`);
+                    const d = this.findRenderedNode(this.kbFindNode(card.id));
+                    if (d) this.centerNodeOnMobile(d, () => {});
+                    return undefined;
+                }
+            }
+            return origMoveNode.call(this, movingD, newParentD, ...rest);
+        };
+    }
+
+    // The card notes' pill in the notes' tab row: always there once the board
+    // has cards.
+    const origTabBar = FlowchartViewer.prototype.buildNotesTabBar;
+    if (origTabBar) {
+        FlowchartViewer.prototype.buildNotesTabBar = function (...args) {
+            const bar = origTabBar.apply(this, args);
+            if (!this.kanban || !this.kbCards().length) return bar;
+            const on = this._activeNotesScope === 'chart' && !!this.kanban.cardTabId && this.getActiveNotesTabId('chart') === this.kanban.cardTabId;
+            const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+            const pill = el('div', { class: 'matrix-tab kb-card-tab' + (on ? ' active' : ''), title: 'Card notes: the selected card\'s notes for each column' },
+                el('span', { class: 'matrix-tab-label', text: `${CARD_EMOJI} ${card ? card.title : 'Card notes'}` }));
+            pill.addEventListener('click', () => this.openKanbanNotes(null));
+            bar.prepend(pill);
+            return bar;
+        };
+    }
+
+    // In a card's notes the checklist button makes two kinds: the card's own
+    // checklist (on the card and in the flowchart) or one for the notes only.
+    const origToolbar = FlowchartViewer.prototype.buildNotesToolbar;
+    if (origToolbar) {
+        FlowchartViewer.prototype.buildNotesToolbar = function (...args) {
+            const row = origToolbar.apply(this, args);
+            const plain = row.querySelector('.nt-checklist');
+            if (plain) {
+                const b = el('button', { class: 'notes-toolbar-btn notes-icon-btn nt-card-check', type: 'button', title: 'Card checklist - these lines go on the card and in the flowchart', 'aria-label': 'Card checklist' });
+                b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 12l3.5 3.5L17 9"/></svg>';
+                b.addEventListener('click', () => this.kbToggleCardCheck());
+                plain.before(b);
+                plain.classList.add('kb-plain-check');
+                plain.dataset.title = plain.title;
+            }
+            return row;
+        };
+    }
+    const origShowEditor = FlowchartViewer.prototype.showEmbeddedEditor;
+    if (origShowEditor) {
+        FlowchartViewer.prototype.showEmbeddedEditor = function (scope, tabId, ...rest) {
+            const on = scope === 'chart' && !!this.kanban && !!this.kanban.cardTabId && tabId === this.kanban.cardTabId;
+            document.body.classList.toggle('kb-card-notes', on);
+            document.querySelectorAll('.kb-plain-check').forEach((b) => { b.title = on ? 'Plain checklist - stays in the notes only' : (b.dataset.title || b.title); });
+            return origShowEditor.call(this, scope, tabId, ...rest);
+        };
+    }
+
     // Opening the Gantt chart leaves the board.
     const origToggleGantt = FlowchartViewer.prototype.toggleGanttMode;
     if (origToggleGantt) {
@@ -2447,6 +2977,15 @@
     FlowchartViewer.prototype.renderFlowchart = function (...args) {
         const r = origRenderFlow.apply(this, args);
         try { this.paintKanbanItemBoxes(); } catch (e) { /* drawn next time */ }
+        // A card showing its column history: everything outside it is dimmed.
+        try {
+            const hosts = new Set(this.kanban && !this._critView ? this.kbColViewHosts() : []);
+            if (hosts.size && typeof d3 !== 'undefined') {
+                const inside = (d) => { for (let a = d; a; a = a.parent) if (a.data && hosts.has(a.data)) return true; return false; };
+                d3.selectAll('#flowchart g.node').style('opacity', d => (d && d.data && !inside(d) ? 0.22 : null));
+                d3.selectAll('#flowchart .link').style('opacity', d => (d && d.target && !inside(d.source) ? 0.22 : null));
+            }
+        } catch (e) { /* drawn next time */ }
         if (!this._kanbanMode && !this._critView && this.kanban) {
             try { this.pullKanbanFlowEdits(); } catch (e) { console.error('Kanban branch edits:', e); }
         }
@@ -2464,6 +3003,7 @@
         } else {
             this._kbLastSnap = this.kanbanSnapshot();
         }
+        try { this.kbRetireNotes(); } catch (e) { console.error('Kanban notes:', e); }
         // The flowchart branch is brought up to date (names and layout as this
         // version draws them).
         if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }
@@ -2502,10 +3042,7 @@
                 let id = n && n._kanban;
                 if (id && id.startsWith('ck:') && d.parent && d.parent.data) id = d.parent.data._kanban;
                 if (id && id !== 'root' && this.kanban && this.notesPanelShowing()) {
-                    if (id.startsWith('col:')) {
-                        if (this.kanbanNotesOpen()) this.focusKanbanNoteTitle(id);
-                        else { this.openKanbanNotes(null); setTimeout(() => this.focusKanbanNoteTitle(id, false), 400); }
-                    } else if (this.kbCard(id)) {
+                    if (this.kbCard(id)) {
                         this.openKbCardNotes(id);
                     }
                 }
@@ -2527,8 +3064,22 @@
     const origUndo = FlowchartViewer.prototype.undo;
     const origRedo = FlowchartViewer.prototype.redo;
     const origButtons = FlowchartViewer.prototype.updateUndoRedoButtons;
-    FlowchartViewer.prototype.undo = function (...args) { return this._kanbanMode ? this.undoKanban() : origUndo.apply(this, args); };
-    FlowchartViewer.prototype.redo = function (...args) { return this._kanbanMode ? this.redoKanban() : origRedo.apply(this, args); };
+    // A card node's move to another column is one step: the tree and the card
+    // go back (or forward) together.
+    const withMove = (app, stack, other, run, pick) => {
+        const move = app[stack].length ? app[stack][app[stack].length - 1].kbMove : null;
+        const r = run();
+        if (move) {
+            const back = app[other][app[other].length - 1];
+            if (back) back.kbMove = move;
+            const card = app.kbCard(move.id);
+            const [was, to] = pick === 'undo' ? [move.to, move.from] : [move.from, move.to];
+            if (card && card.column === was && app.kbColumn(to)) app.kbMoveCard(card.id, to, null);
+        }
+        return r;
+    };
+    FlowchartViewer.prototype.undo = function (...args) { return this._kanbanMode ? this.undoKanban() : withMove(this, 'undoStack', 'redoStack', () => origUndo.apply(this, args), 'undo'); };
+    FlowchartViewer.prototype.redo = function (...args) { return this._kanbanMode ? this.redoKanban() : withMove(this, 'redoStack', 'undoStack', () => origRedo.apply(this, args), 'redo'); };
     FlowchartViewer.prototype.updateUndoRedoButtons = function (...args) {
         if (!this._kanbanMode) return origButtons.apply(this, args);
         const canUndo = !!(this._kbUndo && this._kbUndo.length);

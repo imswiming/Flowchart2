@@ -177,16 +177,24 @@
         if (!tag) { tag = document.createElement('div'); tag.id = 'node-stamp-tag'; document.body.append(tag); }
         tag.textContent = text;
         const r = (nodeEl.querySelector('rect') || nodeEl).getBoundingClientRect();
-        tag.style.left = Math.round(r.left) + 'px';
+        // Just past the node's bottom right corner, clear of its fold button.
+        const w = tag.offsetWidth;
+        tag.style.left = Math.round(Math.max(4, Math.min(window.innerWidth - w - 4, r.right + 6))) + 'px';
         tag.style.top = Math.round(r.bottom + 4) + 'px';
     };
+    const hideStamp = () => { const t = document.getElementById('node-stamp-tag'); if (t) t.remove(); };
     document.addEventListener('mouseover', (e) => {
         const app = window.__flowchartApp;
         if (!app || !window.matchMedia('(hover: hover)').matches) return;
         const nodeEl = e.target && e.target.closest && e.target.closest('#flowchart g.node');
         if (nodeEl) app.showNodeStamp(nodeEl);
-        else if (!(e.target && e.target.closest && e.target.closest('#node-stamp-tag'))) { const t = document.getElementById('node-stamp-tag'); if (t) t.remove(); }
+        else hideStamp();
     });
+    // Panning, zooming or pressing anywhere on the flowchart puts it away (the
+    // node moves out from under it), and so does editing a node.
+    document.addEventListener('pointerdown', hideStamp, true);
+    document.addEventListener('wheel', hideStamp, { capture: true, passive: true });
+    document.addEventListener('input', hideStamp, true);
 
     // Your name: in the Cloud Sync popup (the same one shared flowcharts use).
     const addNameField = () => {
@@ -222,6 +230,14 @@
         return r;
     };
 
+    const origPan = proto.updateChartButtonsForPan;
+    if (origPan) {
+        proto.updateChartButtonsForPan = function (...args) {
+            hideStamp();
+            return origPan.apply(this, args);
+        };
+    }
+
     const origExport = proto.exportAsJSON;
     proto.exportAsJSON = function (...args) {
         try { this.collabStamp(); } catch (e) { console.error('Could not mark edited nodes:', e); }
@@ -230,6 +246,7 @@
 
     const origRender = proto.renderFlowchart;
     proto.renderFlowchart = function (...args) {
+        hideStamp();
         const r = origRender.apply(this, args);
         try { this.paintCollabEdits(); } catch (e) { /* drawn next time */ }
         return r;

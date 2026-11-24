@@ -209,7 +209,9 @@
                 const d = new Date(t);
                 const x = xOf(day) + ppd * ((d.getHours() * 60 + d.getMinutes()) / 1440);
                 body.append(el('div', { class: 'gantt-event-line', style: `left:${x}px;` }));
-                body.append(el('div', { class: 'gantt-event-label', style: `left:${x}px; top:${2 + (n % 3) * 20}px;`, text: `⏰ ${ev.name}`, title: fmtWhen(t), onclick: (e) => { e.stopPropagation(); this.openEventEditor(ev.id); } }));
+                // Its name above the dates, like the today label.
+                head.append(el('div', { class: 'gantt-event-line', style: `left:${x}px; top:30px; opacity:0.5;` }));
+                head.append(el('div', { class: 'gantt-event-label', style: `left:${x}px; top:${(n % 2) * 15}px;`, text: `⏰ ${ev.name}`, title: fmtWhen(t), onclick: (e) => { e.stopPropagation(); this.openEventEditor(ev.id); } }));
             });
         },
 
