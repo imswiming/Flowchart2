@@ -1031,9 +1031,10 @@
 
         // ----- The flowchart branch that mirrors the board -----
         // "📋 <flowchart> - Kanban" beside the existing tree (under the hidden top
-        // node), with a node per card in board order (coloured by its first
-        // label, green once done) and its checklist items under it. Nodes added
-        // to the branch by hand are left alone; card nodes follow the board.
+        // node): a node per column, the column's cards under it (coloured by
+        // their first label, green once done) and each card's checklist items
+        // under the card. A card moved to another column takes its node (and
+        // anything under it) along. Nodes added by hand are left alone.
         findKanbanFlowRoot() {
             const root = this.rootData;
             if (!root || !Array.isArray(root.children)) return null;
@@ -1070,18 +1071,19 @@
                 const done = this.kbIsDone(card);
                 const col = this.kbColumn(card.column);
                 const l = card.labels.length ? this.kbLabel(card.labels[0]) : null;
-                const extra = [col && !done ? col.name : null, card.assignee || null].filter(Boolean).join(', ');
                 return {
-                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (extra ? ` (${extra})` : '')}`,
+                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (card.assignee ? ` (${card.assignee})` : '')}`,
                     color: done ? DONE_GREEN : (l ? l.color : '#5e6c84')
                 };
             };
             const itemNode = (it, card) => ({ name: `${it.done ? '✓ ' : ''}${it.text.trim()}`, color: it.done ? DONE_GREEN : cardNode(card).color });
             // Puts the wanted nodes into a node's children, in order, leaving
-            // nodes added by hand (and placeholders) where they are.
-            const reconcile = (parentNode, wanted) => {
+            // nodes added by hand (and placeholders) where they are. `pool`:
+            // nodes to reuse from anywhere in the branch (a card's node moving
+            // to another column keeps what's under it).
+            const reconcile = (parentNode, wanted, pool) => {
                 const kids = Array.isArray(parentNode.children) ? parentNode.children : [];
-                const existing = new Map(kids.filter(c => c && c._kanban && c._kanban !== 'root').map(c => [c._kanban, c]));
+                const existing = pool || new Map(kids.filter(c => c && c._kanban && c._kanban !== 'root').map(c => [c._kanban, c]));
                 const ids = new Set(wanted.map(w => w.id));
                 const nodes = wanted.map((w) => {
                     const n = existing.get(w.id) || { _kanban: w.id };
@@ -1108,10 +1110,29 @@
                 parentNode.children = out;
                 return nodes;
             };
-            const ordered = k.columns.flatMap(col => k.cards.filter(c => c.column === col.id));
-            const nodes = reconcile(branch, ordered.map(c => Object.assign({ id: c.id }, cardNode(c))));
-            ordered.forEach((card, i) => {
-                reconcile(nodes[i], card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+            // Every card node already in the branch, wherever it is (older
+            // boards had the cards straight under the branch).
+            const pool = new Map();
+            const collect = (n) => (n.children || []).forEach((c) => {
+                if (!c) return;
+                if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('col:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
+                collect(c);
+            });
+            collect(branch);
+            const colNode = (col, i) => {
+                const n = k.cards.filter(c => c.column === col.id).length;
+                const over = col.wip && n > col.wip;
+                const last = i === k.columns.length - 1 && k.columns.length > 1;
+                return { id: `col:${col.id}`, name: `${col.name}${last ? ' ✓' : ''} (${col.wip ? `${n}/${col.wip}` : n})`, color: over ? '#c9372c' : (last ? DONE_GREEN : '#0c66e4') };
+            };
+            const colNodes = reconcile(branch, k.columns.map(colNode));
+            k.columns.forEach((col, i) => {
+                const cards = k.cards.filter(c => c.column === col.id);
+                const cardNodes = reconcile(colNodes[i], cards.map(c => Object.assign({ id: c.id }, cardNode(c))), pool);
+                cards.forEach((card, j) => {
+                    reconcile(cardNodes[j], card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+                });
+                if (typeof this.ensureRightmostPlaceholderNodes === 'function') this.ensureRightmostPlaceholderNodes(colNodes[i]);
             });
             if (typeof this.ensureRightmostPlaceholderNodes === 'function') this.ensureRightmostPlaceholderNodes(branch);
             this.kbFlowRender();
