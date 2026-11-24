@@ -1178,6 +1178,17 @@
             return tab;
         },
 
+        // Folds every Title in the note except `keep` (which is opened).
+        kbFoldAllBut(editor, keep) {
+            if (typeof this.toggleTitleFold !== 'function') return;
+            Array.from(editor.model.document.getRoot().getChildren()).forEach((h) => {
+                if (!h.is('element', 'heading4')) return;
+                const folded = !!h.getAttribute('folded');
+                if (h === keep && folded) this.toggleTitleFold(editor, h, false);
+                else if (h !== keep && !folded) this.toggleTitleFold(editor, h, true);
+            });
+        },
+
         isHiddenNotesTab(tab) {
             return !!(tab && this.kanban && tab.id === this.kanban.cardTabId);
         },
@@ -1273,6 +1284,8 @@
                     const heads = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
                     const target = heads[at];
                     if (!target) return;
+                    // Only the card's current column is open; the other titles fold.
+                    this.kbFoldAllBut(editor, target);
                     if (typeof this.jumpToNotesTitle === 'function') this.jumpToNotesTitle(editor, target);
                     const next = target.nextSibling;
                     if (next && next.is('element') && !/^heading[456]$/.test(next.name)) {
@@ -1527,6 +1540,12 @@
                 const target = matches[Math.min(occurrence, matches.length - 1)];
                 if (!target) return;
                 if (col && target.getAttribute('folded') && typeof this.toggleTitleFold === 'function') this.toggleTitleFold(editor, target, false);
+                // A card: only its column's Title stays open.
+                if (card) {
+                    for (let i = all.indexOf(target) - 1; i >= 0; i--) {
+                        if (all[i].is('element', 'heading4')) { this.kbFoldAllBut(editor, all[i]); break; }
+                    }
+                }
                 // Unfold its column's Title.
                 for (let i = all.indexOf(target) - 1; card && i >= 0; i--) {
                     if (all[i].is('element', 'heading4')) {
