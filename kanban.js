@@ -1202,6 +1202,65 @@
             this.kbFlowRender();
         },
 
+        // ----- Edits made in the flowchart's Kanban branch go to the board -----
+        // A node added under a card becomes a checklist item, one added under a
+        // column a new card (its own children its checklist); renaming a card,
+        // a checklist item or a column renames it on the board. The board then
+        // redraws the branch, the notes and the cards as usual.
+        pullKanbanFlowEdits() {
+            const k = this.kanban;
+            const branch = this.findKanbanFlowRoot();
+            if (!k || !branch || this._kbPulling) return false;
+            const strip = n => String(n || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').trim();
+            const real = n => (n._critOn ? (n._critSaved || []) : (n.children || []));
+            const isNew = n => n && !n._kanban && !n._critId && !this.isPlaceholderNodeData(n) && strip(n.name);
+            let changed = false;
+            const pullChecklist = (card, node) => {
+                const kids = real(node);
+                kids.forEach((c) => {
+                    if (!c) return;
+                    if (c._kanban && c._kanban.startsWith('ck:')) {
+                        const item = card.checklist.find(x => `ck:${x.id}` === c._kanban);
+                        const text = strip(c.name).replace(/^✓\s*/, '');
+                        if (item && text && text !== item.text) { item.text = text; changed = true; }
+                    } else if (isNew(c)) {
+                        const item = { id: uid('ck'), text: strip(c.name).replace(/^✓\s*/, ''), done: false };
+                        card.checklist.push(item);
+                        c._kanban = `ck:${item.id}`;
+                        changed = true;
+                    }
+                });
+            };
+            real(branch).forEach((colNode) => {
+                if (!colNode || !colNode._kanban || !colNode._kanban.startsWith('col:')) return;
+                const col = this.kbColumn(colNode._kanban.slice(4));
+                if (!col) return;
+                const cname = strip(colNode.name).replace(/\s*✓$/, '');
+                if (cname && cname !== col.name) { col.name = cname; changed = true; }
+                real(colNode).forEach((cardNode) => {
+                    if (!cardNode) return;
+                    let card = cardNode._kanban ? this.kbCard(cardNode._kanban) : null;
+                    if (!card && isNew(cardNode)) {
+                        card = this.kbNewCard({ title: strip(cardNode.name), column: col.id });
+                        k.cards.push(card);
+                        cardNode._kanban = card.id;
+                        changed = true;
+                    } else if (card) {
+                        let t = strip(cardNode.name).replace(/^⛔\s*/, '').replace(/\s*✓$/, '');
+                        if (card.assignee && t.endsWith(` (${card.assignee})`)) t = t.slice(0, -(card.assignee.length + 3));
+                        t = t.trim();
+                        if (t && t !== card.title) { card.title = t; changed = true; }
+                    }
+                    if (card) pullChecklist(card, cardNode);
+                });
+            });
+            if (changed) {
+                this._kbPulling = true;
+                try { this.kanbanChanged(); } finally { this._kbPulling = false; }
+            }
+            return changed;
+        },
+
         kbFlowRender() {
             if (this._kanbanMode || this._ganttMode || this._kbFlowRenderPending) return;
             this._kbFlowRenderPending = true;
@@ -1545,6 +1604,16 @@
             return origToggleGantt.call(this, on, ...rest);
         };
     }
+
+    // Every redraw of the flowchart: edits in the Kanban branch go to the board.
+    const origRenderFlow = FlowchartViewer.prototype.renderFlowchart;
+    FlowchartViewer.prototype.renderFlowchart = function (...args) {
+        const r = origRenderFlow.apply(this, args);
+        if (!this._kanbanMode && !this._critView && this.kanban) {
+            try { this.pullKanbanFlowEdits(); } catch (e) { console.error('Kanban branch edits:', e); }
+        }
+        return r;
+    };
 
     // A different flowchart opened (or this one updated from elsewhere).
     const origLoad = FlowchartViewer.prototype.loadFlowchartFromList;
