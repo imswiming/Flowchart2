@@ -10,9 +10,9 @@
 //   have theirs open at the same time. ✎ edits the list of criteria.
 // - Shift + click nodes to pick several (yellow outline), then 🎯 on one of
 //   them: the comparison view, shown on its own and the other way round -
-//   each criterion once (yellow), the picked nodes under it, and under each
-//   node what it has for that criterion, all unfolded, to compare and edit
-//   together; ↩ / "Back to flowchart" returns.
+//   each criterion once (yellow), under it the picked nodes that have
+//   something for it, and under each of those what it has, all unfolded, to
+//   compare and edit together; ↩ / "Back to flowchart" returns.
 // - While a node's criteria are showing, its real children wait in
 //   `_critSaved` (saving always writes the real children, never the
 //   criteria nodes); showing them isn't saved, so a reload shows the children.
@@ -299,12 +299,14 @@
                     color: YELLOW,
                     _critId: c.id,
                     _critPivot: true,
+                    // Only the nodes that have something under this criterion.
                     children: v.hosts.map((h, i) => {
                         if (!h._crit || typeof h._crit !== 'object') h._crit = {};
                         if (!Array.isArray(h._crit[c.id])) h._crit[c.id] = [];
+                        if (!h._crit[c.id].some(x => x && !this.isPlaceholderNodeData(x))) return null;
                         h._crit[c.id].forEach(open);
                         return { name: h.name, color: h.color, _critHost: i, _critCol: c.id, children: h._crit[c.id] };
-                    })
+                    }).filter(Boolean)
                 }));
                 return crits.length === 1 ? crits[0] : { name: '', color: TOP_COLOR, _critTop: true, children: crits };
             }
