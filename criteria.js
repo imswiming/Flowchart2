@@ -3,11 +3,13 @@
 // and shares with everything else) - every node's criteria view shows the same
 // list.
 //
-// - 🎯 on a node's button row, right there in the flowchart: its children are
-//   put aside and the criteria take their place as yellow nodes. Build ideas
-//   under each criterion like any other branch; 🎯 again puts the criteria away
-//   (keeping what's under them) and brings the children back. Other nodes can
-//   have theirs open at the same time. ✎ edits the list of criteria.
+// - 🎯 on a node's button row turns criteria mode on, right there in the
+//   flowchart: the node's children are put aside and the criteria take their
+//   place as yellow nodes. Build ideas under each criterion like any other
+//   branch. While the mode is on, every node you click shows its criteria too
+//   (they stay showing). ↩ on any of them - or "Turn off" on the mode's
+//   banner - puts them all away (keeping what's under the criteria), brings
+//   the children back and ends the mode. ✎ edits the list of criteria.
 // - Shift + click nodes to pick several (yellow outline), then 🎯 on one of
 //   them: the comparison view, shown on its own and the other way round -
 //   each criterion once (yellow), under it the picked nodes that have
@@ -55,6 +57,16 @@
             background: rgba(30, 36, 48, 0.92); border: 1px solid rgba(255, 204, 0, 0.45);
             color: #e6eef8; font: 14px Arial, sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
         #crit-banner b { color: ${YELLOW}; }
+        #crit-mode-bar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1500;
+            display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 14px; border-radius: 20px;
+            background: rgba(30, 36, 48, 0.92); border: 1px solid rgba(255, 204, 0, 0.45); color: #e6eef8;
+            font: 13px Arial, sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,0.35); white-space: nowrap; }
+        #crit-mode-bar b { color: ${YELLOW}; }
+        #crit-mode-bar button { padding: 4px 11px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.18);
+            background: rgba(255,255,255,0.08); color: #e6eef8; cursor: pointer; font: inherit; }
+        #crit-mode-bar button.primary { background: ${YELLOW}; border-color: ${YELLOW}; color: #1d2430; font-weight: bold; }
+        body.kanban-mode #crit-mode-bar, body.gantt-mode #crit-mode-bar { display: none; }
+        @media (max-width: 600px) { #crit-mode-bar { top: 62px; } #crit-mode-bar > span { display: none; } }
         #crit-banner .crit-names { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         #crit-banner button { padding: 5px 12px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.18);
             background: rgba(255,255,255,0.08); color: #e6eef8; cursor: pointer; font: inherit; font-size: 13px; white-space: nowrap; }
@@ -123,7 +135,7 @@
             }
             if (data._critOn) {
                 return [
-                    { label: '🎯', icon: '↩', title: 'Put the criteria away and show the children again', activate: () => this.toggleCriteriaInline(data) },
+                    { label: '🎯', icon: '↩', title: 'Criteria mode off: put every node\'s criteria away and show their children again', activate: () => this.critModeOff() },
                     { label: '✎', title: 'Edit the list of criteria', activate: () => this.openCriteriaEditor() }
                 ];
             }
@@ -135,7 +147,79 @@
             const picks = this._critPicks ? [...this._critPicks] : [];
             if (picks.length && !picks.includes(data)) picks.push(data);
             if (picks.length > 1) { this.openCriteriaView(data); return; }
+            if (data._critOn) { this.critModeOff(); return; }
+            if (!this.criteria || !this.criteria.length) {
+                this.openCriteriaEditor(() => this.criteriaButton(data));
+                return;
+            }
+            this._critMode = true;
             this.toggleCriteriaInline(data);
+            this.updateCritModeBar();
+        },
+
+        // ----- Criteria mode -----
+        // Can this node show its criteria? Real nodes only - not the criteria or
+        // what's built under them, and not the Gantt branch.
+        critEligible(d) {
+            if (!d || !d.parent || !d.data || this.isPlaceholderNodeData(d.data)) return false;
+            for (let a = d; a; a = a.parent) {
+                if (a.data && (a.data._critId || a.data._gantt || a.data._critTop)) return false;
+            }
+            return true;
+        },
+
+        // Mode on and a node clicked: it shows its criteria too, keeping its
+        // edit box open.
+        critAutoOn(d) {
+            const host = d.data;
+            this._critAutoBusy = true;
+            try {
+                this.pushUndo();
+                host._critSaved = Array.isArray(host.children) ? host.children : [];
+                host.children = this.critNodesFor(host);
+                host._critOn = true;
+                host._collapsed = false;
+                this.renderFlowchart(this.rootData);
+                const d2 = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === host);
+                if (d2) {
+                    if (this.nodeBeingEdited && this.nodeBeingEdited.data === host) this.nodeBeingEdited = d2;
+                    this.selectNode(d2);
+                    this.refreshRadialButtons();
+                }
+                this.autosave();
+            } finally {
+                this._critAutoBusy = false;
+            }
+        },
+
+        critModeOff() {
+            const hosts = this.critInlineHosts();
+            this._critMode = false;
+            const sel = this.selectedNode && this.selectedNode.data;
+            if (hosts.length) {
+                if (this.nodeBeingEdited && typeof this.hideNodeEditPopup === 'function') this.hideNodeEditPopup(true);
+                this.pushUndo();
+                hosts.forEach(h => this.critInlineOff(h, false));
+                this.renderFlowchart(this.rootData);
+                this.autosave();
+                const d = sel && d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === sel);
+                if (d) { this.selectNode(d); this.refreshRadialButtons(); }
+            }
+            this.updateCritModeBar();
+        },
+
+        // A small banner while the mode is on.
+        updateCritModeBar() {
+            let bar = document.getElementById('crit-mode-bar');
+            const on = this._critMode && !this._critView && !this._kanbanMode && !this._ganttMode;
+            if (!on) { if (bar) bar.remove(); return; }
+            if (bar) return;
+            const panel = document.getElementById('flowchart-panel') || document.body;
+            bar = el('div', { id: 'crit-mode-bar' },
+                el('span', null, el('b', { text: '🎯 Criteria mode' }), ' - click nodes to show their criteria'),
+                el('button', { type: 'button', text: '✎ Criteria', title: 'Add, rename, reorder or remove criteria', onclick: () => this.openCriteriaEditor() }),
+                el('button', { type: 'button', class: 'primary', text: 'Turn off', title: 'Put every node\'s criteria away', onclick: () => this.critModeOff() }));
+            panel.append(bar);
         },
 
         // Which buttons the view's own nodes keep. A criterion can take children
@@ -528,6 +612,10 @@
         this.paintCritPicks();
         this.updateCritBanner();
         if (this._critView) this.hideCritScaffold();
+        // The mode ends when nothing shows its criteria any more (undo, a
+        // node deleted...).
+        if (this._critMode && !this._critView && !this.critInlineHosts().length && !this._critAutoBusy) this._critMode = false;
+        this.updateCritModeBar();
         return r;
     };
 
@@ -539,6 +627,14 @@
         proto[name] = function (...args) {
             const r = orig.apply(this, args);
             this.paintCritPicks();
+            // Criteria mode: a node you clicked shows its criteria.
+            const d = args[0];
+            if (name === 'selectNode' && this._critMode && !this._critView && !this._critAutoBusy
+                && d && d.data && d.data === this._critUserClick && !d.data._critOn && this.critEligible(d)
+                && this.criteria && this.criteria.length) {
+                this._critUserClick = null;
+                this.critAutoOn(d);
+            }
             return r;
         };
     });
@@ -574,8 +670,9 @@
         if (!orig) return;
         proto[name] = function (...args) {
             if (this._critView && (!onlyWhenOpening || args[0] !== false)) this.exitCriteriaView(false);
-            // Another flowchart replaces this one: put its in-place criteria away first.
-            if (!onlyWhenOpening) this.critInlineOffAll();
+            // Another flowchart replaces this one: put its in-place criteria away
+            // first, and criteria mode ends.
+            if (!onlyWhenOpening) { this.critInlineOffAll(); this._critMode = false; }
             return orig.apply(this, args);
         };
     });
@@ -639,6 +736,9 @@
         if (e.target.closest('.radial-add-btn') || e.shiftKey) return;
         const d = d3.select(nodeEl).datum();
         if (!d || !d.data) return;
+        app._critUserClick = d.data;
+        clearTimeout(app._critUserClickTimer);
+        app._critUserClickTimer = setTimeout(() => { app._critUserClick = null; }, 1500);
         const picks = app._critPicks;
         if (picks && picks.size && !picks.has(d.data)) app.clearCritPicks();
     }, true);
