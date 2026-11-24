@@ -1328,7 +1328,7 @@
 
         // ----- Gantt notes: one Title per main task, a Subheading per subtask -----
         ganttNoteLabel(t) {
-            return `${t.kind === 'milestone' ? '◆ ' : ''}${t.name}`;
+            return t.name;
         },
 
         // Two tasks can share a name: the nth task with this name (at the same
