@@ -3,13 +3,18 @@
 // and shares with everything else) - every node's criteria view shows the same
 // list.
 //
-// - 🎯 on a node's button row isolates that node and shows the criteria under
-//   it as yellow nodes. Build ideas under each criterion like any other branch;
-//   ↩ (or "Back to flowchart") returns to the full tree, and 🎯 again brings
-//   them back.
+// - 🎯 on a node's button row, right there in the flowchart: its children are
+//   put aside and the criteria take their place as yellow nodes. Build ideas
+//   under each criterion like any other branch; 🎯 again puts the criteria away
+//   (keeping what's under them) and brings the children back. Other nodes can
+//   have theirs open at the same time. ✎ edits the list of criteria.
 // - Shift + click nodes to pick several (yellow outline), then 🎯 on one of
-//   them: they're shown side by side under an empty node, every criteria tree
-//   unfolded, to compare and edit together.
+//   them: they're shown on their own, side by side under an empty node, every
+//   criteria tree unfolded, to compare and edit together; ↩ / "Back to
+//   flowchart" returns.
+// - While a node's criteria are showing, its real children wait in
+//   `_critSaved` (saving always writes the real children, never the
+//   criteria nodes); showing them isn't saved, so a reload shows the children.
 // - What's written under a criterion is kept on the node as
 //   `_crit: { criterionId: [nodes] }` - only criteria with something under
 //   them, without empty "+" placeholders or node ids, so it stays small.
@@ -101,22 +106,128 @@
         },
 
         // ----- Buttons on the selected node (script.js refreshRadialButtons) -----
+        // Returns the buttons to add to the node's row (or null).
         criteriaRowButton(d) {
             if (this._critView) return { label: '↩', activate: () => this.exitCriteriaView(), fontSize: 22 };
             if (!d || !d.parent || !d.data || this.isPlaceholderNodeData(d.data)) return null;
-            return { label: '🎯', activate: () => this.openCriteriaView(d.data), fontSize: 18 };
+            const data = d.data;
+            // Not on the criteria themselves or what's built under them, and not on
+            // the Gantt / Kanban branches (their nodes follow the chart / board).
+            for (let a = d; a; a = a.parent) {
+                if (a.data && (a.data._critId || a.data._gantt || a.data._kanban)) return null;
+            }
+            if (data._critOn) {
+                return [
+                    { label: '🎯', icon: '↩', title: 'Put the criteria away and show the children again', activate: () => this.toggleCriteriaInline(data) },
+                    { label: '✎', title: 'Edit the list of criteria', activate: () => this.openCriteriaEditor() }
+                ];
+            }
+            return { label: '🎯', activate: () => this.criteriaButton(data), fontSize: 18 };
         },
 
-        // In the view, the criteria and the nodes they belong to are the view's
-        // own: no moving, deleting or adding beside them. A criterion can take
-        // children; whatever is built under it is an ordinary branch.
+        // 🎯: several nodes picked - the side-by-side view; one - its criteria in place.
+        criteriaButton(data) {
+            const picks = this._critPicks ? [...this._critPicks] : [];
+            if (picks.length && !picks.includes(data)) picks.push(data);
+            if (picks.length > 1) { this.openCriteriaView(data); return; }
+            this.toggleCriteriaInline(data);
+        },
+
+        // Which buttons the view's own nodes keep. A criterion can take children
+        // (whatever is built under it is an ordinary branch) but can't be moved,
+        // deleted or given siblings; a node showing its criteria can't be given
+        // a child of its own until they're put away.
         criteriaNodeLock(d) {
-            if (!this._critView || !d || !d.data) return null;
+            if (!d || !d.data) return null;
             const data = d.data;
             const keep = ['F', '⊟', '⊞', '↩'];
             if (data._critId) return { keep, addChild: true };
-            if (data._critHost !== undefined || data._critTop) return { keep, addChild: false };
+            if (this._critView && (data._critHost !== undefined || data._critTop)) return { keep, addChild: false };
+            if (!this._critView && data._critOn) return { keep: null, addChild: false, sides: true, parent: true };
             return null;
+        },
+
+        // ----- Criteria shown in place (one node at a time, in the full tree) -----
+        critInlineHosts() {
+            const out = [];
+            const walk = (n) => {
+                if (!n || typeof n !== 'object') return;
+                if (n._critOn) out.push(n);
+                (n.children || []).forEach(walk);
+            };
+            walk(this.rootData);
+            return out;
+        },
+
+        critNodesFor(host) {
+            if (!host._crit || typeof host._crit !== 'object') host._crit = {};
+            return this.criteria.map((c) => {
+                if (!Array.isArray(host._crit[c.id])) host._crit[c.id] = [];
+                return { name: c.name || 'Criterion', color: YELLOW, _critId: c.id, children: host._crit[c.id] };
+            });
+        },
+
+        // What's under each criterion node goes back into host._crit (and a
+        // criterion renamed here renames it everywhere).
+        critInlineWriteBack(host) {
+            if (!host || !host._critOn) return;
+            if (!host._crit || typeof host._crit !== 'object') host._crit = {};
+            (host.children || []).forEach((c) => {
+                if (!c || !c._critId) return;
+                host._crit[c._critId] = Array.isArray(c.children) ? c.children : [];
+                const crit = this.criteria.find(x => x.id === c._critId);
+                const nm = (c.name || '').trim();
+                if (crit && nm && nm !== crit.name) {
+                    crit.name = nm;
+                    this.critInlineHosts().forEach(h => (h.children || []).forEach((k) => { if (k && k._critId === crit.id) k.name = nm; }));
+                }
+                if (c.color !== YELLOW) c.color = YELLOW;
+            });
+        },
+
+        critInlineOff(host, render = true) {
+            if (!host || !host._critOn) return;
+            this.critInlineWriteBack(host);
+            host.children = Array.isArray(host._critSaved) ? host._critSaved : [];
+            delete host._critSaved;
+            delete host._critOn;
+            if (render) this.renderFlowchart(this.rootData);
+        },
+
+        critInlineOffAll() {
+            this.critInlineHosts().forEach(h => this.critInlineOff(h, false));
+        },
+
+        toggleCriteriaInline(host) {
+            if (!host) return;
+            if (!host._critOn && (!this.criteria || !this.criteria.length)) {
+                this.openCriteriaEditor(() => this.toggleCriteriaInline(host));
+                return;
+            }
+            if (this.nodeBeingEdited && typeof this.hideNodeEditPopup === 'function') this.hideNodeEditPopup(true);
+            this.pushUndo();
+            if (host._critOn) {
+                this.critInlineOff(host, false);
+            } else {
+                host._critSaved = Array.isArray(host.children) ? host.children : [];
+                host.children = this.critNodesFor(host);
+                host._critOn = true;
+                host._collapsed = false;
+            }
+            this.clearCritPicks();
+            this.renderFlowchart(this.rootData);
+            this.autosave();
+            // The node stays selected, with its buttons.
+            const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === host);
+            if (d) { this.selectNode(d); this.refreshRadialButtons(); }
+        },
+
+        // The criteria list changed: nodes showing theirs show the new list.
+        critInlineRefresh() {
+            this.critInlineHosts().forEach((h) => {
+                this.critInlineWriteBack(h);
+                h.children = this.critNodesFor(h);
+            });
         },
 
         // ----- Picking several nodes (Shift + click) -----
@@ -151,6 +262,7 @@
                 this.openCriteriaEditor(() => this.openCriteriaView(hostData));
                 return;
             }
+            this.critInlineOffAll();
             const hosts = this.criteriaHosts(hostData);
             if (!hosts.length) return;
             if (this.nodeBeingEdited && typeof this.hideNodeEditPopup === 'function') this.hideNodeEditPopup(true);
@@ -324,9 +436,13 @@
                 }
                 close();
                 if (this._critView) this.critWriteBack();
+                this.critInlineHosts().forEach(h => this.critInlineWriteBack(h));
                 this.criteria = next;
                 if (this._critView) {
                     this.renderFlowchart(this.buildCriteriaTree(), { keepTransform: true });
+                } else if (this.critInlineHosts().length) {
+                    this.critInlineRefresh();
+                    this.renderFlowchart(this.rootData);
                 }
                 this.autosave();
                 if (typeof after === 'function' && next.length) after();
@@ -354,20 +470,28 @@
     };
 
     // Saving always writes the real tree.
+    // Saving always writes the real tree: the view's stand-in swapped out, and
+    // nodes showing their criteria in place saved with their real children.
+    const withRealChildren = (app, fn) => {
+        const hosts = app.critInlineHosts();
+        const shown = hosts.map(h => h.children);
+        hosts.forEach((h) => { app.critInlineWriteBack(h); h.children = h._critSaved || []; });
+        try { return fn(); } finally { hosts.forEach((h, i) => { h.children = shown[i]; }); }
+    };
     const origExport = proto.exportAsJSON;
     proto.exportAsJSON = function (...args) {
-        if (!this._critView) return origExport.apply(this, args);
+        if (!this._critView) return withRealChildren(this, () => origExport.apply(this, args));
         this.critWriteBack();
         const shown = this.rootData;
         this.rootData = this._critView.real;
-        try { return origExport.apply(this, args); } finally { this.rootData = shown; }
+        try { return withRealChildren(this, () => origExport.apply(this, args)); } finally { this.rootData = shown; }
     };
 
     // The Morph matrix follows real nodes; it isn't resynced against the view.
     ['resyncMorphRows', 'relinkMorphNodeRefs'].forEach((name) => {
         const orig = proto[name];
         if (!orig) return;
-        proto[name] = function (...args) { return this._critView ? false : orig.apply(this, args); };
+        proto[name] = function (...args) { return (this._critView || this.critInlineHosts().length) ? false : orig.apply(this, args); };
     });
 
     // Opening another flowchart, a new one, the Gantt chart or the Kanban board
@@ -377,6 +501,8 @@
         if (!orig) return;
         proto[name] = function (...args) {
             if (this._critView && (!onlyWhenOpening || args[0] !== false)) this.exitCriteriaView(false);
+            // Another flowchart replaces this one: put its in-place criteria away first.
+            if (!onlyWhenOpening) this.critInlineOffAll();
             return orig.apply(this, args);
         };
     });

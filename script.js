@@ -258,6 +258,7 @@ const NODE_BTN_ICONS = {
     '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
     '🎨': { title: 'Drawing', text: '🎨' },
     '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
+    '✎': { title: 'Edit the list of criteria', tone: 'yellow', d: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4' },
     '↩': { title: 'Back to the flowchart', tone: 'yellow', d: 'M9 14l-5-5 5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11' }
 };
 
@@ -13896,9 +13897,9 @@ class FlowchartViewer {
         const critLock = typeof self.criteriaNodeLock === 'function' ? self.criteriaNodeLock(targetDatum) : null;
         if (typeof self.criteriaRowButton === 'function') {
             const b = self.criteriaRowButton(targetDatum);
-            if (b) deleteRowBtns.push(b);
+            if (b) deleteRowBtns.push(...(Array.isArray(b) ? b : [b]));
         }
-        if (critLock) {
+        if (critLock && critLock.keep) {
             for (let i = deleteRowBtns.length - 1; i >= 0; i--) {
                 if (!critLock.keep.includes(deleteRowBtns[i].label)) deleteRowBtns.splice(i, 1);
             }
@@ -13980,11 +13981,11 @@ class FlowchartViewer {
         const drawPlus = (x, y, activate, title) => drawBtn(btnLayer, x, y, { icon: '+', tone: 'soft', activate, title }, 44, 32);
 
         const tools = deleteRowBtns.map(btn => Object.assign({}, btn, {
-            icon: btn.label === 'F' ? (targetDatum.data._collapsed ? 'unfold' : 'fold') : btn.label
+            icon: btn.icon || (btn.label === 'F' ? (targetDatum.data._collapsed ? 'unfold' : 'fold') : btn.label)
         }));
         const rowY = -(topHalf + 26 + PILL_H / 2);
         const toolsW = drawPill(tools, 0, rowY);
-        const sides = !critLock && targetDatum.parent;
+        const sides = (!critLock || critLock.sides) && targetDatum.parent;
         if (sides) {
             const sideW = 2 * TILE + GAP + PAD * 2;
             const off = toolsW / 2 + 12 + sideW / 2;
@@ -13997,7 +13998,7 @@ class FlowchartViewer {
                 { icon: '+', label: '+', title: lr ? 'New sibling below' : 'New sibling after', activate: activateAddSiblingAfter }
             ], off, rowY);
         }
-        if (!critLock) {
+        if (!critLock || critLock.parent) {
             if (lr) drawPlus(-(NODE_WIDTH / 2 + 44), 0, activateAddParent, 'New parent');
             else drawPlus(0, rowY - PILL_H / 2 - 12 - 16, activateAddParent, 'New parent');
         }
