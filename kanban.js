@@ -184,6 +184,8 @@
                     blocked: !!c.blocked,
                     blockReason: typeof c.blockReason === 'string' ? c.blockReason : '',
                     checklist: Array.isArray(c.checklist) ? c.checklist.filter(i => i && typeof i.id === 'string').map(i => ({ id: i.id, text: String(i.text || ''), done: !!i.done })) : [],
+                    // The checklists for the other columns it has been in.
+                    colChecklists: (c.colChecklists && typeof c.colChecklists === 'object') ? Object.fromEntries(Object.entries(c.colChecklists).filter(([kk, v]) => colIds.has(kk) && Array.isArray(v) && v.length).map(([kk, v]) => [kk, v.filter(i => i && typeof i.id === 'string').map(i => ({ id: i.id, text: String(i.text || ''), done: !!i.done }))])) : undefined,
                     // The card's own notes, per column it has been in (only those with text).
                     notes: (c.notes && typeof c.notes === 'object') ? Object.fromEntries(Object.entries(c.notes).filter(([kk, v]) => colIds.has(kk) && typeof v === 'string' && v)) : undefined,
                     created: ts(c.created) || now(), started: ts(c.started), finished: ts(c.finished), moved: ts(c.moved) || ts(c.created) || now()
@@ -459,6 +461,13 @@
             }
             if (fromCol !== colId) {
                 const t = now();
+                // Each column has its own checklist: the one for the column it
+                // leaves is kept, the one for the column it enters comes out.
+                if (!card.colChecklists) card.colChecklists = {};
+                if (card.checklist.length) card.colChecklists[fromCol] = card.checklist; else delete card.colChecklists[fromCol];
+                card.checklist = card.colChecklists[colId] || [];
+                delete card.colChecklists[colId];
+                if (!Object.keys(card.colChecklists).length) delete card.colChecklists;
                 card.column = colId;
                 card.moved = t;
                 if (this.kbColPos(colId) > 0 && !card.started) card.started = t;
@@ -1673,7 +1682,7 @@
             const reconcile = (parentNode, wanted, pool) => {
                 // A node showing its criteria (criteria.js) keeps its real
                 // children aside in _critSaved: those are what follow the board.
-                const field = parentNode._critOn ? '_critSaved' : 'children';
+                const field = parentNode._critOn ? '_critSaved' : parentNode._kbColView ? '_kbColSaved' : 'children';
                 const kids = Array.isArray(parentNode[field]) ? parentNode[field] : [];
                 const existing = pool || new Map(kids.filter(c => c && c._kanban && c._kanban !== 'root').map(c => [c._kanban, c]));
                 const ids = new Set(wanted.map(w => w.id));
@@ -1706,7 +1715,7 @@
             // boards had the cards straight under the branch).
             const pool = new Map();
             const colPool = new Map();
-            const collect = (n) => [].concat(n._critOn ? (n._critSaved || []) : (n.children || [])).forEach((c) => {
+            const collect = (n) => [].concat(n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || [])).forEach((c) => {
                 if (!c) return;
                 if (c._kanban && c._kanban.startsWith('col:')) colPool.set(c._kanban, c);
                 else if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('row:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
@@ -1732,11 +1741,97 @@
             } else {
                 colNodes = reconcile(branch, k.columns.map(colNode), colPool);
             }
+            const realKids = n => (n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || []));
+            const setKids = (n, list) => { if (n._critOn) n._critSaved = list; else if (n._kbColView) n._kbColSaved = list; else n.children = list; };
+            // Card nodes sitting under hand-made nodes inside a column (a parent
+            // added to a card) stay where they are while the card is in that column.
+            // Every node in it gets a lasting id, so a card can find its way back
+            // into the structure it sat in.
+            if (typeof FlowchartMerge !== 'undefined') FlowchartMerge.ensureIds(this.rootData);
+            const isCardNode = c => c && c._kanban && !c._kanban.startsWith('ck:') && !c._kanban.startsWith('col:') && !c._kanban.startsWith('row:') && c._kanban !== 'root';
+            const nestedIn = (colNode) => {
+                const out = new Map();
+                // Hand-made nodes on the way down to a card are its structure
+                // ("groups"): marked, so they stay groups when the card moves away.
+                const walk = (n, path) => realKids(n).forEach((c) => {
+                    if (!c) return;
+                    if (isCardNode(c)) { out.set(c._kanban, { node: c, parent: n }); path.forEach((g) => { g._kbGroup = true; }); return; }
+                    if (!c._kanban) walk(c, path.concat(c));
+                });
+                realKids(colNode).forEach((c) => { if (c && !c._kanban) walk(c, [c]); });
+                return out;
+            };
+            const findIn = (n, id) => {
+                for (const c of realKids(n)) {
+                    if (!c) continue;
+                    if (c._id === id) return c;
+                    if (!c._kanban || c._kanban.startsWith('ck:')) { const f = findIn(c, id); if (f) return f; }
+                }
+                return null;
+            };
+            const detach = (node) => {
+                const w = (n) => {
+                    const kids = realKids(n);
+                    if (kids.includes(node)) { setKids(n, kids.filter(x => x !== node)); return true; }
+                    return kids.some(c => c && w(c));
+                };
+                w(branch);
+            };
             k.columns.forEach((col, i) => {
                 const cards = k.cards.filter(c => c.column === col.id);
-                const cardNodes = reconcile(colNodes[i], cards.map(c => Object.assign({ id: c.id }, cardNode(c))), pool);
-                cards.forEach((card, j) => {
-                    reconcile(cardNodes[j], card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+                const nested = nestedIn(colNodes[i]);
+                // Nested cards that moved to another column leave their group -
+                // remembering it, to go back into it if the card comes back.
+                nested.forEach(({ node, parent }, id) => {
+                    const c = this.kbCard(id);
+                    if (c && c.column === col.id) return;
+                    if (!node._colParent || typeof node._colParent !== 'object') node._colParent = {};
+                    if (parent && parent._id) node._colParent[col.id] = parent._id;
+                    setKids(parent, realKids(parent).filter(x => x !== node));
+                    nested.delete(id);
+                });
+                // Cards coming back to a column they sat in a group in go back there.
+                cards.forEach((c) => {
+                    if (nested.has(c.id)) return;
+                    const n = pool.get(c.id);
+                    const pid = n && n._colParent && n._colParent[col.id];
+                    if (!pid) return;
+                    const grp = findIn(colNodes[i], pid);
+                    delete n._colParent[col.id];
+                    if (!grp) return;
+                    detach(n);
+                    setKids(grp, realKids(grp).concat(n));
+                    nested.set(c.id, { node: n, parent: grp });
+                });
+                const direct = cards.filter(c => !(nested.has(c.id) && nested.get(c.id).node));
+                realKids(colNodes[i]).forEach((x) => { if (isCardNode(x) && x._colParent) delete x._colParent[col.id]; });
+                const directNodes = reconcile(colNodes[i], direct.map(c => Object.assign({ id: c.id }, cardNode(c))), pool);
+                const nodeOf = new Map(direct.map((c, j) => [c.id, directNodes[j]]));
+                cards.forEach((c) => {
+                    if (nodeOf.has(c.id)) return;
+                    const n = nested.get(c.id).node;
+                    const v = cardNode(c);
+                    n.name = v.name;
+                    n.color = v.color;
+                    nodeOf.set(c.id, n);
+                });
+                cards.forEach((card) => {
+                    const n = nodeOf.get(card.id);
+                    // What's built under a card belongs to the column it's in: moving
+                    // it puts that away and brings out the chart for the new column
+                    // (empty the first time; the old one again when it moves back).
+                    if (!n._kbColView) {
+                        if (n._kbCol && n._kbCol !== card.column) {
+                            const kids = realKids(n);
+                            if (!n._colTrees || typeof n._colTrees !== 'object') n._colTrees = {};
+                            if (kids.some(c => c && !this.isPlaceholderNodeData(c))) n._colTrees[n._kbCol] = kids; else delete n._colTrees[n._kbCol];
+                            const back = n._colTrees[card.column] || [];
+                            delete n._colTrees[card.column];
+                            setKids(n, back);
+                        }
+                        n._kbCol = card.column;
+                    }
+                    reconcile(n, card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
                 });
                 if (typeof this.ensureRightmostPlaceholderNodes === 'function' && !colNodes[i]._critOn) this.ensureRightmostPlaceholderNodes(colNodes[i]);
             });
@@ -1754,7 +1849,9 @@
             const branch = this.findKanbanFlowRoot();
             if (!k || !branch || this._kbPulling) return false;
             const strip = n => String(n || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').trim();
-            const real = n => (n._critOn ? (n._critSaved || []) : (n.children || []));
+            const real = n => (n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || []));
+            // A hand-made node holding cards (a parent added to cards) is a group, not a new card.
+            const holdsCards = (n) => !!n._kbGroup || real(n).some(c => c && ((c._kanban && !c._kanban.startsWith('ck:')) || (!c._kanban && holdsCards(c))));
             const isNew = n => n && !n._kanban && !n._critId && !this.isPlaceholderNodeData(n) && strip(n.name);
             let changed = false;
             const pullChecklist = (card, node) => {
@@ -1791,7 +1888,14 @@
                 if (!col) return;
                 const cname = strip(colNode.name).replace(/\s*✓$/, '');
                 if (cname && cname !== col.name) { col.name = cname; changed = true; }
-                real(colNode).forEach((cardNode) => {
+                const inCol = [];
+                const gather = (n) => real(n).forEach((c) => {
+                    if (!c) return;
+                    if (!c._kanban && holdsCards(c)) { gather(c); return; }
+                    inCol.push(c);
+                });
+                gather(colNode);
+                inCol.forEach((cardNode) => {
                     if (!cardNode) return;
                     let card = cardNode._kanban ? this.kbCard(cardNode._kanban) : null;
                     if (!card && isNew(cardNode)) {
@@ -1813,6 +1917,70 @@
                 try { this.kanbanChanged(); } finally { this._kbPulling = false; }
             }
             return changed;
+        },
+
+        // ----- A card node's column history (like criteria mode) -----
+        // 🕘 on a card node: its children are put aside and every column of its
+        // row takes their place, each with what was built under the card while
+        // it was in that column (the current column's being what's there now).
+        // Edit any of them; 🕘 again puts them back and remembers the changes.
+        toggleKbColView(host) {
+            const card = host && this.kbCard(host._kanban);
+            if (!card) return;
+            if (this.nodeBeingEdited && typeof this.hideNodeEditPopup === 'function') this.hideNodeEditPopup(true);
+            this.pushUndo();
+            if (host._kbColView) this.kbColViewOff(host);
+            else {
+                const col = this.kbColumn(card.column);
+                const cols = col ? this.kbRowCols(col.row) : [];
+                if (!host._colTrees || typeof host._colTrees !== 'object') host._colTrees = {};
+                host._kbColSaved = Array.isArray(host.children) ? host.children : [];
+                host.children = cols.map((c) => {
+                    const kids = c.id === card.column ? host._kbColSaved : (Array.isArray(host._colTrees[c.id]) ? host._colTrees[c.id] : (host._colTrees[c.id] = []));
+                    return { name: c.name + (c.id === card.column ? ' (now)' : ''), color: c.id === card.column ? '#4c9aff' : '#5e6c84', _colViewId: c.id, children: kids };
+                });
+                host._kbColView = true;
+                host._collapsed = false;
+            }
+            this.renderFlowchart(this.rootData);
+            this.autosave();
+            const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === host);
+            if (d) { this.selectNode(d); this.refreshRadialButtons(); }
+        },
+
+        kbColViewWriteBack(host) {
+            const card = this.kbCard(host._kanban);
+            if (!host._kbColView || !card) return;
+            if (!host._colTrees || typeof host._colTrees !== 'object') host._colTrees = {};
+            (host.children || []).forEach((cn) => {
+                if (!cn || !cn._colViewId) return;
+                const kids = Array.isArray(cn.children) ? cn.children : [];
+                if (cn._colViewId === card.column) host._kbColSaved = kids;
+                else {
+                    if (kids.some(c => c && !this.isPlaceholderNodeData(c))) host._colTrees[cn._colViewId] = kids; else delete host._colTrees[cn._colViewId];
+                    // Checklist items renamed there are renamed on the card too.
+                    const list = card.colChecklists && card.colChecklists[cn._colViewId];
+                    if (list) kids.forEach((x) => {
+                        const it = x && x._kanban && x._kanban.startsWith('ck:') && list.find(i => `ck:${i.id}` === x._kanban);
+                        const t = it && String(x.name || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').replace(/^✓\s*/, '').trim();
+                        if (it && t) it.text = t;
+                    });
+                }
+            });
+        },
+
+        kbColViewOff(host) {
+            this.kbColViewWriteBack(host);
+            host.children = Array.isArray(host._kbColSaved) ? host._kbColSaved : [];
+            delete host._kbColSaved;
+            delete host._kbColView;
+        },
+
+        kbColViewHosts() {
+            const out = [];
+            const walk = (n) => { if (!n) return; if (n._kbColView) out.push(n); (n.children || []).forEach(walk); };
+            walk(this.findKanbanFlowRoot());
+            return out;
         },
 
         kbFlowRender() {

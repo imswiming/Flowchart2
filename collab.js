@@ -53,7 +53,7 @@
 
         collabWalk(fn) {
             const walk = (n) => {
-                if (!n || typeof n !== 'object' || n._critId) return;
+                if (!n || typeof n !== 'object' || n._critId || n._colViewId) return;
                 if (!this.isPlaceholderNodeData(n)) fn(n);
                 (n.children || []).forEach(walk);
             };

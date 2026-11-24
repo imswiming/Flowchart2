@@ -134,15 +134,20 @@
             // the Gantt branch (its nodes follow the chart). Kanban nodes can: the
             // board's sync leaves a node's criteria alone (kanban.js).
             for (let a = d; a; a = a.parent) {
-                if (a.data && (a.data._critId || a.data._gantt)) return null;
+                if (a.data && (a.data._critId || a.data._gantt || a.data._colViewId)) return null;
             }
+            // A Kanban card node: its column history (kanban.js) - and criteria.
+            const isCard = data._kanban && !/^(col|ck|row):/.test(data._kanban) && data._kanban !== 'root' && typeof this.toggleKbColView === 'function';
+            if (isCard && data._kbColView) return { label: '🕘', icon: '↩', title: 'Put the column history away (changes are kept)', activate: () => this.toggleKbColView(data) };
+            const histBtn = isCard ? { label: '🕘', title: 'Column history: every column, with what was built under this card in each', activate: () => this.toggleKbColView(data), fontSize: 18 } : null;
             if (data._critOn) {
                 return [
                     { label: '🎯', icon: '↩', title: 'Criteria mode off: put every node\'s criteria away and show their children again', activate: () => this.critModeOff() },
                     { label: '✎', title: 'Edit the list of criteria', activate: () => this.openCriteriaEditor() }
                 ];
             }
-            return { label: '🎯', activate: () => this.criteriaButton(data), fontSize: 18 };
+            const crit = { label: '🎯', activate: () => this.criteriaButton(data), fontSize: 18 };
+            return histBtn ? [crit, histBtn] : crit;
         },
 
         // 🎯: several nodes picked - the side-by-side view; one - its criteria in place.
@@ -234,6 +239,9 @@
             const data = d.data;
             const keep = ['F', '⊟', '⊞', '↩'];
             if (data._critPivot) return { keep, addChild: false };
+            // Column history (kanban.js): the column nodes take children, nothing else.
+            if (data._colViewId) return { keep, addChild: true };
+            if (data._kbColView) return { keep: null, addChild: false, sides: true, parent: true };
             if (data._critId) return { keep, addChild: true };
             if (this._critView && data._critCol) return { keep, addChild: true, sides: true };
             if (this._critView && (data._critHost !== undefined || data._critTop)) return { keep, addChild: false };
@@ -833,7 +841,11 @@
         const hosts = app.critInlineHosts();
         const shown = hosts.map(h => h.children);
         hosts.forEach((h) => { app.critInlineWriteBack(h); h.children = h._critSaved || []; });
-        try { return fn(); } finally { hosts.forEach((h, i) => { h.children = shown[i]; }); }
+        // Card nodes showing their column history (kanban.js) too.
+        const ch = typeof app.kbColViewHosts === 'function' ? app.kbColViewHosts() : [];
+        const chShown = ch.map(h => h.children);
+        ch.forEach((h) => { app.kbColViewWriteBack(h); h.children = h._kbColSaved || []; });
+        try { return fn(); } finally { hosts.forEach((h, i) => { h.children = shown[i]; }); ch.forEach((h, i) => { h.children = chShown[i]; }); }
     };
     const origExport = proto.exportAsJSON;
     proto.exportAsJSON = function (...args) {

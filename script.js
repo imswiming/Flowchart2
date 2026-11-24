@@ -12580,7 +12580,7 @@ class FlowchartViewer {
         FlowchartMerge.ensureIds(this.rootData);
         const leanCriteria = typeof this.leanCriteriaTrees === 'function' ? this.leanCriteriaTrees.bind(this) : null;
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by, _at } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by, _at, _colTrees, _kbCol, _kbGroup, _colParent } = node;
             const out = { name };
             // Highlighted with the node menu's highlighter (an orange outline).
             if (_hl) out._hl = true;
@@ -12588,6 +12588,18 @@ class FlowchartViewer {
             if (_by) out._by = _by;
             // ... and when (collab.js).
             if (_at) out._at = _at;
+            // A Kanban card node: the column it was drawn for, and what was built
+            // under it in the other columns (kanban.js) - kept whole, ids and all.
+            if (_kbCol) out._kbCol = _kbCol;
+            // A node holding Kanban cards (a group), and where a card sat in each
+            // column's structure.
+            if (_kbGroup) out._kbGroup = true;
+            if (_colParent && typeof _colParent === 'object' && Object.keys(_colParent).length) out._colParent = _colParent;
+            if (_colTrees && typeof _colTrees === 'object') {
+                const trees = {};
+                Object.entries(_colTrees).forEach(([k, arr]) => { if (Array.isArray(arr) && arr.length) trees[k] = arr.map(stripParents); });
+                if (Object.keys(trees).length) out._colTrees = trees;
+            }
             // What's been written under each criterion for this node (criteria.js) -
             // only criteria with something under them, stored compactly.
             const crit = _crit && leanCriteria ? leanCriteria(_crit) : null;
