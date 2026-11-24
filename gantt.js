@@ -905,7 +905,7 @@
                     class: 'gantt-milestone' + (complete ? ' complete' : '') + (sel ? ' selected' : ''),
                     style: `left:${cx - 7}px;top:${mid - 7}px;--c:${color};`,
                     title: `◆ ${t.name} - ${fmtLong(sp.s)}${complete ? ' (reached)' : ''}`
-                }, el('span', { class: 'gantt-ms-label' + (complete ? ' done' : ''), text: (complete ? '✓ ' : '') + fmtShort(sp.s) }));
+                }, el('span', { class: 'gantt-ms-label' + (complete ? ' done' : ''), text: `${complete ? '✓ ' : ''}${t.name} · ${fmtShort(sp.s)}` }));
                 this.wireGanttDrag(m, t, 'move');
                 return m;
             }
@@ -923,9 +923,12 @@
             // The owner above main bars (as on a classic project chart); a
             // subtask's owner shows when it differs from its main task's.
             const parent = t.parent && this.ganttTask(t.parent);
+            // Every bar is labelled: a main task's name above its bar, a
+            // subtask's just after its end; the owner follows the name.
             const ownerText = t.assignee && (!parent || parent.assignee !== t.assignee) ? t.assignee : '';
-            if (!t.parent) b.append(el('span', { class: 'gantt-bar-above', text: ownerText || (kids.length ? '' : t.name) }));
-            else if (ownerText) b.append(el('span', { class: 'gantt-bar-after', text: ownerText }));
+            const label = `${t.name}${ownerText ? ` · ${ownerText}` : ''}`;
+            if (!t.parent) b.append(el('span', { class: 'gantt-bar-above' + (complete ? ' done' : ''), text: label }));
+            else b.append(el('span', { class: 'gantt-bar-after' + (complete ? ' done' : ''), text: label }));
             if (complete) b.append(el('span', { class: 'gantt-bar-tick', text: '✓' }));
             if (!kids.length) {
                 b.append(el('div', { class: 'gantt-handle l' }), el('div', { class: 'gantt-handle r' }));

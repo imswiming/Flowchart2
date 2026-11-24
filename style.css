@@ -3772,6 +3772,11 @@ body.gantt-mode #flowchart {
     pointer-events: none;
 }
 
+.gantt-bar-above.done,
+.gantt-bar-after.done { text-decoration: line-through; opacity: 0.7; }
+/* Room for the tick after a finished bar. */
+.gantt-bar.complete .gantt-bar-after { left: calc(100% + 24px); }
+
 .gantt-bar-tick {
     position: absolute;
     right: -18px;
