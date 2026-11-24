@@ -591,6 +591,7 @@ const NOTES_ICONS = (() => {
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
         clearDone: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
+        flowchart: svg('<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>'),
         search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
         card: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h5"/><circle cx="16" cy="16" r="1.4"/>'),
         subtitle: svg('<path d="M4 7V5h10v2"/><path d="M9 5v12"/><path d="M7 17h4"/><path d="M15 12h6M15 16h6M15 20h4"/>'),
@@ -3267,6 +3268,8 @@ class FlowchartViewer {
                     if (event.sourceEvent && this.selectedNode) {
                         this.selectedNode = null;
                         d3.selectAll('.radial-add-btn-layer').remove();
+                        if (this.removeNodeToolsStrip) this.removeNodeToolsStrip();
+                        this.removeNodeToolsStrip();
                     }
                 })
                 .on('end', (event) => {
@@ -5789,7 +5792,40 @@ class FlowchartViewer {
     // otherwise the mobile toggle button would vanish since there'd be nothing left
     // to toggle to. Notes has no active flag of its own since it's always visible
     // alongside whichever view is open.
+    // Phone: where the cursor was in each note when Notes was closed, so
+    // reopening Notes goes back there.
+    rememberNotesPlace() {
+        const editor = this.notesEditor;
+        const ref = editor && editor._noteTabRef;
+        if (!ref || editor.state === 'destroyed') return;
+        try {
+            const pos = editor.model.document.selection.getFirstPosition();
+            if (!this._notesLastPlace) this._notesLastPlace = {};
+            this._notesLastPlace[ref.scope + ':' + ref.tabId] = pos.path.slice();
+        } catch (e) { /* nowhere to remember */ }
+    }
+
+    restoreNotesPlace() {
+        const tryIt = (left) => {
+            const editor = this.notesEditor;
+            const ref = editor && editor._noteTabRef;
+            const path = ref && this._notesLastPlace && this._notesLastPlace[ref.scope + ':' + ref.tabId];
+            if (!path) { if (left > 0) setTimeout(() => tryIt(left - 1), 150); return; }
+            try {
+                const root = editor.model.document.getRoot();
+                const pos = editor.model.createPositionFromPath(root, path);
+                editor.model.change(w => w.setSelection(pos));
+                const block = pos.parent && pos.parent.is('element') ? pos.parent : null;
+                const viewEl = block && editor.editing.mapper.toViewElement(block);
+                const dom = viewEl && editor.editing.view.domConverter.mapViewToDom(viewEl);
+                if (dom) { dom.scrollIntoView({ block: 'center' }); this.keepNotesHardLeft(dom); }
+            } catch (e) { /* the note changed - start at the top */ }
+        };
+        setTimeout(() => tryIt(10), 120);
+    }
+
     hideReflectionPanel() {
+        if (window.matchMedia('(max-width: 600px)').matches) this.rememberNotesPlace();
         if (this._leftPanelMode === 'pugh') {
             this._pughPanelActive = false;
         } else if (this._leftPanelMode === 'morph') {
@@ -6544,6 +6580,7 @@ class FlowchartViewer {
     openNotesPanel() {
         this._notesTabActive = true;
         this.switchLeftPanelMode('notes');
+        if (window.matchMedia('(max-width: 600px)').matches) this.restoreNotesPlace();
     }
 
     switchLeftPanelMode(mode) {
@@ -7348,6 +7385,17 @@ class FlowchartViewer {
         // zoom -/100%/+ control joins them (see placeNotesToolbarExtras).
         const tail = document.createElement('div');
         tail.className = 'notes-toolbar-tail';
+        // Phone only: jump to the Kanban board or the flowchart (closing Notes).
+        const toView = (board) => {
+            this.hideReflectionPanel();
+            if (board) { if (typeof this.toggleKanbanMode === 'function') this.toggleKanbanMode(true); }
+            else {
+                if (this._kanbanMode && typeof this.toggleKanbanMode === 'function') this.toggleKanbanMode(false);
+                if (this._ganttMode && typeof this.toggleGanttMode === 'function') this.toggleGanttMode(false);
+            }
+        };
+        tail.appendChild(makeBtn('card', 'Kanban board', 'notes-mobile-only', () => toView(true)));
+        tail.appendChild(makeBtn('flowchart', 'Flowchart', 'notes-mobile-only', () => toView(false)));
         tail.appendChild(makeBtn('\u21A9', 'Undo', 'notes-undo-btn', () => this.undoNotesEdit()));
         tail.appendChild(makeBtn('\u21AA', 'Redo', 'notes-redo-btn', () => this.redoNotesEdit()));
 
@@ -13861,8 +13909,16 @@ class FlowchartViewer {
     // the "Add Parent" button in the edit popup). Rebuilt on demand rather than kept in
     // sync incrementally, since selection changes and re-renders are both infrequent
     // relative to normal interaction.
+    // The phone's strip of node tools (see refreshRadialButtons) goes with them.
+    removeNodeToolsStrip() {
+        const strip = document.getElementById('node-tools-strip');
+        if (strip) strip.remove();
+        document.body.classList.remove('node-tools-on');
+    }
+
     refreshRadialButtons() {
         d3.selectAll('.radial-add-btn-layer').remove();
+        this.removeNodeToolsStrip();
         if (!this.selectedNode) return;
 
         const selectedData = this.selectedNode.data;
@@ -14045,7 +14101,8 @@ class FlowchartViewer {
         // button having a hardcoded offset (which is what made the row look lopsided
         // before). F (fold) always sits immediately left of C (make connection).
         const deleteRowBtns = [];
-        if (canFold) deleteRowBtns.push({ label: 'F', activate: activateFold });
+        // (No F: the round chevron under the node folds it.)
+        void activateFold;
         // Fold/unfold everything below this node: shows ⊟ while something is still open
         // (tap folds all of it) and ⊞ once it is all folded (tap unfolds all). Only worth
         // having when there is a branch below to fold, or the node itself is folded.
@@ -14165,7 +14222,46 @@ class FlowchartViewer {
             icon: btn.icon || (btn.label === 'F' ? (targetDatum.data._collapsed ? 'unfold' : 'fold') : btn.label)
         }));
         const rowY = -(topHalf + 26 + PILL_H / 2);
-        const toolsW = drawPill(tools, 0, rowY);
+        const phone = window.matchMedia('(max-width: 600px)').matches;
+        let toolsW = 0;
+        if (phone) {
+            // Phone: only + and the arrows stay by the node; its other tools take
+            // the place of the top strip (wrapping) while it's selected.
+            const strip = document.createElement('div');
+            strip.id = 'node-tools-strip';
+            tools.forEach((it) => {
+                const icon = NODE_BTN_ICONS[it.icon] || null;
+                const toneName = it.tone || (icon && icon.tone) || 'plain';
+                const tone = NODE_BTN_TONES[toneName];
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'nts-btn';
+                b.title = it.title || (icon && icon.title) || it.label;
+                b.style.background = tone.bg;
+                b.style.color = tone.fg;
+                if (icon && icon.d) b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${icon.d}"/></svg>`;
+                else b.textContent = icon ? icon.text : it.label;
+                b.addEventListener('mousedown', e => e.preventDefault());
+                b.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (self._pendingNodeSave && self.nodeBeingEdited) {
+                        self._pendingNodeSave = false;
+                        try { self.saveNodeEdit(true); } catch (err) { console.error('Error saving node edit before radial action:', err); }
+                    }
+                    it.activate();
+                });
+                strip.appendChild(b);
+            });
+            document.body.appendChild(strip);
+            document.body.classList.add('node-tools-on');
+            // The node's round fold button isn't needed while its tools are up.
+            d3.selectAll('#flowchart g.node').each(function (nd) {
+                const fb = this.querySelector('.fold-arrow-btn');
+                if (fb) fb.style.display = (nd && nd.data === targetDatum.data) ? 'none' : '';
+            });
+        } else {
+            toolsW = drawPill(tools, 0, rowY);
+        }
         const sides = (!critLock || critLock.sides) && targetDatum.parent;
         if (sides) {
             const sideW = 2 * TILE + GAP + PAD * 2;

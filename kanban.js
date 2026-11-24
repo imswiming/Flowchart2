@@ -1018,9 +1018,17 @@
         kbNoteLabel(card) { return kbNorm(card.title) || 'Card'; },
         // Two cards can share a title: the nth one (in board order) goes with
         // the nth heading of it.
+        // The order cards are written in the Kanban notes: by column, and within
+        // a column grouped by first label (A-Z), cards without one last.
+        kbNoteCards(colId) {
+            const lname = c => (c.labels.length && this.kbLabel(c.labels[0]) ? this.kbLabel(c.labels[0]).name.toLowerCase() : '\uffff');
+            return this.kbCards().filter(c => c.column === colId).map((c, i) => ({ c, i }))
+                .sort((a, b) => (lname(a.c) < lname(b.c) ? -1 : lname(a.c) > lname(b.c) ? 1 : a.i - b.i)).map(x => x.c);
+        },
+
         kbNoteOccurrence(card) {
             const label = this.kbNoteLabel(card);
-            const order = this.kanban.columns.flatMap(col => this.kbCards().filter(c => c.column === col.id));
+            const order = this.kanban.columns.flatMap(col => this.kbNoteCards(col.id));
             return Math.max(0, order.filter(c => this.kbNoteLabel(c) === label).indexOf(card));
         },
 
@@ -1090,7 +1098,7 @@
             const cardWins = this._kbCardWins || new Set();
             k.columns.forEach((col) => {
                 write(`col:${col.id}`, 'h4', kbNorm(col.name), false, false);
-                this.kbCards().filter(c => c.column === col.id).forEach((card) => {
+                this.kbNoteCards(col.id).forEach((card) => {
                     const done = this.kbIsDone(card);
                     // What was written under the card goes to its notes for the
                     // column it was in then; what's shown is its notes for the
@@ -1289,7 +1297,7 @@
             const tags = new Map();
             // Card headings in board order, by their text, to find each one's label.
             const byLabel = new Map();
-            if (isMaster) this.kanban.columns.forEach(col => this.kbCards().filter(c => c.column === col.id).forEach((c) => {
+            if (isMaster) this.kanban.columns.forEach(col => this.kbNoteCards(col.id).forEach((c) => {
                 const key = this.kbNoteLabel(c);
                 if (!byLabel.has(key)) byLabel.set(key, []);
                 byLabel.get(key).push(c);

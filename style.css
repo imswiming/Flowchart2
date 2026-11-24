@@ -2872,10 +2872,10 @@ input[type="range"]::-moz-range-progress {
 /* Phone: undo, redo and the zoom control sit together on a row of their own at
    the bottom of the text edit menu, left aligned. */
 @media (max-width: 600px) {
+    /* Undo / redo carry on at the end of the buttons, not on a row of their own. */
     .notes-toolbar-tail {
-        margin-left: 0;
-        flex: 0 0 100%;
-        justify-content: flex-start;
+        /* Its buttons wrap one by one with the rest. */
+        display: contents !important;
     }
 }
 
@@ -4031,3 +4031,44 @@ body.gantt-mode #flowchart {
 #notes-search-bar .notes-search-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .ck .ck-find-result { background: rgba(255, 204, 0, 0.35); border-radius: 2px; }
 .ck .ck-find-result_selected { background: #ff8c1a; color: #111; }
+
+/* Phone-only buttons in the notes menu (board / flowchart). */
+.notes-mobile-only { display: none !important; }
+@media (max-width: 600px) {
+    .notes-mobile-only { display: inline-flex !important; }
+    /* Notes' close button always there, top left, whatever has scrolled away. */
+    #reflection-panel-close { position: fixed !important; top: 8px; left: 8px; z-index: 5200; width: 36px; height: 36px;
+        border-radius: 50%; background: rgba(30, 36, 48, 0.95) !important; border: 1px solid rgba(255,255,255,0.18) !important; }
+    #reflection-panel-header { padding-left: 50px !important; }
+    /* Notes' tabs look like tabs (an underline), not like the square edit buttons. */
+    #notes-tab-bar .matrix-tab { border: none !important; border-radius: 0 !important; background: transparent !important;
+        border-bottom: 2px solid transparent !important; padding-left: 6px !important; padding-right: 6px !important; }
+    #notes-tab-bar .matrix-tab.active { border-bottom-color: var(--accent, #00a67e) !important; color: var(--accent, #00a67e) !important; }
+}
+
+/* ===== Phone: the top strip ===== */
+@media (max-width: 600px) {
+    /* The menu button stays put; the icons are a strip that scrolls sideways
+       under it. */
+    .hamburger-menu { position: fixed !important; z-index: 2700 !important; background: var(--bg, #2b3343); border-radius: 8px;
+        top: 10px !important; height: 38px !important; box-sizing: border-box; display: flex !important; align-items: center; justify-content: center; }
+    /* The node tools strip lines up with it too. */
+    #node-tools-strip { top: 10px !important; }
+    .zoom-controls { left: 0 !important; right: 0 !important; top: 10px !important; padding: 0 10px 0 62px; overflow-x: auto; overflow-y: hidden;
+        flex-wrap: nowrap !important; justify-content: flex-start !important; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .zoom-controls::-webkit-scrollbar { display: none; }
+    .zoom-controls > * { flex: 0 0 auto; }
+    /* Less on it: these stay in the menu. */
+    #top-open-btn, #top-toggle-placeholders-btn, #top-pugh-matrix-btn { display: none !important; }
+    /* On the board, only switching views and Notes. */
+    body.kanban-mode #top-undo-btn, body.kanban-mode #top-redo-btn, body.kanban-mode #top-reset-view-btn,
+    body.kanban-mode #top-cloud-sync-btn, body.kanban-mode #top-share-btn, body.kanban-mode #top-help-btn { display: none !important; }
+    /* A selected node's tools take the strip's place, wrapping. */
+    body.node-tools-on .zoom-controls { display: none !important; }
+    #node-tools-strip { position: fixed; top: 8px; left: 62px; right: 8px; z-index: 2600; display: flex; flex-wrap: wrap; gap: 6px; }
+    #node-tools-strip .nts-btn { width: 40px; height: 40px; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+        display: inline-flex; align-items: center; justify-content: center; font-size: 18px; padding: 0; }
+    #node-tools-strip .nts-btn svg { width: 22px; height: 22px; }
+}
+#node-tools-strip { display: none; }
+@media (max-width: 600px) { body.node-tools-on #node-tools-strip { display: flex; } }
