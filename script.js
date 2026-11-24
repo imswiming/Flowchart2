@@ -13372,12 +13372,12 @@ class FlowchartViewer {
         // A rim a little lighter than the node itself (folding is shown by the
         // round chevron under the node, not the outline).
         .attr('stroke', d => {
-            if (this.isPlaceholderNodeData(d.data)) {
-                return this.getPlaceholderColor();
-            }
+            // An empty "+" placeholder is the background colour, so its outline
+            // is what shows it.
+            if (this.isPlaceholderNodeData(d.data)) return '#8a93a3';
             return mixWithWhite(nodeDisplayColor(d.data.color), 0.32);
         })
-        .attr('stroke-width', d => (this.isPlaceholderNodeData(d.data) ? '0' : '1.5px'));
+        .attr('stroke-width', '1.5px');
 
         node.append('text')
         .attr('text-anchor', 'middle')
