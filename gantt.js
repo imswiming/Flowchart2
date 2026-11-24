@@ -1127,7 +1127,19 @@
             this.autosave();
         },
 
+        releaseGanttFocus() {
+            const a = document.activeElement;
+            if (a && a !== document.body && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) {
+                try { a.blur(); } catch (e) { /* ignore */ }
+            }
+            const sel = window.getSelection && window.getSelection();
+            if (sel && sel.rangeCount && sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('[contenteditable="true"]')) {
+                sel.removeAllRanges();
+            }
+        },
+
         selectGanttTask(id, quiet) {
+            this.releaseGanttFocus();
             this._ganttSelected = id;
             this.renderGantt();
             if (!quiet) this.focusGanttNoteTitle(id);
@@ -1425,6 +1437,7 @@
             g.noteTitles = titles;
             if (result === tab.content) return false;
             tab.content = result;
+            this._ganttNotesSeen = result;
             if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
             if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, result);
             return true;
@@ -1508,7 +1521,10 @@
                 if (next && next.is('element') && !next.is('element', 'heading4') && !next.is('element', 'heading5')) {
                     try { editor.model.change(w => w.setSelection(w.createPositionAt(next, 0))); } catch (e) { /* not a text block */ }
                 }
-                if (!window.matchMedia('(pointer: coarse)').matches) {
+                // Only the 📝 button puts the cursor in the notes; a click on the
+                // chart leaves the keyboard with the chart (so Delete deletes
+                // the task, not text).
+                if (force && !window.matchMedia('(pointer: coarse)').matches) {
                     try { editor.editing.view.focus(); } catch (e) { /* not on screen */ }
                 }
                 const viewEl = editor.editing.mapper.toViewElement(target);
@@ -1516,6 +1532,58 @@
                 if (dom) { dom.classList.add('gantt-note-flash'); setTimeout(() => dom.classList.remove('gantt-note-flash'), 1200); }
             };
             tryJump(15);
+        },
+
+        // A checklist item renamed in the Gantt notes (its Minor heading edited)
+        // takes the new name in the checklist too. Headings are matched to items
+        // by position under their task; when that's not clear-cut (a heading
+        // added or removed by hand) nothing is changed.
+        pullGanttNotesEdits() {
+            const g = this.gantt;
+            const tab = g && g.notesTabId ? this.ganttNotesTab(false) : null;
+            if (!tab || !tab.content || tab.content === this._ganttNotesSeen) return;
+            this._ganttNotesSeen = tab.content;
+            const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
+            // Which task each Title / Subheading belongs to (last written text, in order).
+            const byText = new Map();
+            Object.entries(g.noteTitles || {}).forEach(([id, text]) => {
+                if (id.startsWith('ck:')) return;
+                if (!byText.has(text)) byText.set(text, []);
+                byText.get(text).push(id);
+            });
+            const used = new Set();
+            const found = new Map(); // taskId -> [h6 texts]
+            let cur = null;
+            Array.from(doc.body.children).forEach((n) => {
+                if (/^H[45]$/.test(n.tagName)) {
+                    const q = byText.get(n.textContent.trim());
+                    const id = q ? q.find(x => !used.has(x)) : null;
+                    if (id) { used.add(id); cur = id; found.set(id, []); }
+                    return;
+                }
+                if (n.tagName === 'H6' && cur) found.get(cur).push(n.textContent.trim());
+            });
+            let changed = false;
+            found.forEach((texts, taskId) => {
+                const t = this.ganttTask(taskId);
+                if (!t) return;
+                const items = t.checklist.filter(i => i.text.trim());
+                if (texts.length !== items.length) return;
+                items.forEach((item, i) => {
+                    const written = texts[i];
+                    const expected = `${item.done ? '✓ ' : ''}${item.text.trim()}`;
+                    if (written === expected) return;
+                    const name = written.replace(/^✓\s*/, '').trim();
+                    if (!name || name === item.text.trim()) return;
+                    item.text = name;
+                    // Remember the heading as written, so the next tidy-up of the
+                    // notes still knows it belongs to this item.
+                    g.noteTitles[`ck:${item.id}`] = written;
+                    changed = true;
+                });
+            });
+            // Saved and redrawn without rewriting the notes (you're typing there).
+            if (changed) this.ganttChanged(false);
         },
 
         // ----- The flowchart branch that mirrors the chart -----
@@ -1728,6 +1796,18 @@
             app.redoGantt();
         }
     });
+
+    const origNotesSave = FlowchartViewer.prototype.scheduleNotesAutosave;
+    if (origNotesSave) {
+        FlowchartViewer.prototype.scheduleNotesAutosave = function (...args) {
+            const r = origNotesSave.apply(this, args);
+            if (this.gantt && this.gantt.notesTabId) {
+                clearTimeout(this._ganttNotesPullTimer);
+                this._ganttNotesPullTimer = setTimeout(() => this.pullGanttNotesEdits(), 700);
+            }
+            return r;
+        };
+    }
 
     // A brand-new flowchart starts without a Gantt chart.
     const origNew = FlowchartViewer.prototype.createNewFlowchart;
