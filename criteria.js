@@ -9,9 +9,10 @@
 //   (keeping what's under them) and brings the children back. Other nodes can
 //   have theirs open at the same time. ✎ edits the list of criteria.
 // - Shift + click nodes to pick several (yellow outline), then 🎯 on one of
-//   them: they're shown on their own, side by side under an empty node, every
-//   criteria tree unfolded, to compare and edit together; ↩ / "Back to
-//   flowchart" returns.
+//   them: the comparison view, shown on its own and the other way round -
+//   each criterion once (yellow), the picked nodes under it, and under each
+//   node what it has for that criterion, all unfolded, to compare and edit
+//   together; ↩ / "Back to flowchart" returns.
 // - While a node's criteria are showing, its real children wait in
 //   `_critSaved` (saving always writes the real children, never the
 //   criteria nodes); showing them isn't saved, so a reload shows the children.
@@ -26,6 +27,9 @@
     if (typeof FlowchartViewer === 'undefined') return;
 
     const YELLOW = '#ffcc00';
+    // The "(Simplify?)" the chart adds to end nodes by itself: a picked node
+    // drawn as an end node in the view mustn't take it back to the tree.
+    const plainName = n => String(n || '').replace(/\s*\(Simplify\?\)\s*$/, '');
     const TOP_COLOR = '#454f63';
     const uid = () => `cr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const el = (tag, props, ...kids) => {
@@ -141,7 +145,9 @@
             if (!d || !d.data) return null;
             const data = d.data;
             const keep = ['F', '⊟', '⊞', '↩'];
+            if (data._critPivot) return { keep, addChild: false };
             if (data._critId) return { keep, addChild: true };
+            if (this._critView && data._critCol) return { keep, addChild: true };
             if (this._critView && (data._critHost !== undefined || data._critTop)) return { keep, addChild: false };
             if (!this._critView && data._critOn) return { keep: null, addChild: false, sides: true, parent: true };
             return null;
@@ -285,6 +291,23 @@
 
         buildCriteriaTree() {
             const v = this._critView;
+            const open = function unfold(n) { if (n) { n._collapsed = false; (n.children || []).forEach(unfold); } };
+            if (v.hosts.length > 1) {
+                // Comparing: criterion -> the picked nodes -> what each has for it.
+                const crits = this.criteria.map(c => ({
+                    name: c.name || 'Criterion',
+                    color: YELLOW,
+                    _critId: c.id,
+                    _critPivot: true,
+                    children: v.hosts.map((h, i) => {
+                        if (!h._crit || typeof h._crit !== 'object') h._crit = {};
+                        if (!Array.isArray(h._crit[c.id])) h._crit[c.id] = [];
+                        h._crit[c.id].forEach(open);
+                        return { name: h.name, color: h.color, _critHost: i, _critCol: c.id, children: h._crit[c.id] };
+                    })
+                }));
+                return crits.length === 1 ? crits[0] : { name: '', color: TOP_COLOR, _critTop: true, children: crits };
+            }
             const copies = v.hosts.map((h, i) => ({
                 name: h.name,
                 color: h.color,
@@ -306,11 +329,29 @@
             const v = this._critView;
             if (!v) return;
             const renamed = new Map();
+            const renamedHosts = new Map();
             const visit = (n) => {
                 if (!n || typeof n !== 'object') return;
+                // Comparing: a criterion node, then one node per picked node, each
+                // holding what that node has for the criterion.
+                if (n._critPivot && n._critId) {
+                    const crit = this.criteria.find(x => x.id === n._critId);
+                    const nm = (n.name || '').trim();
+                    if (crit && nm && nm !== crit.name) { crit.name = nm; renamed.set(crit.id, nm); }
+                    if (n.color !== YELLOW) n.color = YELLOW;
+                    (n.children || []).forEach((hc) => {
+                        if (!hc || typeof hc._critHost !== 'number' || !v.hosts[hc._critHost]) return;
+                        const host = v.hosts[hc._critHost];
+                        if (!host._crit || typeof host._crit !== 'object') host._crit = {};
+                        host._crit[n._critId] = Array.isArray(hc.children) ? hc.children : [];
+                        const hn = (hc.name || '').trim();
+                        if (hn && plainName(hn) !== plainName(host.name)) { host.name = plainName(hc.name); renamedHosts.set(hc._critHost, host.name); }
+                    });
+                    return;
+                }
                 if (typeof n._critHost === 'number' && v.hosts[n._critHost]) {
                     const host = v.hosts[n._critHost];
-                    if ((n.name || '').trim()) host.name = n.name;
+                    if ((n.name || '').trim() && plainName(n.name) !== plainName(host.name)) host.name = plainName(n.name);
                     if (n.color && !this.isPlaceholderNodeData(n)) host.color = n.color;
                     if (!host._crit || typeof host._crit !== 'object') host._crit = {};
                     (n.children || []).forEach((c) => {
@@ -326,11 +367,13 @@
                 (n.children || []).forEach(visit);
             };
             visit(this.rootData);
-            // A criterion renamed under one node is renamed under all of them.
-            if (renamed.size) {
+            // A criterion (or, comparing, a node) renamed in one place is renamed
+            // everywhere it shows.
+            if (renamed.size || renamedHosts.size) {
                 const rename = (n) => {
                     if (!n) return;
                     if (n._critId && renamed.has(n._critId)) n.name = renamed.get(n._critId);
+                    if (typeof n._critHost === 'number' && renamedHosts.has(n._critHost)) n.name = renamedHosts.get(n._critHost);
                     (n.children || []).forEach(rename);
                 };
                 rename(this.rootData);
