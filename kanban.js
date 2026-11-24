@@ -202,6 +202,7 @@
             this.recordKanbanHistory();
             this.renderKanban();
             if (!fromNotes) this.syncKanbanNotes();
+            this.syncKanbanFlow();
             this.autosave();
         },
 
@@ -235,6 +236,7 @@
             if (pop) pop.remove();
             this.renderKanban();
             this.syncKanbanNotes();
+            this.syncKanbanFlow();
             this.autosave();
             this.updateUndoRedoButtons();
         },
@@ -335,8 +337,8 @@
             const k = this.kanban;
             const leaves = [];
             const walk = (n, path) => {
-                if (!n || n._isPlaceholder || n._gantt) return;
-                const kids = (n.children || []).filter(c => c && !c._isPlaceholder && !c._gantt);
+                if (!n || n._isPlaceholder || n._gantt || n._kanban) return;
+                const kids = (n.children || []).filter(c => c && !c._isPlaceholder && !c._gantt && !c._kanban);
                 if (!kids.length && path.length) leaves.push({ node: n, top: path[1] || path[0] });
                 kids.forEach(c => walk(c, path.concat(n)));
             };
@@ -439,6 +441,8 @@
                 this.selectedNode = null;
                 if (!this._kbUndo) this.resetKanbanHistory();
                 this.renderKanban();
+                // Boards made before the flowchart branch existed get one.
+                if (this.kanban && this.kanban.cards.length && !this.findKanbanFlowRoot()) { this.syncKanbanFlow(); this.autosave(); }
             } else {
                 const pop = document.getElementById('kanban-popup');
                 if (pop) pop.remove();
@@ -481,6 +485,7 @@
                     btn('↩', 'Undo (Ctrl+Z)', () => this.undoKanban(), 'kb-undo' + (canUndo ? '' : ' disabled')),
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
                     this.kanban ? btn('📝 Notes', 'Open the Kanban notes (a title per column and card)', () => this.openKanbanNotes(this._kbSelected)) : null,
+                    this.kanban ? btn('🌳 Kanban flowchart', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
         },
@@ -1024,6 +1029,149 @@
             if (changed) this.kanbanChanged(true);
         },
 
+        // ----- The flowchart branch that mirrors the board -----
+        // "📋 <flowchart> - Kanban" beside the existing tree (under the hidden top
+        // node), with a node per card in board order (coloured by its first
+        // label, green once done) and its checklist items under it. Nodes added
+        // to the branch by hand are left alone; card nodes follow the board.
+        findKanbanFlowRoot() {
+            const root = this.rootData;
+            if (!root || !Array.isArray(root.children)) return null;
+            return root.children.find(c => c && c._kanban === 'root') || null;
+        },
+
+        syncKanbanFlow() {
+            const k = this.kanban;
+            const top = this.rootData;
+            if (!top || typeof this.isPlaceholderNodeData !== 'function') return;
+            let branch = this.findKanbanFlowRoot();
+            const isHand = c => c && !c._kanban && !this.isPlaceholderNodeData(c) && (c.name || '').trim();
+            if (!k || !k.cards.length) {
+                // An empty board: the branch goes, unless someone wrote in it.
+                if (branch && !(branch.children || []).some(isHand)) {
+                    top.children = top.children.filter(c => c !== branch);
+                    this.kbFlowRender();
+                }
+                return;
+            }
+            if (!this.isPlaceholderNodeData(top)) return;
+            const item = this.flowchartList && this.flowchartList[this.currentSlotIndex];
+            const title = `📋 ${item ? item.title : 'Project'} - Kanban`;
+            if (!branch) {
+                branch = { name: title, color: '#0c66e4', _kanban: 'root', children: [] };
+                if (!Array.isArray(top.children)) top.children = [];
+                const last = top.children[top.children.length - 1];
+                const at = last && this.isPlaceholderNodeData(last) ? top.children.length - 1 : top.children.length;
+                top.children.splice(at, 0, branch);
+            }
+            branch.name = title;
+            const DONE_GREEN = '#2e9e5b';
+            const cardNode = (card) => {
+                const done = this.kbIsDone(card);
+                const col = this.kbColumn(card.column);
+                const l = card.labels.length ? this.kbLabel(card.labels[0]) : null;
+                const extra = [col && !done ? col.name : null, card.assignee || null].filter(Boolean).join(', ');
+                return {
+                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (extra ? ` (${extra})` : '')}`,
+                    color: done ? DONE_GREEN : (l ? l.color : '#5e6c84')
+                };
+            };
+            const itemNode = (it, card) => ({ name: `${it.done ? '✓ ' : ''}${it.text.trim()}`, color: it.done ? DONE_GREEN : cardNode(card).color });
+            // Puts the wanted nodes into a node's children, in order, leaving
+            // nodes added by hand (and placeholders) where they are.
+            const reconcile = (parentNode, wanted) => {
+                const kids = Array.isArray(parentNode.children) ? parentNode.children : [];
+                const existing = new Map(kids.filter(c => c && c._kanban && c._kanban !== 'root').map(c => [c._kanban, c]));
+                const ids = new Set(wanted.map(w => w.id));
+                const nodes = wanted.map((w) => {
+                    const n = existing.get(w.id) || { _kanban: w.id };
+                    n.name = w.name;
+                    n.color = w.color;
+                    delete n._isPlaceholder;
+                    return n;
+                });
+                const out = [];
+                let qi = 0;
+                kids.forEach((c) => {
+                    if (c && c._kanban && c._kanban !== 'root') {
+                        if (ids.has(c._kanban) && qi < nodes.length) out.push(nodes[qi++]);
+                        // A deleted card's node goes (with anything under it).
+                    } else {
+                        out.push(c);
+                    }
+                });
+                while (qi < nodes.length) {
+                    let at = out.length;
+                    while (at > 0 && this.isPlaceholderNodeData(out[at - 1]) && !(out[at - 1].name || '').trim()) at--;
+                    out.splice(at, 0, nodes[qi++]);
+                }
+                parentNode.children = out;
+                return nodes;
+            };
+            const ordered = k.columns.flatMap(col => k.cards.filter(c => c.column === col.id));
+            const nodes = reconcile(branch, ordered.map(c => Object.assign({ id: c.id }, cardNode(c))));
+            ordered.forEach((card, i) => {
+                reconcile(nodes[i], card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+            });
+            if (typeof this.ensureRightmostPlaceholderNodes === 'function') this.ensureRightmostPlaceholderNodes(branch);
+            this.kbFlowRender();
+        },
+
+        kbFlowRender() {
+            if (this._kanbanMode || this._ganttMode || this._kbFlowRenderPending) return;
+            this._kbFlowRenderPending = true;
+            requestAnimationFrame(() => { this._kbFlowRenderPending = false; this.renderFlowchart(this.rootData); });
+        },
+
+        // Opens the flowchart with this card's node (or the whole Kanban branch)
+        // unfolded, its ancestors open and everything else folded.
+        showKanbanCardInFlowchart(cardId) {
+            this.syncKanbanFlow();
+            const branch = this.findKanbanFlowRoot();
+            if (!branch) { this.showNotification('Add a card first - the board shows up in the flowchart once it has cards.'); return; }
+            let target = branch;
+            if (cardId) {
+                const find = (n) => {
+                    if (n._kanban === cardId) return n;
+                    for (const c of (n.children || [])) { const f = find(c); if (f) return f; }
+                    return null;
+                };
+                target = find(branch) || branch;
+            }
+            const path = [];
+            const walk = (n, trail) => {
+                if (n === target) { path.push(...trail, n); return true; }
+                return (n.children || []).some(c => walk(c, [...trail, n]));
+            };
+            walk(this.rootData, []);
+            const keepOpen = new Set(path);
+            const openAll = (n) => { n._collapsed = false; (n.children || []).forEach(openAll); };
+            const fold = (n) => {
+                if (n === target) { openAll(n); return; }
+                if (keepOpen.has(n)) n._collapsed = false;
+                else if ((n.children || []).some(c => !this.isPlaceholderNodeData(c))) n._collapsed = true;
+                (n.children || []).forEach(fold);
+            };
+            fold(this.rootData);
+            this.rootData._collapsed = false;
+            const pop = document.getElementById('kanban-popup');
+            if (pop) pop.remove();
+            this.toggleKanbanMode(false, true);
+            this.renderFlowchart(this.rootData);
+            const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === target);
+            if (d) {
+                this.selectedNode = d;
+                if (typeof this.refreshRadialButtons === 'function') this.refreshRadialButtons();
+                const svg = d3.select('#flowchart svg');
+                if (this._zoomBehavior && !svg.empty() && Number.isFinite(d.x)) {
+                    const w = this.flowchartPanel.clientWidth, h = this.flowchartPanel.clientHeight;
+                    const z = this.transform.k;
+                    svg.transition().duration(350).call(this._zoomBehavior.transform, d3.zoomIdentity.translate(w / 2 - d.x * z, h / 3 - d.y * z).scale(z));
+                }
+            }
+            this.autosave();
+        },
+
         // ----- Popups -----
         kbPopup(title) {
             const old = document.getElementById('kanban-popup');
@@ -1133,6 +1281,7 @@
             p.footer.append(
                 el('button', { class: 'cs-btn kb-danger', type: 'button', text: '🗑 Delete', onclick: () => { p.close(); this._kbSelected = card.id; this.deleteKanbanSelected(); } }),
                 el('span', { class: 'kb-spacer' }),
+                el('button', { class: 'cs-btn', type: 'button', text: '🌳', title: 'Show this card in the flowchart', onclick: () => { save(); this.showKanbanCardInFlowchart(card.id); } }),
                 el('button', { class: 'cs-btn', type: 'button', text: '📝 Notes', title: 'Save, then open the notes for this card', onclick: () => { save(); this.openKanbanNotes(card.id); } }),
                 el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }),
                 el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Save', onclick: save }));

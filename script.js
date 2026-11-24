@@ -12182,10 +12182,12 @@ class FlowchartViewer {
         // two devices' edits to the same flowchart be merged (see FlowchartMerge).
         FlowchartMerge.ensureIds(this.rootData);
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban } = node;
             const out = { name };
             // Nodes mirroring the Gantt chart (gantt.js) remember their task.
             if (_gantt) out._gantt = _gantt;
+            // ... and the Kanban board (kanban.js) their card.
+            if (_kanban) out._kanban = _kanban;
             if (color) out.color = color;
             if (_collapsed) out._collapsed = true;
             if (_isPlaceholder) out._isPlaceholder = true;
