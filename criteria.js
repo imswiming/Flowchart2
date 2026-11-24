@@ -931,6 +931,39 @@
         if (picks && picks.size && !picks.has(d.data)) app.clearCritPicks();
     }, true);
 
+    // A click on a node can be lost: leaving the open node's edit box saves and
+    // redraws the chart while the button is down, so the node pressed on is
+    // replaced and the browser never sends the click. When that happens the
+    // redrawn node is selected (and opened for editing) here instead.
+    document.addEventListener('pointerdown', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || e.button !== 0 || e.shiftKey || e.ctrlKey || typeof d3 === 'undefined') { if (app) app._downNode = null; return; }
+        const n = e.target && e.target.closest && e.target.closest('#flowchart g.node');
+        if (!n || e.target.closest('.fold-arrow-btn, .kb-ck-box')) { app._downNode = null; return; }
+        const d = d3.select(n).datum();
+        app._downNode = d && d.data ? { el: n, data: d.data, x: e.clientX, y: e.clientY } : null;
+    }, true);
+    document.addEventListener('pointerup', (e) => {
+        const app = window.__flowchartApp;
+        const dn = app && app._downNode;
+        if (app) app._downNode = null;
+        if (!dn || Math.hypot(e.clientX - dn.x, e.clientY - dn.y) > 10) return;
+        // The redraw can come just after the button is up, before the click:
+        // check a moment later whether the click arrived.
+        app._clickWaiting = dn;
+        setTimeout(() => {
+            if (app._clickWaiting !== dn) return; // the click came
+            app._clickWaiting = null;
+            if (dn.el.isConnected) return;
+            const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === dn.data);
+            if (!d || (app.selectedNode && app.selectedNode.data === dn.data && app.nodeBeingEdited)) return;
+            app.showNodeEditPopup(d);
+            app.selectNode(d);
+            app.refreshRadialButtons();
+        }, 80);
+    }, true);
+    document.addEventListener('click', () => { const app = window.__flowchartApp; if (app) app._clickWaiting = null; }, true);
+
     // A drag or click on the chart can drop the selection without going
     // through deselectNode (script.js's pan handler): keep the outline in step.
     document.addEventListener('pointerup', (e) => {

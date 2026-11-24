@@ -842,12 +842,14 @@
                 el('span', { class: 'kb-card-stamp', text: card.editedAt
                     ? `Edited ${(window.__stampText || (() => ''))(card.editedAt, card.editedBy)}`
                     : `Added ${(window.__stampText || (() => ''))(card.created, card.createdBy)}` }),
+                    // Opens the card's details (along the bottom of the screen).
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
+                        onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
                     // Opens the flowchart on this card's node.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
                         onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
                     card.assignee ? avatar(card.assignee) : null));
             this.wireKanbanDrag(node, card);
-            node.addEventListener('dblclick', (e) => { if (!e.target.closest('input, textarea, button')) this.openKanbanCard(card.id); });
             node.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.openKanbanCard(card.id); } });
             return node;
         },
@@ -1011,12 +1013,13 @@
                         this.kbMoveCard(card.id, cell.dataset.col, next, lane);
                         if (JSON.stringify(this.kbCards().map(c => [c.id, c.column, c.assignee, c.labels[0] || ''])) === before) this.renderKanban();
                     } else if (ev.type === 'pointerup' && !(touch && armed)) {
-                        // A click selects the card and opens its options along the
-                        // bottom of the screen (and its notes, if Notes is open).
-                        const fresh = this._kbSelected !== card.id;
-                        this._kbSelected = card.id;
-                        this.openKanbanCard(card.id);
-                        if (fresh && this.notesPanelShowing()) this.openKbCardNotes(card.id);
+                        // A click selects the card (and shows its notes, if Notes is
+                        // open); its details open from the ✎ on the card.
+                        if (this._kbSelected !== card.id) {
+                            this._kbSelected = card.id;
+                            this.renderKanbanBoard(this.kbScrollState());
+                            if (this.notesPanelShowing()) this.openKbCardNotes(card.id);
+                        }
                     }
                 };
                 const cleanup = () => {
@@ -1889,8 +1892,17 @@
             this._kbSelected = id;
             const k = this.kanban;
             const p = this.kbPopup('Card');
-            // Along the bottom of the screen rather than a popup in the middle.
+            // Along the bottom of the screen rather than a popup in the middle -
+            // under the board only, clear of the Notes column.
             p.pop.classList.add('kb-sheet');
+            const placeSheet = () => {
+                if (!p.pop.isConnected) { window.removeEventListener('resize', placeSheet); return; }
+                const panel = document.getElementById('flowchart-panel');
+                const left = panel ? Math.max(0, Math.round(panel.getBoundingClientRect().left)) : 0;
+                p.pop.style.left = left + 'px';
+            };
+            placeSheet();
+            window.addEventListener('resize', placeSheet);
             const row = (label, ...inputs) => el('div', null, el('label', { class: 'cs-label', text: label }), el('div', { class: 'cs-row' }, ...inputs));
             const title = el('input', { class: 'cs-input', type: 'text', value: card.title });
             const desc = el('textarea', { class: 'cs-input kb-desc', rows: '3', placeholder: 'Details, acceptance criteria, links...' });
