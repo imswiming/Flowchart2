@@ -681,7 +681,10 @@
                     card.due ? el('span', { class: 'kb-meta' + (overdue ? ' overdue' : ''), text: `🗓 ${fmtDue(card.due)}`, title: overdue ? 'Overdue' : 'Due' }) : null,
                     !done && ageDays >= 3 ? el('span', { class: 'kb-age', title: `${Math.floor(ageDays)} days in this column`, text: '●'.repeat(Math.min(4, Math.floor(Math.log2(ageDays)))) }) : null,
                     el('span', { class: 'kb-spacer' }),
-                    avatar(card.assignee, card.assignee ? '' : 'empty')));
+                    // Opens the flowchart on this card's node.
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
+                        onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
+                    card.assignee ? avatar(card.assignee) : null));
             this.wireKanbanDrag(node, card);
             node.addEventListener('dblclick', () => this.openKanbanCard(card.id));
             node.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.openKanbanCard(card.id); } });
@@ -1195,7 +1198,8 @@
             this.renderFlowchart(this.rootData);
             const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === target);
             if (d) {
-                this.selectedNode = d;
+                // Selected the usual way, so it gets the selection outline too.
+                if (typeof this.selectNode === 'function') this.selectNode(d); else this.selectedNode = d;
                 if (typeof this.refreshRadialButtons === 'function') this.refreshRadialButtons();
                 const svg = d3.select('#flowchart svg');
                 if (this._zoomBehavior && !svg.empty() && Number.isFinite(d.x)) {
