@@ -71,6 +71,7 @@
         if (n.color) o.color = n.color;
         if (n._isPlaceholder) o._isPlaceholder = true;
         if (n._collapsed) o._collapsed = true;
+        if (n._hl) o._hl = true;
         if (n._nodePhotoUrl) o._nodePhotoUrl = n._nodePhotoUrl;
         if (n._nodePhotoUrl && n._nodePhotoIsDrawing) o._nodePhotoIsDrawing = true;
         if (kids.length) o.children = kids;
@@ -386,7 +387,13 @@
         const app = window.__flowchartApp;
         if (!app || app._critView || typeof d3 === 'undefined') return;
         const nodeEl = e.target && e.target.closest && e.target.closest('#flowchart g.node');
-        if (!nodeEl || e.target.closest('.radial-add-btn')) return;
+        // A click on empty space in the chart lets go of the picked nodes.
+        if (!nodeEl) {
+            const inChart = e.target && e.target.closest && e.target.closest('#flowchart svg');
+            if (inChart && !e.target.closest('.radial-add-btn-layer, .fold-arrow-btn')) app.clearCritPicks();
+            return;
+        }
+        if (e.target.closest('.radial-add-btn')) return;
         const d = d3.select(nodeEl).datum();
         if (!d || !d.data) return;
         if (!app._critPicks) app._critPicks = new Set();

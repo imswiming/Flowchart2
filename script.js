@@ -237,8 +237,11 @@ const NODE_BTN_TONES = {
     soft: { bg: 'rgba(52,62,80,0.94)', fg: '#c9d4e3', rim: 'rgba(255,255,255,0.12)' },
     blue: { bg: 'rgba(76,154,255,0.20)', fg: '#5aa7ff' },
     red: { bg: 'rgba(248,113,104,0.17)', fg: '#f87168' },
-    yellow: { bg: 'rgba(255,204,0,0.16)', fg: '#ffcc00' }
+    yellow: { bg: 'rgba(255,204,0,0.16)', fg: '#ffcc00' },
+    orange: { bg: 'rgba(255,140,26,0.18)', fg: '#ff8c1a' }
 };
+// The node menu's highlighter outline.
+const NODE_HIGHLIGHT = '#ff8c1a';
 const NODE_BTN_ICONS = {
     '+': { d: 'M12 5v14M5 12h14' },
     '←': { d: 'M19 12H5M11 18l-6-6 6-6' },
@@ -251,6 +254,7 @@ const NODE_BTN_ICONS = {
     M: { title: 'Move to another parent', tone: 'blue', d: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20' },
     '✕': { title: 'Delete with everything under it', tone: 'red', d: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6' },
     P: { title: 'Delete, keeping its children', tone: 'red', d: 'M3 14h6v6H3zM13 3h5v5h-5zM4 4l16 16M17 13l4 4M21 13l-4 4' },
+    H: { title: 'Highlight the node (orange outline) - again to take it off', tone: 'orange', d: 'M9 11l7.5-7.5 4 4L13 15zM9 11l-5 5v4h4l5-5M14.5 5.5l4 4' },
     '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
     '🎨': { title: 'Drawing', text: '🎨' },
     '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
@@ -586,6 +590,7 @@ const NOTES_ICONS = (() => {
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
         clearDone: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
+        subtitle: svg('<path d="M4 7V5h10v2"/><path d="M9 5v12"/><path d="M7 17h4"/><path d="M15 12h6M15 16h6M15 20h4"/>'),
         highlight: svg('<path d="M9 11l7.5-7.5 4 4L13 15z"/><path d="M9 11l-5 5v4h4l5-5"/><path d="M14.5 5.5l4 4"/>'),
         foldAll: svg('<path d="M7 20l5-5 5 5"/><path d="M7 4l5 5 5-5"/>'),
         unfoldAll: svg('<path d="M7 15l5 5 5-5"/><path d="M7 9l5-5 5 5"/>'),
@@ -6724,6 +6729,8 @@ class FlowchartViewer {
             if (Number.isFinite(x.m)) entry.m = x.m;
             if (x.k === 'm' || x.k === 'h') entry.k = x.k;
             if (typeof x.col === 'string' && x.col) entry.col = x.col;
+            // Who wrote it (auto comments on a shared flowchart, see notesAuthorEntryId).
+            if (typeof x.a === 'string' && x.a) entry.a = x.a;
             out.push(entry);
         });
         // An empty list is kept (the history was cleared here), so a sync doesn't mistake
@@ -7326,12 +7333,13 @@ class FlowchartViewer {
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
+        row.appendChild(makeBtn('subtitle', 'Subtitle - turn the selected (or current) lines into a subheading, or back to normal text', '', () => this.toggleNotesSubtitle()));
         row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
 
-        // Only shown while the caret is on a Title line (see updateNotesTitleControls).
-        // One button: folds every title, or - once they're all folded - unfolds
-        // them; its icon shows which it will do (see updateNotesTitleControls).
-        row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-title-ctrl notes-fold-toggle-btn', () => this.toggleAllTitleFolds()));
+        // Always shown. One button: folds every title, or - once they're all
+        // folded - unfolds them; its icon shows which it will do (see
+        // updateNotesTitleControls).
+        row.appendChild(makeBtn('foldAll', 'Fold all titles', 'notes-fold-toggle-btn', () => this.toggleAllTitleFolds()));
 
         row.appendChild(makeBtn('\u21E4', 'Outdent - decrease indent', 'notes-outdent-btn', () => this.outdentNotesLine()));
         row.appendChild(makeBtn('\u21E5', 'Indent - increase indent', 'notes-indent-btn', () => this.indentNotesLine()));
@@ -7811,6 +7819,37 @@ class FlowchartViewer {
                 editor.once('ready', dropCommentGreen);
                 editor._noteDropCommentGreen = dropCommentGreen;
 
+                // On a shared flowchart with History on, what you type is commented
+                // with your name and dated (one entry per spell of writing). Text
+                // typed next to someone else's takes your name, not theirs.
+                editor.model.document.on('change', (evt, batch) => {
+                    if (!batch.isLocal || !batch.isUndoable || editor.state !== 'ready' || !app.notesHistoryShown()) return;
+                    const ref = editor.config.get('noteTab');
+                    if (!ref || ref.scope !== 'chart' || !app.notesCollaborating()) return;
+                    const tab = app.getNotesTab(ref.scope, ref.tabId);
+                    const me = app.notesAuthorName();
+                    if (!tab || !me) return;
+                    const mine = new Set((Array.isArray(tab.log) ? tab.log : []).filter(x => x.a === me).map(x => x.id));
+                    const model = editor.model;
+                    const ranges = [];
+                    for (const ch of model.document.differ.getChanges()) {
+                        if (ch.type !== 'insert' || ch.name !== '$text') continue;
+                        const parent = ch.position.parent;
+                        if (parent && parent.is('element') && /^heading[456]$/.test(parent.name)) continue;
+                        const range = model.createRange(ch.position, ch.position.getShiftedBy(ch.length));
+                        let needs = false;
+                        for (const it of range.getItems()) {
+                            if (it.is('$textProxy') && !mine.has(it.getAttribute('noteStamp'))) { needs = true; break; }
+                        }
+                        if (needs) ranges.push(range);
+                    }
+                    if (!ranges.length) return;
+                    const id = app.notesAuthorEntryId(tab, me);
+                    model.enqueueChange(batch, (writer) => {
+                        for (const r of model.schema.getValidRanges(ranges, 'noteStamp')) writer.setAttribute('noteStamp', id, r);
+                    });
+                });
+
                 // History mode: the comment bar opens when text gets selected, hides when not.
                 let selTimer = null;
                 editor.model.document.selection.on('change:range', () => {
@@ -7821,6 +7860,35 @@ class FlowchartViewer {
         }
         this._NoteStampPlugin = NoteStampPlugin;
         return NoteStampPlugin;
+    }
+
+    // ----- Collaboration: who wrote what in the notes -----
+    // The open flowchart is shared (sharing.js) - its notes then name who wrote them.
+    notesCollaborating() {
+        const item = this.flowchartList && this.flowchartList[this.currentSlotIndex];
+        return !!(item && item.share && item.share.id);
+    }
+
+    // The name you go by (the one you joined a shared flowchart with, or your
+    // sign-in email's first part - see kanban.js kbMyName).
+    notesAuthorName() {
+        if (typeof this.kbMyName === 'function') return this.kbMyName();
+        return (localStorage.getItem('flowchart-guest-name') || '').trim();
+    }
+
+    // The history entry your typing goes under: your latest one if you wrote
+    // within the last half hour (its time moves on), otherwise a new one.
+    notesAuthorEntryId(tab, me) {
+        if (!Array.isArray(tab.log)) tab.log = [];
+        const now = Date.now();
+        for (let i = tab.log.length - 1; i >= 0; i--) {
+            const x = tab.log[i];
+            if (x.a === me && x.k === 'h' && now - (x.e || x.t) < 30 * 60000) { x.e = now; x.m = now; return x.id; }
+        }
+        const entry = { id: this.nextNotesId('hl'), t: now, e: now, k: 'h', c: me, a: me, m: now };
+        tab.log.push(entry);
+        this.trimNoteLog(tab);
+        return entry.id;
     }
 
     // The History button shows or hides every highlight colour and the dates and times
@@ -7937,13 +8005,9 @@ class FlowchartViewer {
             const end = editor.model.document.selection.getLastPosition();
             editor.model.change(writer => writer.setSelection(end));
         }
-        // With the History button off, every highlight colour is hidden - so a
-        // highlight just made would seem to do nothing (it looked like Highlight
-        // didn't work on a phone that had never turned History on). Pressing
-        // Highlight means the colour is wanted, so turn the colours on.
-        if (hadSelection && !isHighlighted && !this.notesHistoryShown()) {
-            this.setNotesHistoryShown(true, false);
-        }
+        // Highlights always show (History only adds the comments and dates), so
+        // this never switches History on - doing so turned all un-commented text
+        // yellow, which looked like the button opened History instead.
         editor.editing.view.focus();
     }
 
@@ -8268,6 +8332,31 @@ class FlowchartViewer {
             });
         }
         editor.execute('heading', { value: 'heading4' });
+        editor.editing.view.focus();
+    }
+
+    // The Subtitle button: the selected (or current) lines become subheadings
+    // (heading5), or - when they all already are - normal text again. Like a
+    // Title, a subheading is a top-level block, so list lines leave their list.
+    toggleNotesSubtitle() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
+        if (blocks.length && blocks.every(b => b.is('element', 'heading5'))) {
+            editor.execute('paragraph');
+            editor.editing.view.focus();
+            return;
+        }
+        const listBlocks = blocks.filter(b => b.hasAttribute('listItemId'));
+        if (listBlocks.length) {
+            editor.model.change(writer => {
+                listBlocks.forEach(b => {
+                    ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent']
+                        .forEach(attr => { if (b.hasAttribute(attr)) writer.removeAttribute(attr, b); });
+                });
+            });
+        }
+        editor.execute('heading', { value: 'heading5' });
         editor.editing.view.focus();
     }
 
@@ -12231,8 +12320,12 @@ class FlowchartViewer {
         FlowchartMerge.ensureIds(this.rootData);
         const leanCriteria = typeof this.leanCriteriaTrees === 'function' ? this.leanCriteriaTrees.bind(this) : null;
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by } = node;
             const out = { name };
+            // Highlighted with the node menu's highlighter (an orange outline).
+            if (_hl) out._hl = true;
+            // Who last edited it, on a shared flowchart (collab.js).
+            if (_by) out._by = _by;
             // What's been written under each criterion for this node (criteria.js) -
             // only criteria with something under them, stored compactly.
             const crit = _crit && leanCriteria ? leanCriteria(_crit) : null;
@@ -13375,9 +13468,12 @@ class FlowchartViewer {
             // An empty "+" placeholder is the background colour, so its outline
             // is what shows it.
             if (this.isPlaceholderNodeData(d.data)) return '#8a93a3';
+            // Highlighted (node menu): a bright orange outline.
+            if (d.data._hl) return NODE_HIGHLIGHT;
             return mixWithWhite(nodeDisplayColor(d.data.color), 0.32);
         })
-        .attr('stroke-width', '1.5px');
+        .attr('stroke-width', d => (d.data._hl && !this.isPlaceholderNodeData(d.data) ? '3.5px' : '1.5px'))
+        .classed('node-hl', d => !!d.data._hl);
 
         node.append('text')
         .attr('text-anchor', 'middle')
@@ -13786,6 +13882,13 @@ class FlowchartViewer {
             deleteRowBtns.push({ label: '✕', activate: activateDelete, danger: true, fontSize: 22 });
             deleteRowBtns.push({ label: 'P', activate: activateDeleteAndPromote, danger: true, fontSize: 20 });
         }
+        deleteRowBtns.push({ label: 'H', activate: () => {
+            self.pushUndo();
+            if (targetDatum.data._hl) delete targetDatum.data._hl; else targetDatum.data._hl = true;
+            self.renderFlowchart(self.rootData);
+            self.autosave();
+            self.refreshRadialButtons();
+        } });
         deleteRowBtns.push({ label: '📷', activate: activateAddPhoto, fontSize: 18 });
         deleteRowBtns.push({ label: '🎨', activate: activateAddDrawing, fontSize: 18 });
         // Criteria view (criteria.js): its button, and only the buttons that make

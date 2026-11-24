@@ -3194,12 +3194,7 @@ input[type="range"]::-moz-range-progress {
     user-select: none;
 }
 
-/* History button: off hides the highlight colours and the dates/times under them. */
-body.notes-history-off #notes-editor-wrap .ck.ck-content mark[class^="marker-"] , body.notes-history-off .notes-editor-wrap-el .ck.ck-content mark[class^="marker-"] {
-    background-color: transparent !important;
-    color: inherit !important;
-}
-
+/* History button: off hides the dates/times (and comments) under the text. Highlight colours always show. */
 body.notes-history-off .ck.ck-content [data-note-times]::after {
     display: none;
 }
