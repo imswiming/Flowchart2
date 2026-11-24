@@ -333,7 +333,18 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-flow-num { text-align: right; }
 .kb-flow-age { grid-column: 2 / 4; font-size: 11px; color: var(--muted); margin-top: -4px; }
 
+/* One row: title, search and filters, then Group by / Insights and the board
+   buttons at the right (the header and bar's own boxes step aside). */
+.kb-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 18px 12px; flex: 0 0 auto; }
+.kb-top > .kb-head, .kb-top > .kb-bar { display: contents; }
+.kb-top .kb-titles { order: 1; margin-right: 10px; }
+.kb-top .kb-bar > * { order: 2; }
+.kb-top .kb-head-actions { order: 3; margin-left: 0; }
+.kb-top .kb-h1 { font-size: 20px; margin: 0; line-height: 1.1; }
+.kb-top .kb-crumb { font-size: 12px; }
+
 @media (max-width: 600px) {
+    .kb-top { padding: 6px 10px 8px; gap: 8px; }
     #kanban-view { padding-right: 0; padding-top: 58px; --kb-col-w: 250px; }
     .kb-head { padding: 6px 10px 4px; }
     .kb-h1 { font-size: 20px; }

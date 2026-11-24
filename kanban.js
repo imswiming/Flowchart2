@@ -457,9 +457,12 @@
             if (!view || !this._kanbanMode) return;
             const keep = this.kbScrollState();
             view.innerHTML = '';
-            view.append(this.buildKanbanHeader());
+            // Title, filters and buttons share one row (see .kb-top in kanban.css).
+            const top = el('div', { class: 'kb-top' }, this.buildKanbanHeader());
+            view.append(top);
             if (!this.kanban) { view.append(this.buildKanbanEmpty()); return; }
-            view.append(this.buildKanbanBar(), el('div', { class: 'kb-board-wrap' }));
+            top.append(this.buildKanbanBar());
+            view.append(el('div', { class: 'kb-board-wrap' }));
             this.renderKanbanBoard(keep);
         },
 
@@ -484,8 +487,8 @@
                 el('div', { class: 'kb-head-actions' },
                     btn('↩', 'Undo (Ctrl+Z)', () => this.undoKanban(), 'kb-undo' + (canUndo ? '' : ' disabled')),
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
-                    this.kanban ? btn('📝 Notes', 'Open the Kanban notes (a title per column and card)', () => this.openKanbanNotes(this._kbSelected)) : null,
-                    this.kanban ? btn('🌳 Kanban flowchart', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
+                    this.kanban ? btn('📝', 'Open the Kanban notes (a title per column and card)', () => this.openKanbanNotes(this._kbSelected)) : null,
+                    this.kanban ? btn('🌳', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
         },
@@ -552,7 +555,7 @@
                 } }) : null,
                 el('span', { class: 'kb-spacer' }),
                 el('label', { class: 'kb-group' }, el('span', { text: 'GROUP BY' }), group),
-                el('button', { class: 'kb-btn', type: 'button', text: '📈 Insights', title: 'Lead time, cycle time, throughput, WIP', onclick: () => this.openKanbanInsights() }));
+                el('button', { class: 'kb-btn', type: 'button', text: '📈', title: 'Insights: lead time, cycle time, throughput, WIP', onclick: () => this.openKanbanInsights() }));
         },
 
         kbMatches(card) {
@@ -1090,7 +1093,10 @@
             // nodes to reuse from anywhere in the branch (a card's node moving
             // to another column keeps what's under it).
             const reconcile = (parentNode, wanted, pool) => {
-                const kids = Array.isArray(parentNode.children) ? parentNode.children : [];
+                // A node showing its criteria (criteria.js) keeps its real
+                // children aside in _critSaved: those are what follow the board.
+                const field = parentNode._critOn ? '_critSaved' : 'children';
+                const kids = Array.isArray(parentNode[field]) ? parentNode[field] : [];
                 const existing = pool || new Map(kids.filter(c => c && c._kanban && c._kanban !== 'root').map(c => [c._kanban, c]));
                 const ids = new Set(wanted.map(w => w.id));
                 const nodes = wanted.map((w) => {
@@ -1115,13 +1121,13 @@
                     while (at > 0 && this.isPlaceholderNodeData(out[at - 1]) && !(out[at - 1].name || '').trim()) at--;
                     out.splice(at, 0, nodes[qi++]);
                 }
-                parentNode.children = out;
+                parentNode[field] = out;
                 return nodes;
             };
             // Every card node already in the branch, wherever it is (older
             // boards had the cards straight under the branch).
             const pool = new Map();
-            const collect = (n) => (n.children || []).forEach((c) => {
+            const collect = (n) => [].concat(n._critOn ? (n._critSaved || []) : (n.children || [])).forEach((c) => {
                 if (!c) return;
                 if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('col:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
                 collect(c);
@@ -1140,7 +1146,7 @@
                 cards.forEach((card, j) => {
                     reconcile(cardNodes[j], card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
                 });
-                if (typeof this.ensureRightmostPlaceholderNodes === 'function') this.ensureRightmostPlaceholderNodes(colNodes[i]);
+                if (typeof this.ensureRightmostPlaceholderNodes === 'function' && !colNodes[i]._critOn) this.ensureRightmostPlaceholderNodes(colNodes[i]);
             });
             if (typeof this.ensureRightmostPlaceholderNodes === 'function') this.ensureRightmostPlaceholderNodes(branch);
             this.kbFlowRender();

@@ -116,9 +116,10 @@
             if (!d || !d.parent || !d.data || this.isPlaceholderNodeData(d.data)) return null;
             const data = d.data;
             // Not on the criteria themselves or what's built under them, and not on
-            // the Gantt / Kanban branches (their nodes follow the chart / board).
+            // the Gantt branch (its nodes follow the chart). Kanban nodes can: the
+            // board's sync leaves a node's criteria alone (kanban.js).
             for (let a = d; a; a = a.parent) {
-                if (a.data && (a.data._critId || a.data._gantt || a.data._kanban)) return null;
+                if (a.data && (a.data._critId || a.data._gantt)) return null;
             }
             if (data._critOn) {
                 return [
