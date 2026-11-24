@@ -1185,11 +1185,28 @@
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
             const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end'];
             const plan = new Map();
+            const tags = new Map();
+            // Card headings in board order, by their text, to find each one's label.
+            const byLabel = new Map();
+            if (isMaster) this.kanban.columns.forEach(col => this.kbCards().filter(c => c.column === col.id).forEach((c) => {
+                const key = this.kbNoteLabel(c);
+                if (!byLabel.has(key)) byLabel.set(key, []);
+                byLabel.get(key).push(c);
+            }));
+            const textOf = (vel) => { let t = ''; for (const ch of vel.getChildren()) { if (ch.is('$text')) t += ch.data; else if (ch.is('element')) for (const g of ch.getChildren()) if (g.is('$text')) t += g.data; } return kbNorm(t); };
             if (isMaster) {
                 let open = null;
                 const close = () => { if (open && open.length) plan.get(open[open.length - 1]).push('kb-nc-end'); open = null; };
                 kids.forEach((el) => {
-                    if (el.name === 'h5') { close(); plan.set(el, ['kb-nc-head']); open = [el]; return; }
+                    if (el.name === 'h5') {
+                        close(); plan.set(el, ['kb-nc-head']); open = [el];
+                        // Its tag: the card's first label (in its colour), else "CARD".
+                        const q = byLabel.get(textOf(el));
+                        const card = q && q.shift();
+                        const l = card && card.labels.length ? this.kbLabel(card.labels[0]) : null;
+                        tags.set(el, l ? { text: l.name.toUpperCase(), color: l.color, dark: darkText(l.color) } : { text: 'CARD', color: '#4c9aff', dark: true });
+                        return;
+                    }
                     if (el.name === 'h4') { close(); return; }
                     if (open) { plan.set(el, ['kb-nc-body']); open.push(el); }
                 });
@@ -1203,6 +1220,14 @@
                         if (want.includes(c) && !has) writer.addClass(c, el);
                         else if (!want.includes(c) && has) writer.removeClass(c, el);
                     });
+                    const tag = tags.get(el);
+                    if (tag) {
+                        if (el.getAttribute('data-kb-tag') !== tag.text) writer.setAttribute('data-kb-tag', tag.text, el);
+                        writer.setStyle({ '--kb-tag-bg': tag.color, '--kb-tag-fg': tag.dark ? '#172b4d' : '#ffffff' }, el);
+                    } else if (el.hasAttribute('data-kb-tag')) {
+                        writer.removeAttribute('data-kb-tag', el);
+                        writer.removeStyle(['--kb-tag-bg', '--kb-tag-fg'], el);
+                    }
                 });
             });
             editor._kbDecorated = isMaster;

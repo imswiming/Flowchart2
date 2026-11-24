@@ -408,13 +408,14 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     color: #cfe3ff;
 }
 .ck.ck-content .kb-nc-head::before {
-    content: 'CARD';
+    /* The card's first label (set by decorateNotesEditor), else CARD. */
+    content: attr(data-kb-tag);
     display: inline-block;
     margin-right: 8px;
     padding: 1px 6px;
     border-radius: 4px;
-    background: #4c9aff;
-    color: #0b1a2e;
+    background: var(--kb-tag-bg, #4c9aff);
+    color: var(--kb-tag-fg, #0b1a2e);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
