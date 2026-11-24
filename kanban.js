@@ -672,6 +672,7 @@
             },
                 el('div', { class: 'kb-card-title', text: card.title }),
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
+                this.buildKanbanCardChecklist(card),
                 card.labels.length ? el('div', { class: 'kb-chips' }, ...card.labels.map((id) => {
                     const l = this.kbLabel(id);
                     return l ? el('span', { class: 'kb-chip', style: this.kbChipStyle(l), text: l.name }) : null;
@@ -686,9 +687,55 @@
                         onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
                     card.assignee ? avatar(card.assignee) : null));
             this.wireKanbanDrag(node, card);
-            node.addEventListener('dblclick', () => this.openKanbanCard(card.id));
+            node.addEventListener('dblclick', (e) => { if (!e.target.closest('input, textarea, button')) this.openKanbanCard(card.id); });
             node.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.openKanbanCard(card.id); } });
             return node;
+        },
+
+        // The card's checklist, right on the card: tick items, edit their text in
+        // place (emptying one removes it), and add new ones (the add box shows
+        // while the pointer is over the card).
+        buildKanbanCardChecklist(card) {
+            const box = el('div', { class: 'kb-cl' });
+            const commit = () => { this._kbCardEditing = null; this.kanbanChanged(); };
+            card.checklist.forEach((item) => {
+                const cb = el('input', { type: 'checkbox', checked: item.done, title: item.done ? 'Done - untick' : 'Tick off' });
+                cb.addEventListener('change', () => { item.done = cb.checked; commit(); });
+                const tx = el('input', { class: 'kb-cl-text' + (item.done ? ' done' : ''), type: 'text', value: item.text });
+                tx.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); tx.blur(); }
+                    if (e.key === 'Escape') { tx.value = item.text; tx.blur(); }
+                    e.stopPropagation();
+                });
+                tx.addEventListener('blur', () => {
+                    const v = tx.value.trim();
+                    if (v === item.text) return;
+                    if (!v) card.checklist = card.checklist.filter(x => x !== item);
+                    else item.text = v;
+                    commit();
+                });
+                box.append(el('label', { class: 'kb-cl-item' }, cb, tx));
+            });
+            const add = el('input', { class: 'kb-cl-add', type: 'text', placeholder: '+ Add checklist item' });
+            add.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Escape') { add.value = ''; add.blur(); return; }
+                if (e.key !== 'Enter' || !add.value.trim()) return;
+                e.preventDefault();
+                card.checklist.push({ id: uid('ck'), text: add.value.trim(), done: false });
+                // Ready for the next item: the redrawn card's add box gets the
+                // cursor straight away, so fast typing isn't lost in between.
+                this._kbCardEditing = card.id;
+                this.kanbanChanged();
+                const next = document.querySelector(`#kanban-view .kb-card[data-id="${card.id}"] .kb-cl-add`);
+                if (next) next.focus();
+            });
+            box.append(add);
+            if (this._kbCardEditing === card.id) {
+                box.classList.add('adding');
+                setTimeout(() => { if (add.isConnected) add.focus(); }, 0);
+            }
+            return box;
         },
 
         buildKanbanAdd(col, lane) {
