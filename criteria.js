@@ -685,6 +685,7 @@
                 if (this._critView) this.critWriteBack();
                 this.critInlineHosts().forEach(h => this.critInlineWriteBack(h));
                 this.criteria = next;
+                try { this.syncPughCriteria(); if (typeof this.renderPughPanel === 'function') this.renderPughPanel(); } catch (e) { /* drawn next time */ }
                 if (this._critView) {
                     this.renderFlowchart(this.buildCriteriaTree(), { keepTransform: true });
                 } else if (this.critInlineHosts().length) {
@@ -702,8 +703,93 @@
         }
     };
 
+    // ----- The Pugh matrix uses the criteria list -----
+    // Every Pugh matrix's criteria are the flowchart's criteria (same ids, so
+    // scores stay put; each keeps its own weights). A criterion renamed in a
+    // Pugh matrix is renamed in the list; one added or deleted there is added
+    // to / deleted from the list. A flowchart whose list is empty takes its
+    // criteria from the Pugh matrix the first time.
+    methods.syncPughCriteria = function () {
+        const mats = Array.isArray(this.pughMatrices) ? this.pughMatrices : [];
+        if (!mats.length) return;
+        if (!Array.isArray(this.criteria)) this.criteria = [];
+        if (!this.criteria.length) {
+            const src = mats.find(m => Array.isArray(m.criteria) && m.criteria.some(c => (c.name || '').trim()));
+            if (src) this.criteria = src.criteria.filter(c => (c.name || '').trim()).map(c => ({ id: c.id, name: c.name.trim() }));
+        }
+        // The first time for this flowchart, criteria only a Pugh matrix had
+        // join the list (so none disappear from it).
+        if (this._pughMergedFor !== this.criteria) {
+            const names = new Set(this.criteria.map(c => c.name.trim().toLowerCase()));
+            const ids = new Set(this.criteria.map(c => c.id));
+            mats.forEach(m => (m.criteria || []).forEach((c) => {
+                const n = (c.name || '').trim();
+                if (!n || ids.has(c.id) || names.has(n.toLowerCase())) return;
+                this.criteria.push({ id: c.id, name: n });
+                ids.add(c.id);
+                names.add(n.toLowerCase());
+            }));
+            this._pughMergedFor = this.criteria;
+            this._pughSyncedNames = null;
+        }
+        const seen = this._pughSyncedNames || {};
+        // Names changed in a Pugh matrix since the last sync go to the list.
+        mats.forEach(m => (m.criteria || []).forEach((c) => {
+            const g = this.criteria.find(x => x.id === c.id);
+            if (g && seen[c.id] !== undefined && c.name !== seen[c.id] && (c.name || '').trim()) g.name = c.name.trim();
+        }));
+        mats.forEach((m) => {
+            const old = new Map((m.criteria || []).map(c => [c.id, c]));
+            m.criteria = this.criteria.map(g => Object.assign({}, old.get(g.id) || { weight: 1 }, { id: g.id, name: g.name }));
+        });
+        const names = {};
+        this.criteria.forEach((g) => { names[g.id] = g.name; });
+        this._pughSyncedNames = names;
+    };
+
     Object.assign(FlowchartViewer.prototype, methods);
     const proto = FlowchartViewer.prototype;
+
+    const origRenderPugh = proto.renderPughPanel;
+    if (origRenderPugh) {
+        proto.renderPughPanel = function (...args) {
+            try { this.syncPughCriteria(); } catch (e) { console.error('Pugh criteria:', e); }
+            return origRenderPugh.apply(this, args);
+        };
+    }
+    // Adding or deleting a criterion in the Pugh matrix changes the list.
+    const origAddPughCrit = proto.addPughCriteria;
+    if (origAddPughCrit) {
+        proto.addPughCriteria = function () {
+            if (!Array.isArray(this.criteria)) this.criteria = [];
+            this.criteria.push({ id: uid(), name: 'New criterion' });
+            this.renderPughPanel();
+            this.autosave();
+        };
+    }
+    const origDelPughCrit = proto.deletePughCriteria;
+    if (origDelPughCrit) {
+        proto.deletePughCriteria = function (criteriaId) {
+            this.criteria = (this.criteria || []).filter(c => c.id !== criteriaId);
+            return origDelPughCrit.call(this, criteriaId);
+        };
+    }
+    const origAddNodeToPugh = proto.addNodeToPugh;
+    if (origAddNodeToPugh) {
+        proto.addNodeToPugh = function (kind, ...rest) {
+            if (kind === 'criteria' && this.nodeBeingEdited) {
+                const name = (this.nodeBeingEdited.data.name || '').replace(/\s*\(Simplify\?\)\s*$/, '').trim();
+                if (!name) { this.showNotification('Name the node first.'); return; }
+                if ((this.criteria || []).some(c => c.name.toLowerCase() === name.toLowerCase())) { this.showNotification(`"${name}" is already a criterion.`); return; }
+                this.criteria.push({ id: uid(), name });
+                this.renderPughPanel();
+                this.autosave();
+                this.showNotification(`Added "${name}" to the criteria.`);
+                return;
+            }
+            return origAddNodeToPugh.call(this, kind, ...rest);
+        };
+    }
 
     // Every redraw: edits made in the view go back into the real tree first,
     // and the picked nodes / banner are shown again.

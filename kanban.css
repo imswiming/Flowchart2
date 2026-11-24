@@ -366,12 +366,6 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-add-row:hover { background: #f1f2f4; color: var(--kb-text); }
 .kb-board > .kb-add-row { grid-column: 1 / -1; position: sticky; left: 0; margin-top: 10px; }
 
-/* Grouped: the grey column strips run on, unbroken, behind the lane headings. */
-.kb-board.grouped .kb-col-head { border-radius: 6px 6px 0 0; margin-bottom: 0; }
-.kb-board.grouped .kb-cell { border-radius: 0; margin-bottom: 0; }
-.kb-board.grouped .kb-cell.last { border-radius: 0 0 6px 6px; }
-.kb-lane-fill { background: var(--kb-col); }
-.kb-lane-head { position: relative; z-index: 1; }
 
 /* One row: title, search and filters, then Group by / Insights and the board
    buttons at the right (the header and bar's own boxes step aside). */

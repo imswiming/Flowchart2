@@ -4011,3 +4011,23 @@ body.gantt-mode #flowchart {
 .gantt-dock-mini span { display: block; height: 100%; background: var(--c, #3cb4dc); }
 .gantt-dock-sub.done .gantt-dock-mini span { background: #2fcf8a; }
 .gantt-dock-sub-pct { flex: 0 0 auto; font-size: 11px; color: #b8c9da; font-variant-numeric: tabular-nums; }
+
+/* The node edit menu's fold toggle shows everywhere (its extra rows start
+   folded); the Pugh matrix opens from the side panel's tabs, not the menus. */
+#node-edit-fold-toggle-btn { display: inline-block !important; }
+@media (min-width: 601px) {
+    #top-pugh-matrix-btn, #pugh-matrix-btn { display: none !important; }
+}
+
+/* Notes toolbar: buttons for what the cursor is in are lit up. */
+.notes-toolbar-btn.active { background: var(--accent, #00a67e) !important; color: #fff !important; }
+.notes-toolbar-btn.active svg { stroke: #fff; }
+
+/* Search inside a note. */
+#notes-search-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--control-bg, #2a3140); border-bottom: 1px solid var(--border, #3a4252); }
+#notes-search-bar input { flex: 1 1 auto; min-width: 0; padding: 5px 8px; font-size: 14px; color: var(--text); background: var(--bg, #1d2430); border: 1px solid var(--border, #3a4252); border-radius: 6px; }
+#notes-search-bar input:focus { outline: none; border-color: var(--accent); }
+#notes-search-bar button { padding: 4px 9px; font-size: 13px; color: var(--text); background: transparent; border: 1px solid var(--border, #3a4252); border-radius: 6px; cursor: pointer; }
+#notes-search-bar .notes-search-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.ck .ck-find-result { background: rgba(255, 204, 0, 0.35); border-radius: 2px; }
+.ck .ck-find-result_selected { background: #ff8c1a; color: #111; }

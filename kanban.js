@@ -685,8 +685,6 @@
                 if (grouped) {
                     const n = laneCards.filter(c => cols.some(col => col.id === c.column)).length;
                     const collapsed = this._kbCollapsed && this._kbCollapsed.has(lane.key);
-                    // The grey strips carry on behind the lane's heading.
-                    cols.forEach((col, i) => board.append(el('div', { class: 'kb-lane-fill', style: `grid-column:${i + 1}; grid-row:${row};` })));
                     board.append(el('div', { class: 'kb-lane-head', style: `grid-column:1 / ${cols.length + 1}; grid-row:${row};`, onclick: () => {
                         if (!this._kbCollapsed) this._kbCollapsed = new Set();
                         if (collapsed) this._kbCollapsed.delete(lane.key); else this._kbCollapsed.add(lane.key);
@@ -711,8 +709,6 @@
                 });
                 row++;
             });
-            // The strips end with rounded corners under the last lane.
-            if (grouped) cellsByCol.forEach((list) => { if (list.length) list[list.length - 1].classList.add('last'); });
             return board;
         },
 
@@ -1231,6 +1227,47 @@
                 });
             });
             editor._kbDecorated = isMaster;
+        },
+
+        // The notes' Card button: the line the cursor is on becomes a new card in
+        // the board's leftmost column. In the Kanban notes the line goes (the
+        // card's heading takes its place); elsewhere it stays, marked 📋.
+        notesLineToCard() {
+            const { editor, scope, tabId } = this.getActiveNotesTarget();
+            if (!editor) return;
+            const pos = editor.model.document.selection.getFirstPosition();
+            const block = pos && pos.parent;
+            let text = '';
+            if (block) for (const ch of block.getChildren()) if (ch.is('$text')) text += ch.data;
+            text = kbNorm(text).replace(/^📋\s*/, '');
+            if (!text) { this.showNotification('Put the cursor on a line with some text first.'); return; }
+            if (!this.kanban) this.newKanbanBoard(TEMPLATES.basic.columns);
+            const first = this.kbRowCols(this.kbRows()[0].id)[0];
+            const inMaster0 = scope === 'chart' && tabId === this.kanban.notesTabId;
+            // From another note: labelled with the Title the line is under.
+            let labels = [];
+            if (!inMaster0 && block) {
+                let top = block;
+                while (top.parent && !top.parent.is('rootElement')) top = top.parent;
+                for (let b = top.previousSibling; b; b = b.previousSibling) {
+                    if (b.is('element', 'heading4')) {
+                        let t = '';
+                        for (const ch of b.getChildren()) if (ch.is('$text')) t += ch.data;
+                        const l = this.kbLabelByName(kbNorm(t), true);
+                        if (l) labels = [l.id];
+                        break;
+                    }
+                }
+            }
+            const card = this.kbNewCard({ title: text, column: first.id, labels });
+            this.kanban.cards.push(card);
+            const inMaster = scope === 'chart' && tabId === this.kanban.notesTabId;
+            editor.model.change((writer) => {
+                if (inMaster) writer.remove(block);
+                else writer.insertText('📋 ', writer.createPositionAt(block, 0));
+            });
+            this.kanbanChanged();
+            this.showNotification(`Added card "${text}" to "${first.name}".`);
         },
 
         kanbanNotesOpen() {

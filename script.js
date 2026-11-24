@@ -591,6 +591,8 @@ const NOTES_ICONS = (() => {
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
         clearDone: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
+        search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
+        card: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h5"/><circle cx="16" cy="16" r="1.4"/>'),
         subtitle: svg('<path d="M4 7V5h10v2"/><path d="M9 5v12"/><path d="M7 17h4"/><path d="M15 12h6M15 16h6M15 20h4"/>'),
         highlight: svg('<path d="M9 11l7.5-7.5 4 4L13 15z"/><path d="M9 11l-5 5v4h4l5-5"/><path d="M14.5 5.5l4 4"/>'),
         foldAll: svg('<path d="M7 20l5-5 5 5"/><path d="M7 4l5 5 5-5"/>'),
@@ -898,6 +900,7 @@ class FlowchartViewer {
             }
         });
         const flushNotes = () => {
+            if (this.flushNotesEditors()) this._pendingNotesSave = true;
             if (this._pendingNotesSave) {
                 this._pendingNotesSave = false;
                 this.autosave();
@@ -925,6 +928,7 @@ class FlowchartViewer {
         // keystroke, not just on blur), so this just has to persist it one more
         // time on the way out, regardless of whether a blur got there first.
         window.addEventListener('beforeunload', () => {
+            if (this.flushNotesEditors()) this._pendingNotesSave = true;
             if (this._pendingNotesSave) this.autosave();
         });
 
@@ -1399,7 +1403,16 @@ class FlowchartViewer {
     }
 
     // Save current flowchart to the list
+    // Notes typed in the last moment, not yet taken as HTML (see the editors'
+    // change handler), are taken now.
+    flushNotesEditors() {
+        let any = false;
+        try { (this.getAllNotesEditors ? this.getAllNotesEditors() : []).forEach((ed) => { if (ed && ed._flushNotes && ed._flushNotes()) any = true; }); } catch (e) { /* nothing to take */ }
+        return any;
+    }
+
     saveCurrentFlowchart() {
+        this.flushNotesEditors();
         // Recover from null index if we have a list
         if (this.currentSlotIndex === null) {
             if (this.flowchartList.length > 0) {
@@ -3123,7 +3136,8 @@ class FlowchartViewer {
                     const nodeMap = new Map();
                     d3.hierarchy(this.rootData).each(d => nodeMap.set(d.data.name, d.data));
                     
-                    this.customConnections = parsed.customConnections
+                    // Links between nodes of different trees were taken out: none are loaded.
+                    this.customConnections = [] || parsed.customConnections
                         .map(conn => {
                             const source = nodeMap.get(conn.source);
                             const target = nodeMap.get(conn.target);
@@ -4766,6 +4780,10 @@ class FlowchartViewer {
     // button itself), so the fold state carries over rather than resetting
     // every time a node is selected.
     applyNodeEditMenuFoldState() {
+        // Folded unless unfolded before (remembered on this device).
+        if (this._nodeEditMenuFolded === undefined) {
+            try { this._nodeEditMenuFolded = localStorage.getItem('node-edit-menu-folded') !== '0'; } catch (e) { this._nodeEditMenuFolded = true; }
+        }
         const folded = !!this._nodeEditMenuFolded;
         const pughAddRow = document.getElementById('node-pugh-add-row');
         const imageActionsRow = document.getElementById('node-image-actions-row');
@@ -5044,7 +5062,8 @@ class FlowchartViewer {
             addMorphBtn.onclick = () => this.addNodeToMorph();
 
             pughAddRow.appendChild(addSolutionBtn);
-            pughAddRow.appendChild(addCriteriaBtn);
+            // No "Add Criteria": the Pugh matrix's criteria are the flowchart's
+            // criteria list (criteria.js), the same one criteria mode uses.
             pughAddRow.appendChild(addMorphBtn);
             this.nodeEditPopup.insertBefore(pughAddRow, colorAndMoveWrap.nextSibling);
 
@@ -5059,7 +5078,8 @@ class FlowchartViewer {
             imageActionsRow.style.marginTop = '8px';
 
             const removeImageBtn = document.createElement('button');
-            removeImageBtn.textContent = '🗑️ Remove Image';
+            removeImageBtn.textContent = '🖼️ Paste image';
+            removeImageBtn.title = 'Put the picture on the clipboard on this node';
             removeImageBtn.type = 'button';
             removeImageBtn.style.flex = '1';
             removeImageBtn.style.background = 'var(--control-bg)';
@@ -5069,19 +5089,22 @@ class FlowchartViewer {
             removeImageBtn.style.padding = '6px 10px';
             removeImageBtn.style.cursor = 'pointer';
             removeImageBtn.onmousedown = (e) => e.preventDefault();
-            removeImageBtn.onclick = () => this.removeNodeImage();
+            removeImageBtn.onclick = () => { if (this.nodeBeingEdited) this.captureNodePhotoFromClipboard(this.nodeBeingEdited); };
 
             imageActionsRow.appendChild(removeImageBtn);
 
             // Copy this node and everything under it, and paste a copied branch under
-            // another node - including one copied from a different flowchart.
-            imageActionsRow.style.flexWrap = 'wrap';
+            // another node - including one copied from a different flowchart. One
+            // line, buttons the same height as the row above.
+            imageActionsRow.style.flexWrap = 'nowrap';
+            removeImageBtn.style.whiteSpace = 'nowrap';
             const makeBranchBtn = (label, title, onClick) => {
                 const b = document.createElement('button');
                 b.type = 'button';
                 b.textContent = label;
                 b.title = title;
-                b.style.flex = '1 1 auto';
+                b.style.flex = '1';
+                b.style.whiteSpace = 'nowrap';
                 b.style.background = 'var(--control-bg)';
                 b.style.color = 'var(--text)';
                 b.style.border = '1px solid var(--border)';
@@ -5113,6 +5136,7 @@ class FlowchartViewer {
             foldToggleBtn.onmousedown = (e) => e.preventDefault();
             foldToggleBtn.onclick = () => {
                 this._nodeEditMenuFolded = !this._nodeEditMenuFolded;
+                try { localStorage.setItem('node-edit-menu-folded', this._nodeEditMenuFolded ? '1' : '0'); } catch (e) { /* not remembered */ }
                 this.applyNodeEditMenuFoldState();
             };
             colorBtns.appendChild(foldToggleBtn);
@@ -7329,11 +7353,14 @@ class FlowchartViewer {
 
         row.appendChild(makeBtn('drawing', 'Insert drawing', 'notes-insert-drawing-btn', () => this.startNewNotesDrawing()));
 
-        row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', '', () => this.toggleNotesChecklist()));
+        row.appendChild(makeBtn('search', 'Search this note', 'notes-search-btn', () => this.openNotesSearch()));
+        row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', 'nt-checklist', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
-        row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', '', () => this.toggleNotesTitle()));
-        row.appendChild(makeBtn('subtitle', 'Subtitle - turn the selected (or current) lines into a subheading, or back to normal text', '', () => this.toggleNotesSubtitle()));
-        row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', '', () => this.toggleNotesHighlight()));
+        row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', 'nt-title', () => this.toggleNotesTitle()));
+        row.appendChild(makeBtn('subtitle', 'Subtitle - turn the selected (or current) lines into a subheading, or back to normal text', 'nt-subtitle', () => this.toggleNotesSubtitle()));
+        row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', 'nt-highlight', () => this.toggleNotesHighlight()));
+        // Turns the current line into a Kanban card (kanban.js), in the board's leftmost column.
+        row.appendChild(makeBtn('card', 'Card - turn this line into a Kanban card (leftmost column)', 'notes-card-btn', () => { if (typeof this.notesLineToCard === 'function') this.notesLineToCard(); }));
 
         // Always shown. One button: folds every title, or - once they're all
         // folded - unfolds them; its icon shows which it will do (see
@@ -7554,7 +7581,7 @@ class FlowchartViewer {
             if (entry.dead) return null;
             return DecoupledEditor.create(host, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()].filter(Boolean),
             noteMediaMarkerApp: this,
             // Only paragraph/heading4 ("Title") are offered - matches the old
             // Tiptap config (StarterKit's heading restricted to level 4 only).
@@ -7638,19 +7665,38 @@ class FlowchartViewer {
                 }
             });
 
+            // The note's HTML is taken a moment after typing pauses, not on every
+            // key: turning a long note into HTML each keystroke is what made
+            // typing lag on phones. Saving takes it straight away (flushNotesEditors).
+            let dirtyTimer = null;
+            const flush = () => {
+                clearTimeout(dirtyTimer);
+                dirtyTimer = null;
+                if (!entry.dirty || editor.state === 'destroyed') return false;
+                entry.dirty = false;
+                const t = this.getNotesTab(entry.scope, entry.tabId);
+                if (!t) return false;
+                const html = editor.getData();
+                t.content = html;
+                entry.lastContent = html;
+                return true;
+            };
+            editor._flushNotes = flush;
             editor.model.document.on('change:data', () => {
                 // A refresh pushing the stored content into this editor (see
                 // syncEmbeddedEntry) isn't an edit.
                 if (entry.applying) return;
-                const t = this.getNotesTab(entry.scope, entry.tabId);
-                if (!t) return;
-                const html = editor.getData();
-                t.content = html;
-                entry.lastContent = html;
-                if (!this._applyingRemoteGlobalNotes) {
-                    this._pendingNotesSave = true;
-                    this.scheduleNotesAutosave();
-                }
+                if (!this.getNotesTab(entry.scope, entry.tabId)) return;
+                entry.dirty = true;
+                const remote = !!this._applyingRemoteGlobalNotes;
+                clearTimeout(dirtyTimer);
+                dirtyTimer = setTimeout(() => {
+                    if (!flush()) return;
+                    if (!remote && !this._applyingRemoteGlobalNotes) {
+                        this._pendingNotesSave = true;
+                        this.scheduleNotesAutosave();
+                    }
+                }, 250);
             });
             editor._noteTabRef = { scope: entry.scope, tabId: entry.tabId };
             this.wireNotesEditorFeedback(editor, true);
@@ -7749,7 +7795,9 @@ class FlowchartViewer {
                         });
                     });
                 };
-                editor.model.document.on('change:data', refreshTimes, { priority: 'low' });
+                // A moment after typing pauses (it goes through every line).
+                let timesTimer = null;
+                editor.model.document.on('change:data', () => { clearTimeout(timesTimer); timesTimer = setTimeout(refreshTimes, 200); }, { priority: 'low' });
                 editor.once('ready', refreshTimes);
                 editor._noteRefreshTimes = refreshTimes;
 
@@ -8339,6 +8387,78 @@ class FlowchartViewer {
     // The Subtitle button: the selected (or current) lines become subheadings
     // (heading5), or - when they all already are - normal text again. Like a
     // Title, a subheading is a top-level block, so list lines leave their list.
+    // The toolbar buttons for what the cursor is in (a checklist line, a Title,
+    // a Subheading, highlighted text) are lit up.
+    updateNotesToolbarState(editor) {
+        const active = this.getActiveNotesTarget().editor;
+        if (!editor || editor !== active || editor.state === 'destroyed') return;
+        const blocks = Array.from(editor.model.document.selection.getSelectedBlocks());
+        const all = test => blocks.length > 0 && blocks.every(test);
+        const hl = editor.commands.get('highlight');
+        const states = {
+            'nt-checklist': all(b => b.getAttribute('listType') === 'todo'),
+            'nt-title': all(b => b.is('element', 'heading4')),
+            'nt-subtitle': all(b => b.is('element', 'heading5')),
+            'nt-highlight': !!(hl && hl.value)
+        };
+        Object.entries(states).forEach(([cls, on]) => {
+            document.querySelectorAll('.notes-toolbar-btn.' + cls).forEach(b => b.classList.toggle('active', on));
+        });
+    }
+
+    // ----- Search inside the open note -----
+    // A small bar under the toolbar: matches are marked in the text; Enter /
+    // ↓ goes to the next, Shift+Enter / ↑ the previous, Esc closes.
+    openNotesSearch() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor || !editor.commands.get('find')) { this.showNotification('Search needs the note open.'); return; }
+        let bar = document.getElementById('notes-search-bar');
+        if (bar) { bar.querySelector('input').focus(); return; }
+        bar = document.createElement('div');
+        bar.id = 'notes-search-bar';
+        const input = document.createElement('input');
+        input.type = 'search';
+        input.placeholder = 'Search this note';
+        const count = document.createElement('span');
+        count.className = 'notes-search-count';
+        const mk = (text, title, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = text; b.title = title; b.addEventListener('mousedown', e => e.preventDefault()); b.addEventListener('click', fn); return b; };
+        const state = () => { try { return editor.plugins.get('FindAndReplaceEditing').state; } catch (e) { return null; } };
+        const show = () => {
+            const st = state();
+            const n = st ? st.results.length : 0;
+            const cur = st && st.highlightedResult ? Array.from(st.results).indexOf(st.highlightedResult) + 1 : 0;
+            count.textContent = input.value ? (n ? `${cur || 1} / ${n}` : 'No matches') : '';
+            const res = st && st.highlightedResult;
+            if (res && res.marker) {
+                const range = res.marker.getRange();
+                const viewRange = editor.editing.mapper.toViewRange(range);
+                const dom = editor.editing.view.domConverter.viewRangeToDom(viewRange);
+                const el = dom && dom.startContainer && (dom.startContainer.nodeType === 1 ? dom.startContainer : dom.startContainer.parentElement);
+                if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'center' }); if (this.keepNotesHardLeft) this.keepNotesHardLeft(el); }
+            }
+        };
+        let t = null;
+        input.addEventListener('input', () => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                if (input.value) editor.execute('find', input.value, { matchCase: false, wholeWords: false });
+                else { const st = state(); if (st) st.clear(editor.model); }
+                show();
+            }, 150);
+        });
+        const step = (dir) => { if (!input.value) return; editor.execute(dir > 0 ? 'findNext' : 'findPrevious'); show(); };
+        const close = () => { const st = state(); if (st) st.clear(editor.model); bar.remove(); };
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+            if (e.key === 'Escape') { e.preventDefault(); close(); }
+        });
+        bar.append(input, count, mk('↑', 'Previous (Shift+Enter)', () => step(-1)), mk('↓', 'Next (Enter)', () => step(1)), mk('✕', 'Close (Esc)', close));
+        const toolbar = document.querySelector('.notes-toolbar-row');
+        if (toolbar && toolbar.parentNode) toolbar.parentNode.insertBefore(bar, toolbar.nextSibling);
+        else document.body.append(bar);
+        setTimeout(() => input.focus(), 0);
+    }
+
     toggleNotesSubtitle() {
         const { editor } = this.getActiveNotesTarget();
         if (!editor) return;
@@ -8886,7 +9006,9 @@ class FlowchartViewer {
                         }
                     });
                 };
-                editor.model.document.on('change:data', applyFolds, { priority: 'low' });
+                // Folds re-applied a moment after a change (it goes through every line).
+                let foldTimer = null;
+                editor.model.document.on('change:data', () => { clearTimeout(foldTimer); foldTimer = setTimeout(applyFolds, 80); }, { priority: 'low' });
 
                 // The Title the cursor is in (on it, or in the text under it) gets
                 // an orange arrow - a class on its on-screen element only, set
@@ -8910,6 +9032,11 @@ class FlowchartViewer {
                     activeTitleView = viewEl;
                 };
                 editor.model.document.selection.on('change:range', markActiveTitle);
+                const app0 = editor.notesApp || window.__flowchartApp;
+                const lightUp = () => { const a = editor.notesApp || app0 || window.__flowchartApp; if (a && typeof a.updateNotesToolbarState === 'function') a.updateNotesToolbarState(editor); };
+                editor.model.document.selection.on('change:range', lightUp);
+                editor.model.document.on('change:data', lightUp, { priority: 'lowest' });
+                editor.ui.focusTracker.on('change:isFocused', lightUp);
                 editor.model.document.on('change:data', markActiveTitle, { priority: 'lowest' });
 
                 // Other parts of the app can mark up a note's blocks on screen
@@ -8920,7 +9047,8 @@ class FlowchartViewer {
                         try { app.decorateNotesEditor(editor); } catch (e) { /* drawn next change */ }
                     }
                 };
-                editor.model.document.on('change:data', decorate, { priority: 'lowest' });
+                let decorateTimer = null;
+                editor.model.document.on('change:data', () => { clearTimeout(decorateTimer); decorateTimer = setTimeout(decorate, 150); }, { priority: 'lowest' });
                 editor.once('ready', decorate);
                 editor._noteDecorate = decorate;
 
@@ -10396,7 +10524,7 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()],
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()].filter(Boolean),
             noteMediaMarkerApp: this,
             heading: {
                 options: [
@@ -13930,7 +14058,7 @@ class FlowchartViewer {
                 fontSize: 22
             });
         }
-        deleteRowBtns.push({ label: 'C', activate: activateMakeConnection });
+        // (No 'C': linking nodes across trees was taken out.)
         deleteRowBtns.push({ label: 'M', activate: activateMove });
         if (targetDatum.parent) {
             deleteRowBtns.push({ label: '✕', activate: activateDelete, danger: true, fontSize: 22 });
