@@ -146,6 +146,8 @@
                     blocked: !!c.blocked,
                     blockReason: typeof c.blockReason === 'string' ? c.blockReason : '',
                     checklist: Array.isArray(c.checklist) ? c.checklist.filter(i => i && typeof i.id === 'string').map(i => ({ id: i.id, text: String(i.text || ''), done: !!i.done })) : [],
+                    // The card's own notes, per column it has been in (only those with text).
+                    notes: (c.notes && typeof c.notes === 'object') ? Object.fromEntries(Object.entries(c.notes).filter(([kk, v]) => colIds.has(kk) && typeof v === 'string' && v)) : undefined,
                     created: ts(c.created) || now(), started: ts(c.started), finished: ts(c.finished), moved: ts(c.moved) || ts(c.created) || now()
                 };
             });
@@ -158,7 +160,12 @@
                 nextNum: next,
                 groupBy: ['assignee', 'label'].includes(raw.groupBy) ? raw.groupBy : 'none',
                 notesTabId: typeof raw.notesTabId === 'string' ? raw.notesTabId : null,
-                noteTitles: (raw.noteTitles && typeof raw.noteTitles === 'object') ? Object.assign({}, raw.noteTitles) : {}
+                noteTitles: (raw.noteTitles && typeof raw.noteTitles === 'object') ? Object.assign({}, raw.noteTitles) : {},
+                // Which column each card's text in the Kanban notes belongs to (the
+                // one it was in when the notes were last written).
+                noteCols: (raw.noteCols && typeof raw.noteCols === 'object') ? Object.assign({}, raw.noteCols) : {},
+                // The hidden notes tab showing one card's own notes.
+                cardTabId: typeof raw.cardTabId === 'string' ? raw.cardTabId : null
             };
         },
 
@@ -199,9 +206,12 @@
         // `fromNotes`: the change came from editing the notes, which are not
         // rewritten while you type in them.
         kanbanChanged(fromNotes) {
+            this.pullKbCardTabEdits();
             this.recordKanbanHistory();
             this.renderKanban();
             if (!fromNotes) this.syncKanbanNotes();
+            const shownCard = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+            if (shownCard && !fromNotes) this.writeKbCardTab(shownCard);
             this.syncKanbanFlow();
             this.autosave();
         },
@@ -229,7 +239,7 @@
         restoreKanbanSnapshot(snap) {
             const data = JSON.parse(snap);
             const old = this.kanban || {};
-            this.kanban = data ? this.sanitizeKanban(Object.assign(data, { groupBy: old.groupBy, notesTabId: old.notesTabId, noteTitles: old.noteTitles })) : null;
+            this.kanban = data ? this.sanitizeKanban(Object.assign(data, { groupBy: old.groupBy, notesTabId: old.notesTabId, noteTitles: old.noteTitles, noteCols: old.noteCols, cardTabId: old.cardTabId })) : null;
             if (this._kbSelected && !this.kbCard(this._kbSelected)) this._kbSelected = null;
             this._kbLastSnap = snap;
             const pop = document.getElementById('kanban-popup');
@@ -258,7 +268,8 @@
                 columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), name, wip: wip || 0, policy: policy || '' })),
                 cards: [], labels: [], prefix: 'KB', nextNum: 1, groupBy: 'none',
                 // The notes tab stays; what was written under old cards goes under "Removed".
-                notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {}
+                notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {},
+                noteCols: {}, cardTabId: old.cardTabId || null
             };
             return this.kanban;
         },
@@ -487,7 +498,7 @@
                 el('div', { class: 'kb-head-actions' },
                     btn('↩', 'Undo (Ctrl+Z)', () => this.undoKanban(), 'kb-undo' + (canUndo ? '' : ' disabled')),
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
-                    this.kanban ? btn('📝', 'Open the Kanban notes (a title per column and card)', () => this.openKanbanNotes(this._kbSelected)) : null,
+                    this.kanban ? btn('📝', 'Notes: the selected card\'s own notes, or the Kanban notes (a title per column and card)', () => (this._kbSelected ? this.openKbCardNotes(this._kbSelected, { focus: true }) : this.openKanbanNotes(null))) : null,
                     this.kanban ? btn('🌳', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
@@ -852,7 +863,7 @@
                     } else if (ev.type === 'pointerup' && !(touch && armed)) {
                         // A click: selects; a second click on the selected card opens it.
                         if (this._kbSelected === card.id) this.openKanbanCard(card.id);
-                        else { this._kbSelected = card.id; this.renderKanbanBoard(this.kbScrollState()); this.focusKanbanNoteTitle(card.id); }
+                        else { this._kbSelected = card.id; this.renderKanbanBoard(this.kbScrollState()); if (this.notesPanelShowing()) this.openKbCardNotes(card.id); }
                     }
                 };
                 const cleanup = () => {
@@ -941,19 +952,36 @@
             preamble.forEach(b => out.push(html(b)));
             const titles = {};
             const live = new Set();
-            const write = (id, tag, label, done, blankLine) => {
+            const write = (id, tag, label, done, blankLine, body) => {
                 live.add(id);
                 titles[id] = label;
                 const sec = sections.get(id);
                 out.push(`<${tag}${sec && sec.folded ? ' data-folded="true"' : ''}${done ? ' data-done="true"' : ''}>${escH(label)}</${tag}>`);
-                if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(html(b)));
+                if (body !== undefined) out.push(body || '<p>&nbsp;</p>');
+                else if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(html(b)));
                 else if (blankLine) out.push('<p>&nbsp;</p>');
             };
+            if (!k.noteCols) k.noteCols = {};
+            const cardWins = this._kbCardWins || new Set();
             k.columns.forEach((col) => {
                 write(`col:${col.id}`, 'h4', kbNorm(col.name), false, false);
                 this.kbCards().filter(c => c.column === col.id).forEach((card) => {
                     const done = this.kbIsDone(card);
-                    write(card.id, 'h5', this.kbNoteLabel(card), done, true);
+                    // What was written under the card goes to its notes for the
+                    // column it was in then; what's shown is its notes for the
+                    // column it's in now (a card moved back finds its old text).
+                    const sec = sections.get(card.id);
+                    if (sec && !cardWins.has(card.id)) {
+                        const prev = k.noteCols[card.id] || card.column;
+                        const text = hasContent(sec.blocks) ? sec.blocks.map(html).join('') : '';
+                        if (text || (card.notes && card.notes[prev])) {
+                            if (!card.notes) card.notes = {};
+                            if (text) card.notes[prev] = text; else delete card.notes[prev];
+                        }
+                    }
+                    if (card.notes && !Object.keys(card.notes).length) delete card.notes;
+                    k.noteCols[card.id] = card.column;
+                    write(card.id, 'h5', this.kbNoteLabel(card), done, true, (card.notes && card.notes[card.column]) || '');
                     card.checklist.forEach((item) => {
                         if (!item.text.trim()) return;
                         write(`ck:${item.id}`, 'h6', kbNorm(`${item.done ? '✓ ' : ''}${item.text}`), item.done, false);
@@ -967,12 +995,126 @@
             });
             const result = out.join('');
             k.noteTitles = titles;
+            Object.keys(k.noteCols).forEach((id) => { if (!this.kbCard(id)) delete k.noteCols[id]; });
             if (result === tab.content) return false;
             tab.content = result;
             this._kbNotesSeen = result;
             if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
             if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, result);
             return true;
+        },
+
+        // ----- A card's own notes (a hidden tab, one card at a time) -----
+        // Every column as a Title, with the card's notes for that column under
+        // it; the cursor goes to the column the card is in. Edits go back into
+        // the card (and its current column's text into the Kanban notes).
+        kbCardTab(create) {
+            const k = this.kanban;
+            if (!k) return null;
+            let tab = k.cardTabId ? (this.notesTabs || []).find(x => x.id === k.cardTabId) : null;
+            if (!tab && create && typeof this.getDefaultNotesTab === 'function') {
+                tab = this.getDefaultNotesTab('Card notes');
+                this.notesTabs.push(tab);
+                k.cardTabId = tab.id;
+            }
+            return tab;
+        },
+
+        isHiddenNotesTab(tab) {
+            return !!(tab && this.kanban && tab.id === this.kanban.cardTabId);
+        },
+
+        writeKbCardTab(card) {
+            const tab = this.kbCardTab(true);
+            if (!tab || !card) return null;
+            const escH = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            const parts = [`<p><strong>${escH(card.title)}</strong> - notes for each column</p>`];
+            this.kanban.columns.forEach((col) => {
+                parts.push(`<h4>${escH(col.name)}</h4>`);
+                parts.push((card.notes && card.notes[col.id]) || '<p>&nbsp;</p>');
+            });
+            const content = parts.join('');
+            this._kbCardTabFor = card.id;
+            if (tab.content !== content) {
+                tab.content = content;
+                if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
+                if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, content);
+            }
+            this._kbCardTabSeen = content;
+            return tab;
+        },
+
+        // Text typed in a card's tab goes back into the card.
+        pullKbCardTabEdits() {
+            const tab = this.kbCardTab(false);
+            const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+            if (!tab || !card || tab.content === this._kbCardTabSeen) return;
+            this._kbCardTabSeen = tab.content;
+            const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
+            const cols = this.kanban.columns;
+            let i = -1;
+            const bodies = cols.map(() => []);
+            Array.from(doc.body.childNodes).forEach((n) => {
+                if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
+                if (i >= 0 && i < cols.length && (n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) bodies[i].push(n);
+            });
+            const hasText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
+            let changed = false;
+            cols.forEach((col, j) => {
+                const text = hasText(bodies[j]) ? bodies[j].map(b => b.outerHTML || `<p>${b.textContent}</p>`).join('') : '';
+                const before = (card.notes && card.notes[col.id]) || '';
+                if (text === before) return;
+                if (!card.notes) card.notes = {};
+                if (text) card.notes[col.id] = text; else delete card.notes[col.id];
+                changed = true;
+            });
+            if (!changed) return;
+            if (card.notes && !Object.keys(card.notes).length) delete card.notes;
+            // Its current column's text shows in the Kanban notes too.
+            this._kbCardWins = new Set([card.id]);
+            try { this.syncKanbanNotes(); } finally { this._kbCardWins = null; }
+            this.autosave();
+        },
+
+        notesPanelShowing() {
+            const panel = document.getElementById('reflection-panel');
+            return this._leftPanelMode === 'notes' && this._notesTabActive && !!panel && panel.offsetParent !== null && getComputedStyle(panel).display !== 'none';
+        },
+
+        openKbCardNotes(cardId, opts) {
+            const card = this.kbCard(cardId);
+            if (!card) return;
+            this.pullKbCardTabEdits();
+            this.syncKanbanNotes();
+            const tab = this.writeKbCardTab(card);
+            if (!tab) return;
+            this.autosave();
+            this._activeNotesScope = 'chart';
+            this.setActiveNotesTabId('chart', tab.id);
+            if (!this.notesPanelShowing()) this.openNotesPanel();
+            if (typeof this.renderNotesPanel === 'function') this.renderNotesPanel();
+            const at = this.kbColIndex(card.column);
+            setTimeout(() => {
+                this.showEmbeddedEditor('chart', tab.id);
+                this.renderNotesTabBar();
+                const tryJump = (left) => {
+                    const editor = this.notesEditor;
+                    const ok = editor && editor._noteTabRef && editor._noteTabRef.tabId === tab.id;
+                    if (!ok) { if (left > 0) setTimeout(() => tryJump(left - 1), 150); return; }
+                    const heads = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+                    const target = heads[at];
+                    if (!target) return;
+                    if (typeof this.jumpToNotesTitle === 'function') this.jumpToNotesTitle(editor, target);
+                    const next = target.nextSibling;
+                    if (next && next.is('element') && !/^heading[456]$/.test(next.name)) {
+                        try { editor.model.change(w => w.setSelection(w.createPositionAt(next, 0))); } catch (e) { /* not a text block */ }
+                    }
+                    if (opts && opts.focus && !window.matchMedia('(pointer: coarse)').matches) {
+                        try { editor.editing.view.focus(); } catch (e) { /* not on screen */ }
+                    }
+                };
+                tryJump(15);
+            }, 60);
         },
 
         kanbanNotesOpen() {
@@ -1642,6 +1784,10 @@
                 clearTimeout(this._kbNotesPullTimer);
                 this._kbNotesPullTimer = setTimeout(() => this.pullKanbanNotesEdits(), 700);
             }
+            if (this.kanban && this.kanban.cardTabId && this._kbCardTabFor) {
+                clearTimeout(this._kbCardPullTimer);
+                this._kbCardPullTimer = setTimeout(() => this.pullKbCardTabEdits(), 700);
+            }
             return r;
         };
     }
@@ -1657,7 +1803,14 @@
                 let n = d && d.data;
                 let id = n && n._kanban;
                 if (id && id.startsWith('ck:') && d.parent && d.parent.data) id = d.parent.data._kanban;
-                if (id && id !== 'root' && this.kanban && this.kanbanNotesOpen()) this.focusKanbanNoteTitle(id);
+                if (id && id !== 'root' && this.kanban && this.notesPanelShowing()) {
+                    if (id.startsWith('col:')) {
+                        if (this.kanbanNotesOpen()) this.focusKanbanNoteTitle(id);
+                        else { this.openKanbanNotes(null); setTimeout(() => this.focusKanbanNoteTitle(id, false), 400); }
+                    } else if (this.kbCard(id)) {
+                        this.openKbCardNotes(id);
+                    }
+                }
             } catch (e) { /* the notes aren't ready - nothing to jump to */ }
             return r;
         };

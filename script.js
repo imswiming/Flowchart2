@@ -7212,6 +7212,8 @@ class FlowchartViewer {
         }
 
         entries.forEach(({ scope, tab, pinned }) => {
+            // A card's own notes (kanban.js) are a hidden tab: never in the bar.
+            if (typeof this.isHiddenNotesTab === 'function' && this.isHiddenNotesTab(tab)) return;
             const isActive = `${scope}:${tab.id}` === activeKey;
             const tabEl = document.createElement('div');
             tabEl.className = 'matrix-tab' + (isActive ? ' active' : '') + (pinned ? '' : ' notes-tab-temp');
