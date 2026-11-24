@@ -483,6 +483,8 @@
         // Brings one shared flowchart up to date with the server, merging in
         // whatever was changed on this device since the last sync.
         async pullShareItem(item, conn) {
+            // Changes waiting to be saved go first, so a pull doesn't merge over them.
+            if (typeof this.autosaveNow === 'function') this.autosaveNow();
             const got = await this.sbRest(conn, `${this.CLOUD_TABLE}?id=eq.${enc(rowIdOf(item.share.id))}&select=updated_at,data`);
             const row = got && got[0];
             if (!row || !row.data || typeof row.data.data !== 'string') return;

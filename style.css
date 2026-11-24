@@ -4075,3 +4075,6 @@ body.gantt-mode #flowchart {
 
 /* The share icon's dark purple people, lightened so they stand out. */
 #top-share-btn, #share-btn, #hamburger-share { filter: brightness(1.9) saturate(0.55); }
+
+/* Taps act straight away (no wait for a possible double-tap zoom). */
+html { touch-action: manipulation; }

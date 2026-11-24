@@ -901,6 +901,7 @@ class FlowchartViewer {
             }
         });
         const flushNotes = () => {
+            this.autosaveNow();
             if (this.flushNotesEditors()) this._pendingNotesSave = true;
             if (this._pendingNotesSave) {
                 this._pendingNotesSave = false;
@@ -929,6 +930,7 @@ class FlowchartViewer {
         // keystroke, not just on blur), so this just has to persist it one more
         // time on the way out, regardless of whether a blur got there first.
         window.addEventListener('beforeunload', () => {
+            this.autosaveNow();
             if (this.flushNotesEditors()) this._pendingNotesSave = true;
             if (this._pendingNotesSave) this.autosave();
         });
@@ -1345,10 +1347,18 @@ class FlowchartViewer {
         const seq = this._saveSeq;
         if (!this._imageDbKnown) this._imageDbKnown = new Set();
         const images = {};
+        // Pictures are taken out of each flowchart's text before it's stored -
+        // worked out again only for flowcharts whose text has changed.
+        if (!this._stripCache) this._stripCache = new WeakMap();
         const slim = this.flowchartList.map((item) => {
-            const { stripped, imageMap } = this.stripImagesFromDataString(item.data || '');
-            Object.assign(images, imageMap);
-            return Object.assign({}, item, { data: stripped });
+            const data = item.data || '';
+            let hit = this._stripCache.get(item);
+            if (!hit || hit.data !== data) {
+                hit = { data, ...this.stripImagesFromDataString(data) };
+                this._stripCache.set(item, hit);
+            }
+            Object.assign(images, hit.imageMap);
+            return Object.assign({}, item, { data: hit.stripped });
         });
         if (!this._imageCache) this._imageCache = {};
         Object.assign(this._imageCache, images);
@@ -1438,11 +1448,29 @@ class FlowchartViewer {
         this.saveActiveFlowchartIndex();
     }
 
-    // Autosave wrapper - call after any edit
+    // Autosave wrapper - call after any edit. The save itself runs a moment
+    // later (and once for a burst of changes): saving goes through every
+    // flowchart and writes them all to storage, which on a big account froze
+    // each click for a few hundred milliseconds before anything showed.
+    // Leaving the page, opening another flowchart or syncing saves first
+    // (autosaveNow).
     autosave() {
+        this._autosaveDue = true;
+        if (this._applyingRemote) this._autosaveRemote = true;
+        clearTimeout(this._autosaveTimer);
+        this._autosaveTimer = setTimeout(() => this.autosaveNow(), 250);
+    }
+
+    autosaveNow() {
+        clearTimeout(this._autosaveTimer);
+        this._autosaveTimer = null;
+        if (!this._autosaveDue) return;
+        this._autosaveDue = false;
+        const remote = this._autosaveRemote || this._applyingRemote;
+        this._autosaveRemote = false;
         this.saveCurrentFlowchart();
         this.saveGlobalNotesTabs();
-        if (!this._applyingRemote) this.scheduleCloudPush();
+        if (!remote) this.scheduleCloudPush();
     }
 
     // Fast, non-cryptographic hash (djb2) used only to de-duplicate identical
@@ -2049,6 +2077,7 @@ class FlowchartViewer {
     }
 
     async cloudPush() {
+        this.autosaveNow();
         if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return false;
         if (this._cloudSyncInFlight) {
             this._cloudPushTimer = setTimeout(() => this.cloudPush(), 1500);
@@ -2171,6 +2200,7 @@ class FlowchartViewer {
     }
 
     async cloudPull() {
+        this.autosaveNow();
         if (!this.cloudApiKey || !this.cloudProjectUrl || !this.cloudSyncId) return false;
         if (this._cloudSyncInFlight) return false;
         if (!(await this.ensureCloudToken())) return false;
@@ -3029,6 +3059,7 @@ class FlowchartViewer {
     
     loadFlowchartFromList(index, opts = {}) {
         if (index >= this.flowchartList.length) return;
+        if (!this._applyingRemote) this.autosaveNow();
 
         // A flowchart pulled from cloud sync only has the *opened* slot's images
         // actually fetched (see cloudPull) - if this is some other slot that still
@@ -3896,26 +3927,21 @@ class FlowchartViewer {
     // Width of a piece of node text at the node font. Every render measures every word
     // of every node, so this keeps one hidden <svg> text element around (instead of
     // building and removing one per measurement) and remembers what it has measured.
+    // A node text's width, measured on an off-screen canvas in the nodes' own
+    // font. (It used to be measured in an element on the page, which made the
+    // browser lay out the whole page - notes and all - for every new piece of
+    // text: seconds on a big chart with a long note open.)
     measureNodeTextWidth(text) {
         if (!this._textWidthCache) this._textWidthCache = new Map();
         const cached = this._textWidthCache.get(text);
         if (cached !== undefined) return cached;
-        if (!this._measureTextEl || !this._measureTextEl.isConnected) {
-            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-            svg.setAttribute('style', 'position:absolute;left:-9999px;top:-9999px;pointer-events:none');
-            svg.setAttribute('aria-hidden', 'true');
-            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            t.setAttribute('font-size', '13');
+        if (!this._measureCtx) {
+            this._measureCtx = document.createElement('canvas').getContext('2d');
             // Same font as the nodes draw with (see `.node text` in style.css).
-            t.setAttribute('font-family', NODE_FONT_FAMILY);
-            t.setAttribute('font-weight', '400');
-            svg.appendChild(t);
-            document.body.appendChild(svg);
-            this._measureTextEl = t;
+            this._measureCtx.font = `400 13px ${NODE_FONT_FAMILY}`;
             this._textWidthCache.clear();
         }
-        this._measureTextEl.textContent = text;
-        const width = this._measureTextEl.getComputedTextLength();
+        const width = this._measureCtx.measureText(String(text)).width;
         if (this._textWidthCache.size > 20000) this._textWidthCache.clear();
         this._textWidthCache.set(text, width);
         return width;
