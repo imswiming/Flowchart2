@@ -988,6 +988,7 @@ class FlowchartViewer {
         this.gantt = null;
         this.kanban = null;
         this.criteria = [];
+        this.events = [];
         if (typeof this.setupGantt === 'function') this.setupGantt();
 
         // Set up event listeners
@@ -2931,6 +2932,7 @@ class FlowchartViewer {
                             this.gantt = null;
                             this.kanban = null;
                             this.criteria = [];
+                            this.events = [];
                             this.renderFlowchart(this.getSampleData());
                             this.currentSlotIndex = 0;
                             this.saveCurrentFlowchart();
@@ -2976,6 +2978,7 @@ class FlowchartViewer {
         this.gantt = null;
         this.kanban = null;
         this.criteria = [];
+        this.events = [];
 
         const defaultData = {
             name: "New Flowchart",
@@ -3106,6 +3109,7 @@ class FlowchartViewer {
                 this.kanban = typeof this.sanitizeKanban === 'function' ? this.sanitizeKanban(parsed.kanban) : (parsed.kanban || null);
                 // ... and its criteria (criteria.js).
                 this.criteria = typeof this.sanitizeCriteria === 'function' ? this.sanitizeCriteria(parsed.criteria) : [];
+                this.events = typeof this.sanitizeEvents === 'function' ? this.sanitizeEvents(parsed.events) : [];
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
                 // migrate those to HTML once on load; anything already HTML (or
@@ -12600,7 +12604,9 @@ class FlowchartViewer {
             gantt: this.gantt || undefined,
             kanban: this.kanban || undefined,
             // The criteria every node's criteria view shows (criteria.js).
-            criteria: (this.criteria && this.criteria.length) ? this.criteria : undefined
+            criteria: (this.criteria && this.criteria.length) ? this.criteria : undefined,
+            // Events and their reminders (events.js).
+            events: (this.events && this.events.length) ? this.events : undefined
         }, null, 2);
     }
 

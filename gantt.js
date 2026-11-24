@@ -27,7 +27,8 @@
     const DAY = 86400000;
     const ROW_MAIN = 34;
     const ROW_SUB = 21;
-    const HEAD_H = 56;
+    // The date rows (56px) and, under them, a strip for card dots and events (events.js).
+    const HEAD_H = 72;
     const MIN_PPD = 0.12;
     const MAX_PPD = 80;
     // Project-chart colours on a navy background: amber, olive, orange, sky, coral, violet, mint, pink.
@@ -535,7 +536,9 @@
                 return;
             }
             const narrow = view.clientWidth < 700;
-            const LIST_W = narrow ? 175 : 280;
+            // Phone: no task-name column, the chart has the whole width.
+            const phone = window.matchMedia('(max-width: 600px)').matches;
+            const LIST_W = phone ? 0 : (narrow ? 175 : 280);
             const g = this.gantt;
             const ppd = g.pxPerDay;
             const today = todayDay();
@@ -660,7 +663,7 @@
             // Task list.
             const list = el('div', { class: 'gantt-list' + (narrow ? ' narrow' : ''), style: `width:${LIST_W}px;` });
             rows.forEach((t, i) => list.append(this.buildGanttListRow(t, tops[i], heights[i], narrow)));
-            bodyRow.append(list);
+            if (LIST_W) bodyRow.append(list);
 
             // Timeline body.
             const body = el('div', { class: 'gantt-body', style: `width:${TL_W}px;height:${bodyH}px;` });
@@ -745,6 +748,7 @@
             // Bars and milestones.
             rows.forEach((t, i) => body.append(this.buildGanttBar(t, tops[i], heights[i], xOf)));
             bodyRow.append(body);
+            if (typeof this.ganttDecorate === 'function') { try { this.ganttDecorate(head, body, xOf, ppd, r0, r1); } catch (e) { console.error('Gantt strip:', e); } }
             view.append(scroll);
             // Fill the window: the grid, list and today line run to the bottom.
             const room = scroll.clientHeight - HEAD_H;
