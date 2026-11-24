@@ -1505,10 +1505,8 @@ body {
 }
 
 .node rect {
-    stroke: #999;
-    stroke-width: 1.5px;
-    rx: 5;
-    ry: 5;
+    rx: 8;
+    ry: 8;
 }
 
 .link {
@@ -1517,9 +1515,16 @@ body {
     stroke-width: 1.5px;
 }
 .node text {
-    font-size: 12px;
-    font-weight: bold;
+    font-size: 13px;
+    font-weight: 400;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
 }
+
+/* Node edit menu: pill groups of icon buttons (refreshRadialButtons). */
+.nb-btn .nb-tile { transition: filter 0.12s ease; }
+.nb-btn:hover .nb-tile { filter: brightness(1.6); }
+.nb-pill { filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35)); }
+.fold-arrow-btn:hover .fold-badge { fill: #3a4558; }
 
 .zoom-controls {
     position: absolute;
@@ -2389,20 +2394,32 @@ input[type="range"]::-moz-range-progress {
    (see getNoteTitleFoldPlugin). Purely visual: not part of the saved text. */
 #notes-editor-wrap .ck.ck-content h4::before,
 .notes-editor-wrap-el .ck.ck-content h4::before {
-    content: '▾';
+    /* A chevron drawn from two borders: down while open, right (green) once folded. */
+    content: '';
     display: inline-block;
-    width: 1.1em;
-    margin-right: 0.15em;
-    font-size: 0.7em;
-    color: var(--muted);
+    box-sizing: border-box;
+    width: 0.42em;
+    height: 0.42em;
+    margin: 0 0.5em 0.18em 0.1em;
+    border-right: 0.12em solid #6f7f96;
+    border-bottom: 0.12em solid #6f7f96;
+    border-radius: 0.04em;
+    transform: rotate(45deg);
     cursor: pointer;
     vertical-align: middle;
 }
 
 #notes-editor-wrap .ck.ck-content h4[data-folded]::before,
 .notes-editor-wrap-el .ck.ck-content h4[data-folded]::before {
-    content: '▸';
-    color: var(--accent);
+    border-color: var(--accent);
+    transform: rotate(-45deg);
+    margin: 0 0.5em 0.05em 0;
+}
+
+/* An open title is shown quieter than the folded ones around it. */
+#notes-editor-wrap .ck.ck-content h4:not([data-folded]),
+.notes-editor-wrap-el .ck.ck-content h4:not([data-folded]) {
+    color: #8a9ab0;
 }
 
 #notes-editor-wrap .ck.ck-content h4,

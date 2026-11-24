@@ -216,6 +216,47 @@ const NotesMerge = (() => {
 //  - Matrices, connections and the other fields are merged field by field; lists of
 //    items with ids (matrix tabs, columns, rows, criteria, ideas) are merged by id.
 // Everything is plain JSON in, plain JSON out.
+// ----- Node look (renderFlowchart / refreshRadialButtons) -----
+const NODE_FONT_FAMILY = '"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif';
+// The default green is drawn a little softer than the stored colour.
+const nodeDisplayColor = (c) => {
+    const col = c || '#00a67e';
+    return col.toLowerCase() === '#00a67e' ? '#2f8f6e' : col;
+};
+const mixWithWhite = (hex, amt) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return '#999999';
+    const n = parseInt(m[1], 16);
+    const mix = v => Math.round(v + (255 - v) * amt);
+    return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => mix(v).toString(16).padStart(2, '0')).join('');
+};
+// The node edit menu's buttons: 24x24 line icons (or a character), and the
+// tints of their tiles.
+const NODE_BTN_TONES = {
+    plain: { bg: 'rgba(255,255,255,0.06)', fg: '#e6eef8' },
+    soft: { bg: 'rgba(52,62,80,0.94)', fg: '#c9d4e3', rim: 'rgba(255,255,255,0.12)' },
+    blue: { bg: 'rgba(76,154,255,0.20)', fg: '#5aa7ff' },
+    red: { bg: 'rgba(248,113,104,0.17)', fg: '#f87168' },
+    yellow: { bg: 'rgba(255,204,0,0.16)', fg: '#ffcc00' }
+};
+const NODE_BTN_ICONS = {
+    '+': { d: 'M12 5v14M5 12h14' },
+    '←': { d: 'M19 12H5M11 18l-6-6 6-6' },
+    '→': { d: 'M5 12h14M13 6l6 6-6 6' },
+    fold: { title: 'Fold', d: 'M7 14l5-5 5 5' },
+    unfold: { title: 'Unfold', d: 'M7 10l5 5 5-5' },
+    '⊟': { title: 'Fold everything below', d: 'M7 20l5-5 5 5M7 4l5 5 5-5' },
+    '⊞': { title: 'Unfold everything below', d: 'M7 15l5 5 5-5M7 9l5-5 5 5' },
+    C: { title: 'Connect to another node', d: 'M6 20a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM7.5 15.5C11 7 13 17 16.5 8.5' },
+    M: { title: 'Move to another parent', tone: 'blue', d: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20' },
+    '✕': { title: 'Delete with everything under it', tone: 'red', d: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6' },
+    P: { title: 'Delete, keeping its children', tone: 'red', d: 'M3 14h6v6H3zM13 3h5v5h-5zM4 4l16 16M17 13l4 4M21 13l-4 4' },
+    '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
+    '🎨': { title: 'Drawing', text: '🎨' },
+    '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
+    '↩': { title: 'Back to the flowchart', tone: 'yellow', d: 'M9 14l-5-5 5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11' }
+};
+
 const FlowchartMerge = (() => {
     const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
     const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -3842,7 +3883,9 @@ class FlowchartViewer {
             svg.setAttribute('aria-hidden', 'true');
             const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             t.setAttribute('font-size', '13');
-            t.setAttribute('font-family', 'Arial, sans-serif');
+            // Same font as the nodes draw with (see `.node text` in style.css).
+            t.setAttribute('font-family', NODE_FONT_FAMILY);
+            t.setAttribute('font-weight', '400');
             svg.appendChild(t);
             document.body.appendChild(svg);
             this._measureTextEl = t;
@@ -13322,32 +13365,29 @@ class FlowchartViewer {
             const hasCustomConnections = sourceNodes.has(d.data);
             const isParentNode = hasHierarchicalChildren || hasCustomConnections;
             if (isParentNode) {
-                return d.data.color || '#00a67e';
+                return nodeDisplayColor(d.data.color);
             }
-            return d.data.color || '#00a67e';
+            return nodeDisplayColor(d.data.color);
         })
+        // A rim a little lighter than the node itself (folding is shown by the
+        // round chevron under the node, not the outline).
         .attr('stroke', d => {
             if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
-            return d.data._collapsed ? '#ffcc00' : '#999';
+            return mixWithWhite(nodeDisplayColor(d.data.color), 0.32);
         })
-        .attr('stroke-width', d => {
-            if (this.isPlaceholderNodeData(d.data)) {
-                return '0';
-            }
-            return d.data._collapsed ? '3px' : '1.5px';
-        });
+        .attr('stroke-width', d => (this.isPlaceholderNodeData(d.data) ? '0' : '1.5px'));
 
         node.append('text')
         .attr('text-anchor', 'middle')
         .attr('font-size', FONT_SIZE)
-        .attr('font-weight', 'bold')
+        .attr('font-weight', '400')
         .attr('fill', d => {
             if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
-            const fill = d.data.color || '#00a67e';
+            const fill = nodeDisplayColor(d.data.color);
             function hexToRgb(hex) {
                 if (!hex) return { r: 0, g: 0, b: 0 };
                 if (hex[0] === '#') hex = hex.slice(1);
@@ -13357,7 +13397,7 @@ class FlowchartViewer {
             }
             const { r, g, b } = hexToRgb(fill);
             const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-            return brightness > 150 ? '#000000' : '#ffffff';
+            return brightness > 150 ? '#1d2430' : '#f1f7f4';
         })
         .selectAll('tspan')
         .data(d => d._lines.map((line, i, arr) => ({
@@ -13434,28 +13474,6 @@ class FlowchartViewer {
             .text(d => (d.data._nodePhotoIsDrawing ? '\u270F\uFE0F' : '\u{1F50D}'));
 
         const collapseArrowOrientation = this.orientation;
-        node.each(function(d) {
-            if (d.data._collapsed) {
-                const text = d3.select(this).select('text');
-                if (collapseArrowOrientation === 'LR') {
-                    // Children extend to the right in LR mode, so the fold/unfold
-                    // indicator sits just outside the node's right edge instead of below it.
-                    text.append('tspan')
-                        .attr('x', NODE_WIDTH / 2 + 16)
-                        .attr('y', 4)
-                        .attr('fill', '#ffffff')
-                        .attr('font-size', FONT_SIZE + 3)
-                        .text('▶');
-                } else {
-                    text.append('tspan')
-                        .attr('x', 0)
-                        .attr('y', d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d) + centerOffset(d))
-                        .attr('fill', '#ffffff')
-                        .attr('font-size', FONT_SIZE + 3)
-                        .text('▼');
-                }
-            }
-        });
 
         // Clickable fold arrows. A folded node's ▼ (▶ in LR) unfolds it; an unfolded node
         // with children gets a ▲ just to its right that folds it again.
@@ -13472,37 +13490,24 @@ class FlowchartViewer {
                 .attr('class', 'fold-arrow-btn')
                 .style('cursor', 'pointer');
             btn.append('title').text(collapsed ? 'Unfold' : 'Fold');
-            let cx;
-            let cy;
-            if (collapsed) {
-                if (collapseArrowOrientation === 'LR') {
-                    cx = NODE_WIDTH / 2 + 12;
-                    cy = 0;
-                } else {
-                    cx = 0;
-                    cy = d._lines.length * LINE_HEIGHT / 2 + 25 + photoExtra(d) + centerOffset(d) - 5;
-                }
-                // Invisible hit area over the existing ▼ / ▶ indicator.
-                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 14).attr('fill', 'transparent');
-            } else {
-                // Underneath the node, just right of the vertical line leaving its bottom.
-                cx = 20;
-                cy = boxTop(d) + totalBoxHeight(d) + 11;
-                // Invisible hit area; only the arrow itself is drawn.
-                btn.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 11).attr('fill', 'transparent');
-                btn.append('text')
-                    .attr('x', cx).attr('y', cy + 5)
-                    .attr('text-anchor', 'middle')
-                    // Same size as the ▼ on a folded node (inline, because
-                    // `.node text` in style.css would otherwise win over the attribute).
-                    .style('font-size', (FONT_SIZE + 3) + 'px')
-                    .attr('fill', '#ffffff')
-                    .style('pointer-events', 'none')
-                    .style('filter', 'drop-shadow(0 0 2px rgba(0,0,0,0.9))')
-                    .text('▲');
-                // Only visible while the pointer is over the node (see style.css).
-                btn.classed('fold-up', true);
-            }
+            // A round button sitting on the node's bottom edge (its right edge
+            // left to right), with a chevron: down / right to unfold, up / left
+            // to fold.
+            const lr = collapseArrowOrientation === 'LR';
+            const cx = lr ? d._boxWidth / 2 + 4 : 0;
+            const cy = lr ? centerOffset(d) : boxTop(d) + totalBoxHeight(d) + 5;
+            btn.append('circle').attr('class', 'fold-badge')
+                .attr('cx', cx).attr('cy', cy).attr('r', 14)
+                .attr('fill', '#2b3343').attr('stroke', 'rgba(255,255,255,0.12)').attr('stroke-width', 1);
+            const chevron = lr
+                ? (collapsed ? `M${cx - 2},${cy - 5} l5,5 l-5,5` : `M${cx + 2},${cy - 5} l-5,5 l5,5`)
+                : (collapsed ? `M${cx - 5},${cy - 2} l5,5 l5,-5` : `M${cx - 5},${cy + 3} l5,-5 l5,5`);
+            btn.append('path').attr('d', chevron)
+                .attr('fill', 'none').attr('stroke', '#e6eef8').attr('stroke-width', 2.2)
+                .attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round')
+                .style('pointer-events', 'none');
+            // An open node's button only shows while the pointer is near it (see style.css).
+            if (!collapsed) btn.classed('fold-up', true);
             btn.on('mousedown', (event) => event.stopPropagation())
                 .on('dblclick', (event) => event.stopPropagation())
                 .on('click', (event) => {
@@ -13762,10 +13767,6 @@ class FlowchartViewer {
         // button having a hardcoded offset (which is what made the row look lopsided
         // before). F (fold) always sits immediately left of C (make connection).
         const deleteRowBtns = [];
-        if (targetDatum.parent) {
-            deleteRowBtns.push({ label: '←', activate: () => self.swapNodeWithSibling(-1, targetDatum), fontSize: 22 });
-            deleteRowBtns.push({ label: '→', activate: () => self.swapNodeWithSibling(1, targetDatum), fontSize: 22 });
-        }
         if (canFold) deleteRowBtns.push({ label: 'F', activate: activateFold });
         // Fold/unfold everything below this node: shows ⊟ while something is still open
         // (tap folds all of it) and ⊞ once it is all folded (tap unfolds all). Only worth
@@ -13799,40 +13800,107 @@ class FlowchartViewer {
                 if (!critLock.keep.includes(deleteRowBtns[i].label)) deleteRowBtns.splice(i, 1);
             }
         }
-        const rowUnit = btnWidth + btnSpacing;
-        const rowCount = deleteRowBtns.length;
-        deleteRowBtns.forEach((btn, i) => {
-            const dx = (i - (rowCount - 1) / 2) * rowUnit;
-            makeRadialBtn(dx, deleteRowDy, btn.label, btn.activate, Boolean(btn.danger), btn.fontSize || 26);
-        });
+        // ----- Drawn as rounded "pill" groups of icon buttons -----
+        // A row above the node - [+ before, ←] [tools] [→, + after] - with + above it
+        // for a new parent and + under the node (below its fold button) for a child.
+        const TILE = 40;
+        const GAP = 6;
+        const PAD = 6;
+        const PILL_H = TILE + PAD * 2;
+        const lr = this.orientation === 'LR';
+        // Everything below is placed relative to the selected node.
+        btnLayer.attr('transform', `translate(${baseX},${baseY})`);
+        const drawBtn = (parent, x, y, item, w = TILE, h = TILE) => {
+            const icon = NODE_BTN_ICONS[item.icon] || null;
+            const tone = NODE_BTN_TONES[item.tone || (icon && icon.tone) || 'plain'];
+            const btnGroup = parent.append('g')
+                .attr('class', 'nb-btn')
+                .attr('transform', `translate(${x},${y})`)
+                .style('cursor', 'pointer')
+                // preventDefault keeps focus in the node's edit field (see the
+                // note this replaced: a blur would re-render and eat the click).
+                .on('mousedown', (event) => {
+                    event.stopPropagation();
+                    if (!window.matchMedia('(max-width: 600px)').matches) event.preventDefault();
+                })
+                .on('touchstart', (event) => event.stopPropagation())
+                .on('click', (event) => {
+                    event.stopPropagation();
+                    if (self._pendingNodeSave && self.nodeBeingEdited) {
+                        self._pendingNodeSave = false;
+                        try { self.saveNodeEdit(true); } catch (err) { console.error('Error saving node edit before radial action:', err); }
+                    }
+                    item.activate();
+                });
+            if (item.title || (icon && icon.title)) btnGroup.append('title').text(item.title || icon.title);
+            btnGroup.append('rect')
+                .attr('class', 'nb-tile')
+                .attr('x', -w / 2).attr('y', -h / 2)
+                .attr('width', w).attr('height', h)
+                .attr('rx', 10).attr('ry', 10)
+                .attr('fill', tone.bg)
+                .attr('stroke', tone.rim || 'none');
+            if (icon && icon.d) {
+                btnGroup.append('path')
+                    .attr('d', icon.d)
+                    .attr('transform', 'translate(-11,-11) scale(0.9167)')
+                    .attr('fill', 'none')
+                    .attr('stroke', tone.fg)
+                    .attr('stroke-width', 2)
+                    .attr('stroke-linecap', 'round')
+                    .attr('stroke-linejoin', 'round')
+                    .style('pointer-events', 'none');
+            } else {
+                btnGroup.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dominant-baseline', 'central')
+                    .attr('fill', tone.fg)
+                    .style('font-size', '20px')
+                    .attr('y', 1)
+                    .style('pointer-events', 'none')
+                    .text(icon ? icon.text : item.label);
+            }
+        };
+        const drawPill = (items, cx, cy) => {
+            const w = items.length * TILE + (items.length - 1) * GAP + PAD * 2;
+            const pill = btnLayer.append('g').attr('class', 'nb-group');
+            pill.append('rect')
+                .attr('class', 'nb-pill')
+                .attr('x', cx - w / 2).attr('y', cy - PILL_H / 2)
+                .attr('width', w).attr('height', PILL_H)
+                .attr('rx', PILL_H / 2).attr('ry', PILL_H / 2)
+                .attr('fill', 'rgba(38, 46, 60, 0.94)')
+                .attr('stroke', 'rgba(255, 255, 255, 0.10)');
+            items.forEach((it, i) => drawBtn(pill, cx - w / 2 + PAD + TILE / 2 + i * (TILE + GAP), cy, it));
+            return w;
+        };
+        const drawPlus = (x, y, activate, title) => drawBtn(btnLayer, x, y, { icon: '+', tone: 'soft', activate, title }, 44, 32);
 
-        if (critLock) {
-            if (critLock.addChild) {
-                if (this.orientation === 'LR') makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddChild);
-                else makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddChild);
-            }
-        } else if (this.orientation === 'LR') {
-            // Children extend to the right and parents sit to the left in this
-            // orientation, so the horizontal buttons follow that flow: left adds a new
-            // parent, right adds a child. Siblings stack vertically, so they move to
-            // the top/bottom buttons instead of left/right.
-            makeRadialBtn(-(NODE_WIDTH / 2 + horizGap), 0, '+', activateAddParent);
-            makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddChild);
-            if (targetDatum.parent) {
-                makeRadialBtn(0, topPlusDy, '+', activateAddSiblingBefore);
-                makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddSiblingAfter);
-                makeRadialBtn(-(btnWidth + btnSpacing), topPlusDy, '◀', activateMoveLeft);
-                makeRadialBtn(btnWidth + btnSpacing, bottomHalf + vertGap, '▶', activateMoveRight);
-            }
-        } else {
-            if (targetDatum.parent) {
-                makeRadialBtn(-(NODE_WIDTH / 2 + horizGap), 0, '+', activateAddSiblingBefore);
-                makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddSiblingAfter);
-                makeRadialBtn(-(NODE_WIDTH / 2 + horizGap) - (btnWidth + btnSpacing), 0, '◀', activateMoveLeft);
-                makeRadialBtn(NODE_WIDTH / 2 + horizGap + (btnWidth + btnSpacing), 0, '▶', activateMoveRight);
-            }
-            makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddChild);
-            makeRadialBtn(0, topPlusDy, '+', activateAddParent);
+        const tools = deleteRowBtns.map(btn => Object.assign({}, btn, {
+            icon: btn.label === 'F' ? (targetDatum.data._collapsed ? 'unfold' : 'fold') : btn.label
+        }));
+        const rowY = -(topHalf + 26 + PILL_H / 2);
+        const toolsW = drawPill(tools, 0, rowY);
+        const sides = !critLock && targetDatum.parent;
+        if (sides) {
+            const sideW = 2 * TILE + GAP + PAD * 2;
+            const off = toolsW / 2 + 12 + sideW / 2;
+            drawPill([
+                { icon: '+', label: '+', title: lr ? 'New sibling above' : 'New sibling before', activate: activateAddSiblingBefore },
+                { icon: '←', label: '←', title: lr ? 'Move up' : 'Move left', activate: () => self.swapNodeWithSibling(-1, targetDatum) }
+            ], -off, rowY);
+            drawPill([
+                { icon: '→', label: '→', title: lr ? 'Move down' : 'Move right', activate: () => self.swapNodeWithSibling(1, targetDatum) },
+                { icon: '+', label: '+', title: lr ? 'New sibling below' : 'New sibling after', activate: activateAddSiblingAfter }
+            ], off, rowY);
+        }
+        if (!critLock) {
+            if (lr) drawPlus(-(NODE_WIDTH / 2 + 44), 0, activateAddParent, 'New parent');
+            else drawPlus(0, rowY - PILL_H / 2 - 12 - 16, activateAddParent, 'New parent');
+        }
+        if (!critLock || critLock.addChild) {
+            if (lr) drawPlus(targetDatum._boxWidth / 2 + 58, 0, activateAddChild, 'New child');
+            else drawPlus(0, bottomHalf + 30 + 16, activateAddChild, 'New child');
         }
     }
 
