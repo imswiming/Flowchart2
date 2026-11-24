@@ -12,9 +12,12 @@
 //   the children back and ends the mode. ✎ edits the list of criteria.
 // - Shift + click nodes to pick several (yellow outline), then 🎯 on one of
 //   them: the comparison view, shown on its own and the other way round -
-//   each criterion once (yellow), under it the picked nodes that have
-//   something for it, and under each of those what it has, all unfolded, to
-//   compare and edit together; ↩ / "Back to flowchart" returns.
+//   each criterion once (yellow), under it every picked node, and under each
+//   of those what it has for that criterion. Criteria none of them has
+//   anything for start folded. A node added beside the picked ones (under any
+//   criterion) is a new option: it shows under every criterion, and goes into
+//   the flowchart next to the picked nodes when the view closes. ↩ / "Back to
+//   flowchart" returns.
 // - While a node's criteria are showing, its real children wait in
 //   `_critSaved` (saving always writes the real children, never the
 //   criteria nodes); showing them isn't saved, so a reload shows the children.
@@ -232,7 +235,7 @@
             const keep = ['F', '⊟', '⊞', '↩'];
             if (data._critPivot) return { keep, addChild: false };
             if (data._critId) return { keep, addChild: true };
-            if (this._critView && data._critCol) return { keep, addChild: true };
+            if (this._critView && data._critCol) return { keep, addChild: true, sides: true };
             if (this._critView && (data._critHost !== undefined || data._critTop)) return { keep, addChild: false };
             if (!this._critView && data._critOn) return { keep: null, addChild: false, sides: true, parent: true };
             return null;
@@ -382,19 +385,21 @@
             const open = function unfold(n) { if (n) { n._collapsed = false; (n.children || []).forEach(unfold); } };
             if (v.hosts.length > 1) {
                 // Comparing: criterion -> the picked nodes -> what each has for it.
+                const has = (h, c) => Array.isArray(h._crit && h._crit[c.id]) && h._crit[c.id].some(x => x && !this.isPlaceholderNodeData(x));
+                // Every criterion holds every picked node; a criterion none of
+                // them has anything for starts folded, the others unfolded.
                 const crits = this.criteria.map(c => ({
                     name: c.name || 'Criterion',
                     color: YELLOW,
                     _critId: c.id,
                     _critPivot: true,
-                    // Only the nodes that have something under this criterion.
+                    _collapsed: !v.hosts.some(h => has(h, c)),
                     children: v.hosts.map((h, i) => {
                         if (!h._crit || typeof h._crit !== 'object') h._crit = {};
                         if (!Array.isArray(h._crit[c.id])) h._crit[c.id] = [];
-                        if (!h._crit[c.id].some(x => x && !this.isPlaceholderNodeData(x))) return null;
                         h._crit[c.id].forEach(open);
                         return { name: h.name, color: h.color, _critHost: i, _critCol: c.id, children: h._crit[c.id] };
-                    }).filter(Boolean)
+                    })
                 }));
                 return crits.length === 1 ? crits[0] : { name: '', color: TOP_COLOR, _critTop: true, children: crits };
             }
@@ -420,6 +425,8 @@
             if (!v) return;
             const renamed = new Map();
             const renamedHosts = new Map();
+            const newHosts = [];
+            const recolored = new Map();
             const visit = (n) => {
                 if (!n || typeof n !== 'object') return;
                 // Comparing: a criterion node, then one node per picked node, each
@@ -429,13 +436,36 @@
                     const nm = (n.name || '').trim();
                     if (crit && nm && nm !== crit.name) { crit.name = nm; renamed.set(crit.id, nm); }
                     if (n.color !== YELLOW) n.color = YELLOW;
-                    (n.children || []).forEach((hc) => {
+                    const sibs = n.children || [];
+                    sibs.forEach((hc, idx) => {
+                        if (!hc || typeof hc._critHost === 'number' || hc._critId || hc._critTop) return;
+                        if (this.isPlaceholderNodeData(hc) && !(hc.name || '').trim()) return;
+                        // A new option, added next to the picked nodes: it becomes
+                        // one of them (a real node, put into the flowchart beside
+                        // its neighbour when the view closes).
+                        const node = { name: plainName(hc.name), color: hc.color || '#00a67e', children: [], _crit: {} };
+                        const hostIdx = v.hosts.length;
+                        v.hosts.push(node);
+                        let near = null;
+                        let after = true;
+                        for (let j = idx - 1; j >= 0 && near === null; j--) if (sibs[j] && typeof sibs[j]._critHost === 'number') near = sibs[j]._critHost;
+                        if (near === null) { after = false; for (let j = idx + 1; j < sibs.length && near === null; j++) if (sibs[j] && typeof sibs[j]._critHost === 'number') near = sibs[j]._critHost; }
+                        if (!v.added) v.added = [];
+                        v.added.push({ hostIdx, near, after });
+                        hc._critHost = hostIdx;
+                        hc._critCol = n._critId;
+                        delete hc._isPlaceholder;
+                        newHosts.push({ hostIdx, near, after });
+                    });
+                    sibs.forEach((hc) => {
                         if (!hc || typeof hc._critHost !== 'number' || !v.hosts[hc._critHost]) return;
                         const host = v.hosts[hc._critHost];
                         if (!host._crit || typeof host._crit !== 'object') host._crit = {};
                         host._crit[n._critId] = Array.isArray(hc.children) ? hc.children : [];
                         const hn = (hc.name || '').trim();
                         if (hn && plainName(hn) !== plainName(host.name)) { host.name = plainName(hc.name); renamedHosts.set(hc._critHost, host.name); }
+                        // A new option takes its colour once named (it starts grey).
+                        if (hc.color && hc.color !== host.color && hc.color !== this.getPlaceholderColor()) { host.color = hc.color; recolored.set(hc._critHost, hc.color); }
                     });
                     return;
                 }
@@ -457,13 +487,32 @@
                 (n.children || []).forEach(visit);
             };
             visit(this.rootData);
+            // A new option shows under every criterion, next to the same neighbour.
+            if (newHosts.length) {
+                const pivots = [];
+                const find = (n) => { if (!n) return; if (n._critPivot) pivots.push(n); (n.children || []).forEach(find); };
+                find(this.rootData);
+                newHosts.forEach(({ hostIdx, near, after }) => {
+                    const node = v.hosts[hostIdx];
+                    pivots.forEach((pn) => {
+                        const kids = pn.children || (pn.children = []);
+                        if (kids.some(k => k && k._critHost === hostIdx)) return;
+                        if (!Array.isArray(node._crit[pn._critId])) node._crit[pn._critId] = [];
+                        const copy = { name: node.name, color: node.color, _critHost: hostIdx, _critCol: pn._critId, children: node._crit[pn._critId] };
+                        let at = kids.findIndex(k => k && k._critHost === near);
+                        at = at < 0 ? kids.filter(k => k && typeof k._critHost === 'number').length : at + (after ? 1 : 0);
+                        kids.splice(at, 0, copy);
+                    });
+                });
+            }
             // A criterion (or, comparing, a node) renamed in one place is renamed
             // everywhere it shows.
-            if (renamed.size || renamedHosts.size) {
+            if (renamed.size || renamedHosts.size || recolored.size) {
                 const rename = (n) => {
                     if (!n) return;
                     if (n._critId && renamed.has(n._critId)) n.name = renamed.get(n._critId);
                     if (typeof n._critHost === 'number' && renamedHosts.has(n._critHost)) n.name = renamedHosts.get(n._critHost);
+                    if (typeof n._critHost === 'number' && recolored.has(n._critHost)) n.color = recolored.get(n._critHost);
                     (n.children || []).forEach(rename);
                 };
                 rename(this.rootData);
@@ -477,6 +526,7 @@
                 try { this.hideNodeEditPopup(true); } catch (e) { /* closing anyway */ }
             }
             this.critWriteBack();
+            const placed = this.critPlaceNewOptions(v);
             this._critView = null;
             this.selectedNode = null;
             this.rootData = v.real;
@@ -488,8 +538,60 @@
             if (render) {
                 this.transform = v.transform || this.transform;
                 this.renderFlowchart(this.rootData, { keepTransform: true });
+                if (placed.length) this.critFocusNode(placed[0]);
             }
             this.autosave();
+        },
+
+        // New options made in the comparison view (still there, with a name or
+        // ideas): each goes into the real tree as a sibling of the picked node
+        // it was added next to. Returns them.
+        critPlaceNewOptions(v) {
+            const out = [];
+            if (!v.added || !v.added.length) return out;
+            const shown = new Set();
+            const walk = (n) => { if (!n) return; if (typeof n._critHost === 'number') shown.add(n._critHost); (n.children || []).forEach(walk); };
+            walk(this.rootData);
+            const parentOf = (target) => {
+                let found = null;
+                const w = (n) => {
+                    if (!n || found) return;
+                    const kids = n._critOn ? (n._critSaved || []) : (n.children || []);
+                    if (kids.includes(target)) { found = n; return; }
+                    kids.forEach(w);
+                };
+                w(v.real);
+                return found;
+            };
+            v.added.forEach(({ hostIdx, near, after }) => {
+                const node = v.hosts[hostIdx];
+                if (!node || !shown.has(hostIdx)) return;
+                const hasIdeas = Object.values(node._crit || {}).some(a => Array.isArray(a) && a.some(x => x && !this.isPlaceholderNodeData(x)));
+                if (!(node.name || '').trim() && !hasIdeas) return;
+                const neighbour = near !== null ? v.hosts[near] : v.hosts[0];
+                const parent = neighbour && parentOf(neighbour);
+                if (!parent) return;
+                const field = parent._critOn ? '_critSaved' : 'children';
+                const kids = parent[field] || (parent[field] = []);
+                const at = kids.indexOf(neighbour);
+                kids.splice(at < 0 ? kids.length : at + (after ? 1 : 0), 0, node);
+                out.push(node);
+            });
+            return out;
+        },
+
+        // Selects a node and brings it into view.
+        critFocusNode(data) {
+            const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === data);
+            if (!d) return;
+            this.selectNode(d);
+            this.refreshRadialButtons();
+            const svg = d3.select('#flowchart svg');
+            if (this._zoomBehavior && !svg.empty() && Number.isFinite(d.x)) {
+                const w = this.flowchartPanel.clientWidth, h = this.flowchartPanel.clientHeight;
+                const z = this.transform.k;
+                svg.transition().duration(350).call(this._zoomBehavior.transform, d3.zoomIdentity.translate(w / 2 - d.x * z, h / 3 - d.y * z).scale(z));
+            }
         },
 
         // In the view, the chart's own hidden top node and the empty node holding

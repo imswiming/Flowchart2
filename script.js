@@ -2815,18 +2815,14 @@ class FlowchartViewer {
     updateSimplifyPrefixes(node) {
         if (!node) return;
         
-        // Check if this is a green leaf node
-        if (this.isGreenNode(node) && this.isLeafNode(node)) {
-            // Add "(Simplify?)" suffix if not already present
-            if (!node.data.name.endsWith(' (Simplify?)')) {
-                node.data.name = node.data.name + ' (Simplify?)';
-            }
-        } else {
-            // Remove "(Simplify?)" suffix if it exists and node is no longer a green leaf
-            if (node.data.name.endsWith(' (Simplify?)')) {
-                node.data.name = node.data.name.substring(0, node.data.name.length - ' (Simplify?)'.length);
-            }
-        }
+        // One "(Simplify?)" on a green leaf, none otherwise. Every copy already
+        // there is taken off first (with any space or new line after it from
+        // the edit box), so the suffix can't end up doubled.
+        const SUFFIX_RUN = /(\s*\(Simplify\?\))+\s*$/;
+        const name = String(node.data.name || '');
+        const base = SUFFIX_RUN.test(name) ? name.replace(SUFFIX_RUN, '') : name;
+        const want = (this.isGreenNode(node) && this.isLeafNode(node)) ? base + ' (Simplify?)' : base;
+        if (want !== name) node.data.name = want;
         
         // Recursively process children
         if (node.children) {
@@ -8889,6 +8885,30 @@ class FlowchartViewer {
                     });
                 };
                 editor.model.document.on('change:data', applyFolds, { priority: 'low' });
+
+                // The Title the cursor is in (on it, or in the text under it) gets
+                // an orange arrow - a class on its on-screen element only, set
+                // again after every change since redrawing an element drops it.
+                let activeTitleView = null;
+                const markActiveTitle = () => {
+                    if (editor.state === 'destroyed') return;
+                    const pos = editor.model.document.selection.getFirstPosition();
+                    let block = pos && pos.parent;
+                    while (block && block.parent && !block.parent.is('rootElement')) block = block.parent;
+                    let title = null;
+                    for (let b = block; b; b = b.previousSibling) {
+                        if (b.is('element', 'heading4')) { title = b; break; }
+                    }
+                    const viewEl = title ? editor.editing.mapper.toViewElement(title) : null;
+                    if (viewEl === activeTitleView && (!viewEl || viewEl.hasClass('note-title-active'))) return;
+                    editor.editing.view.change((writer) => {
+                        if (activeTitleView && activeTitleView.root && activeTitleView.root.is('rootElement')) writer.removeClass('note-title-active', activeTitleView);
+                        if (viewEl) writer.addClass('note-title-active', viewEl);
+                    });
+                    activeTitleView = viewEl;
+                };
+                editor.model.document.selection.on('change:range', markActiveTitle);
+                editor.model.document.on('change:data', markActiveTitle, { priority: 'lowest' });
 
                 // Enter at the end of a folded title: open it, so the new line
                 // that Enter adds underneath is visible (and not swallowed by

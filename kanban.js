@@ -1118,7 +1118,7 @@
             }
             if (!this.isPlaceholderNodeData(top)) return;
             const item = this.flowchartList && this.flowchartList[this.currentSlotIndex];
-            const title = `📋 ${item ? item.title : 'Project'} - Kanban`;
+            const title = `📋 ${item ? item.title : 'Project'}`;
             if (!branch) {
                 branch = { name: title, color: '#0c66e4', _kanban: 'root', children: [] };
                 if (!Array.isArray(top.children)) top.children = [];
@@ -1187,7 +1187,7 @@
                 const n = k.cards.filter(c => c.column === col.id).length;
                 const over = col.wip && n > col.wip;
                 const last = i === k.columns.length - 1 && k.columns.length > 1;
-                return { id: `col:${col.id}`, name: `${col.name}${last ? ' ✓' : ''} (${col.wip ? `${n}/${col.wip}` : n})`, color: over ? '#c9372c' : (last ? DONE_GREEN : '#0c66e4') };
+                return { id: `col:${col.id}`, name: `${col.name}${last ? ' ✓' : ''}`, color: over ? '#c9372c' : (last ? DONE_GREEN : '#0c66e4') };
             };
             const colNodes = reconcile(branch, k.columns.map(colNode));
             k.columns.forEach((col, i) => {
@@ -1557,6 +1557,9 @@
         } else {
             this._kbLastSnap = this.kanbanSnapshot();
         }
+        // The flowchart branch is brought up to date (names and layout as this
+        // version draws them).
+        if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }
         if (this._kanbanMode) this.renderKanban();
         return r;
     };

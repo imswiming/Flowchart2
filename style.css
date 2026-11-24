@@ -2401,8 +2401,8 @@ input[type="range"]::-moz-range-progress {
     width: 0.42em;
     height: 0.42em;
     margin: 0 0.5em 0.18em 0.1em;
-    border-right: 0.12em solid #6f7f96;
-    border-bottom: 0.12em solid #6f7f96;
+    border-right: 0.12em solid var(--accent);
+    border-bottom: 0.12em solid var(--accent);
     border-radius: 0.04em;
     transform: rotate(45deg);
     cursor: pointer;
@@ -2416,10 +2416,10 @@ input[type="range"]::-moz-range-progress {
     margin: 0 0.5em 0.05em 0;
 }
 
-/* An open title is shown quieter than the folded ones around it. */
-#notes-editor-wrap .ck.ck-content h4:not([data-folded]),
-.notes-editor-wrap-el .ck.ck-content h4:not([data-folded]) {
-    color: #8a9ab0;
+/* The title the cursor is in: an orange arrow (titles stay white). */
+#notes-editor-wrap .ck.ck-content h4.note-title-active::before,
+.notes-editor-wrap-el .ck.ck-content h4.note-title-active::before {
+    border-color: #ff8c1a;
 }
 
 #notes-editor-wrap .ck.ck-content h4,
