@@ -32,6 +32,21 @@
 
     const kbNorm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
     const ROW_DIVIDER = '━━━━━━';
+    // A link's address: web addresses as they are, file paths as file:// links.
+    const kbHref = (u) => {
+        const s = String(u || '').trim();
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^mailto:/i.test(s)) return s;
+        if (/^[a-z]:[\\/]/i.test(s) || s.startsWith('\\\\') || s.startsWith('/')) return 'file:///' + s.replace(/\\/g, '/').replace(/^\/+/, '');
+        return 'https://' + s;
+    };
+    // Browsers don't let a web page open files on the computer: for a file the
+    // path is copied too, to paste into File Explorer / Finder.
+    const kbOpenLink = (e, u, app) => {
+        const href = kbHref(u);
+        if (!href.startsWith('file:')) return;
+        try { navigator.clipboard.writeText(String(u)); } catch (err) { /* no clipboard */ }
+        if (app && app.showNotification) app.showNotification('File path copied - browsers block opening files from a web page, so paste it into File Explorer (or Finder) to open it.', 6000);
+    };
     const uid = p => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const now = () => Date.now();
     const el = (tag, props, ...kids) => {
@@ -128,6 +143,8 @@
                 row: rowIds.has(c.row) ? c.row : rows[0].id,
                 name: typeof c.name === 'string' ? c.name : 'Column',
                 wip: Number.isFinite(+c.wip) && +c.wip > 0 ? Math.round(+c.wip) : 0,
+                // 'oldest': the column lists its cards oldest first.
+                sort: c.sort === 'oldest' ? 'oldest' : '',
                 policy: typeof c.policy === 'string' ? c.policy : ''
             }));
             if (!columns.length) return null;
@@ -155,6 +172,11 @@
                     labels: Array.isArray(c.labels) ? c.labels.filter(l => labelIds.has(l)) : [],
                     assignee: typeof c.assignee === 'string' ? c.assignee : '',
                     createdBy: typeof c.createdBy === 'string' ? c.createdBy : '',
+                    // Optional: a category (grouping), who issued it, what it's for, links.
+                    category: typeof c.category === 'string' ? c.category : '',
+                    issuer: typeof c.issuer === 'string' ? c.issuer : '',
+                    purpose: typeof c.purpose === 'string' ? c.purpose : '',
+                    links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: x.url.trim() })) : [],
                     due: typeof c.due === 'string' ? c.due : '',
                     blocked: !!c.blocked,
                     blockReason: typeof c.blockReason === 'string' ? c.blockReason : '',
@@ -171,7 +193,7 @@
                 rows, columns, cards, labels,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
                 nextNum: next,
-                groupBy: ['assignee', 'label'].includes(raw.groupBy) ? raw.groupBy : 'none',
+                groupBy: ['assignee', 'label', 'category'].includes(raw.groupBy) ? raw.groupBy : 'none',
                 notesTabId: typeof raw.notesTabId === 'string' ? raw.notesTabId : null,
                 noteTitles: (raw.noteTitles && typeof raw.noteTitles === 'object') ? Object.assign({}, raw.noteTitles) : {},
                 // Which column each card's text in the Kanban notes belongs to (the
@@ -408,6 +430,7 @@
             if (at < 0) at = k.cards.length;
             k.cards.splice(at, 0, card);
             if (lane !== undefined && k.groupBy === 'assignee') card.assignee = lane;
+            if (lane !== undefined && k.groupBy === 'category') card.category = lane.startsWith('cat:') ? lane.slice(4) : '';
             if (lane !== undefined && k.groupBy === 'label') {
                 if (!lane) card.labels = [];
                 else card.labels = [lane, ...card.labels.filter(l => l !== lane)];
@@ -469,10 +492,18 @@
             const top = document.getElementById('top-kanban-btn');
             if (top) { top.textContent = want ? '🔀' : '📋'; top.title = want ? 'Back to the flowchart' : 'Kanban board'; }
             if (want) {
+                // The card to show: the selected flowchart node's card, or the card
+                // whose heading the cursor is under in the Kanban notes.
+                const focusCard = this.kbActiveCardId();
+                if (focusCard) this._kbSelected = focusCard;
                 if (this.selectedNode && typeof this.deselectNode === 'function') this.deselectNode();
                 this.selectedNode = null;
                 if (!this._kbUndo) this.resetKanbanHistory();
                 this.renderKanban();
+                if (this._kbSelected) {
+                    const elCard = document.querySelector(`#kanban-view .kb-card[data-id="${this._kbSelected}"]`);
+                    if (elCard) elCard.scrollIntoView({ block: 'nearest', inline: 'center' });
+                }
                 // Boards made before the flowchart branch existed get one.
                 if (this.kanban && this.kanban.cards.length && !this.findKanbanFlowRoot()) { this.syncKanbanFlow(); this.autosave(); }
             } else {
@@ -481,6 +512,35 @@
                 if (!quiet && this.rootData) this.renderFlowchart(this.rootData);
             }
             this.updateUndoRedoButtons();
+        },
+
+        kbActiveCardId() {
+            const sel = this.selectedNode && this.selectedNode.data;
+            if (sel && sel._kanban) {
+                let id = sel._kanban;
+                if (id.startsWith('ck:') && this.selectedNode.parent) id = this.selectedNode.parent.data._kanban;
+                if (id && this.kbCard(id)) return id;
+            }
+            if (this._kbCardTabFor && this.notesPanelShowing && this.notesPanelShowing()) {
+                const t = this.getActiveNotesTarget && this.getActiveNotesTarget();
+                if (t && this.kanban && t.tabId === this.kanban.cardTabId) return this._kbCardTabFor;
+            }
+            const ed = this.notesEditor;
+            if (ed && this.kanban && ed._noteTabRef && ed._noteTabRef.tabId === this.kanban.notesTabId) {
+                const pos = ed.model.document.selection.getFirstPosition();
+                let b = pos && pos.parent;
+                while (b && b.parent && !b.parent.is('rootElement')) b = b.parent;
+                for (; b; b = b.previousSibling) {
+                    if (b.is('element', 'heading4')) break;
+                    if (b.is('element', 'heading5')) {
+                        let t = '';
+                        for (const ch of b.getChildren()) if (ch.is('$text')) t += ch.data;
+                        const c = this.kbCards().find(x => this.kbNoteLabel(x) === kbNorm(t));
+                        return c ? c.id : null;
+                    }
+                }
+            }
+            return null;
         },
 
         // ----- Drawing -----
@@ -574,7 +634,7 @@
             labelSel.value = k.labels.some(l => l.id === this._kbLabelFilter) ? this._kbLabelFilter : '';
             labelSel.addEventListener('change', () => { this._kbLabelFilter = labelSel.value; this.renderKanbanBoard(this.kbScrollState()); });
             const group = el('select', { class: 'kb-select' },
-                el('option', { value: 'none', text: 'None' }), el('option', { value: 'assignee', text: 'Assignee' }), el('option', { value: 'label', text: 'Label' }));
+                el('option', { value: 'none', text: 'None' }), el('option', { value: 'assignee', text: 'Assignee' }), el('option', { value: 'label', text: 'Label' }), el('option', { value: 'category', text: 'Category' }));
             group.value = k.groupBy;
             group.addEventListener('change', () => { k.groupBy = group.value; this.renderKanbanBoard(); this.autosave(); });
             const filtering = this._kbSearch || this._kbPeople.size || this._kbLabelFilter;
@@ -595,13 +655,25 @@
             if (this._kbLabelFilter && !card.labels.includes(this._kbLabelFilter)) return false;
             const q = (this._kbSearch || '').trim().toLowerCase();
             if (!q) return true;
-            const text = [card.title, card.desc, card.assignee, card.createdBy, ...card.labels.map(l => (this.kbLabel(l) || {}).name || '')].join(' ').toLowerCase();
+            const text = [card.title, card.desc, card.assignee, card.createdBy, card.category, card.issuer, card.purpose, ...card.labels.map(l => (this.kbLabel(l) || {}).name || '')].join(' ').toLowerCase();
             return text.includes(q);
         },
 
         // Swimlanes for the "group by" choice: [{ key, name, cards test }].
+        kbCategories() {
+            const set = new Set();
+            this.kbCards().forEach((c) => { if (c.category) set.add(c.category); });
+            return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+        },
+
         kbLanes() {
             const k = this.kanban;
+            // Categories: alphabetical, only those some card is in, then the uncategorised.
+            if (k.groupBy === 'category') {
+                const lanes = this.kbCategories().map(c => ({ key: 'cat:' + c, name: c, test: x => x.category === c, category: c }));
+                lanes.push({ key: '', name: 'No category', test: x => !x.category, category: '' });
+                return lanes;
+            }
             if (k.groupBy === 'assignee') {
                 const lanes = this.kbAssignees().map(p => ({ key: p, name: p, test: c => c.assignee === p, person: p }));
                 lanes.push({ key: '', name: 'Unassigned', test: c => !c.assignee, person: '' });
@@ -671,6 +743,7 @@
                         el('span', { class: 'kb-spacer' }),
                         el('button', { class: 'kb-col-menu', type: 'button', text: '⋯', title: 'Column: name, WIP limit, policy', onclick: () => this.openKanbanColumn(col.id) })),
                     col.policy ? el('div', { class: 'kb-col-policy', text: col.policy }) : null,
+                    col.sort === 'oldest' ? el('div', { class: 'kb-col-policy', text: '⇅ Oldest first' }) : null,
                     over ? el('div', { class: 'kb-col-warn', text: `Over the WIP limit by ${all.length - col.wip}` }) : null);
                 head.style.gridColumn = String(i + 1);
                 head.style.gridRow = '1';
@@ -682,6 +755,7 @@
             const cellsByCol = cols.map(() => []);
             lanes.forEach((lane) => {
                 const laneCards = visible.filter(lane.test);
+                if (grouped && lane.category !== undefined && !laneCards.some(c => cols.some(col => col.id === c.column))) return;
                 if (grouped) {
                     const n = laneCards.filter(c => cols.some(col => col.id === c.column)).length;
                     const collapsed = this._kbCollapsed && this._kbCollapsed.has(lane.key);
@@ -702,7 +776,9 @@
                     cell.dataset.grouped = grouped ? '1' : '';
                     cell.style.gridColumn = String(i + 1);
                     cell.style.gridRow = String(row);
-                    laneCards.filter(c => c.column === col.id).forEach(c => cell.append(this.buildKanbanCard(c)));
+                    let inCell = laneCards.filter(c => c.column === col.id);
+                    if (col.sort === 'oldest') inCell = inCell.slice().sort((a, b) => (a.created || 0) - (b.created || 0));
+                    inCell.forEach(c => cell.append(this.buildKanbanCard(c)));
                     cell.append(this.buildKanbanAdd(col, lane));
                     board.append(cell);
                     cellsByCol[i].push(cell);
@@ -724,6 +800,11 @@
                 'data-id': card.id, tabindex: '0'
             },
                 el('div', { class: 'kb-card-title', text: card.title }),
+                card.category ? el('div', { class: 'kb-card-cat', text: card.category }) : null,
+                // Who issued it and what it's for show on the selected card.
+                card.id === this._kbSelected && (card.issuer || card.purpose)
+                    ? el('div', { class: 'kb-card-about' }, card.issuer ? el('b', { text: `Issued by ${card.issuer}` }) : null, card.issuer && card.purpose ? ' - ' : null, card.purpose || null)
+                    : null,
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
                 this.buildKanbanCardChecklist(card),
                 card.labels.length ? el('div', { class: 'kb-chips' }, ...card.labels.map((id) => {
@@ -735,6 +816,7 @@
                     card.due ? el('span', { class: 'kb-meta' + (overdue ? ' overdue' : ''), text: `🗓 ${fmtDue(card.due)}`, title: overdue ? 'Overdue' : 'Due' }) : null,
                     !done && ageDays >= 3 ? el('span', { class: 'kb-age', title: `${Math.floor(ageDays)} days in this column`, text: '●'.repeat(Math.min(4, Math.floor(Math.log2(ageDays)))) }) : null,
                     el('span', { class: 'kb-spacer' }),
+                    card.links && card.links.length ? el('span', { class: 'kb-meta', text: `🔗 ${card.links.length}`, title: card.links.map(l => l.label || l.url).join('\n') }) : null,
                     // Opens the flowchart on this card's node.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
                         onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
@@ -804,6 +886,7 @@
                     // On a shared board a new card goes under the name of whoever adds it.
                     else if (this.kbIsShared() && this.kbMyName()) fields.assignee = this.kbMyName();
                     if (lane.label) fields.labels = [lane.label.id];
+                    if (lane.category) fields.category = lane.category;
                     this.kanban.cards.push(this.kbNewCard(fields));
                     this._kbReopenCreate = col.id + '|' + (lane.key === null ? '' : lane.key);
                     this.kanbanChanged();
@@ -1071,6 +1154,8 @@
             if (!tab || !card) return null;
             const escH = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
             const parts = [`<p><strong>${escH(card.title)}</strong> - notes for each column</p>`];
+            // Its links and files, as links (part of the page's heading, not of any column).
+            (card.links || []).forEach((l) => { parts.push(`<p>${ROW_DIVIDER.slice(0, 1)}🔗 <a href="${escH(kbHref(l.url))}">${escH(l.label || l.url)}</a></p>`); });
             const multi = this.kbMultiRow();
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -1106,7 +1191,7 @@
             const bodies = cols.map(() => []);
             Array.from(doc.body.childNodes).forEach((n) => {
                 if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
-                if ((n.textContent || '').trim().startsWith(ROW_DIVIDER)) return;
+                if ((n.textContent || '').trim().startsWith(ROW_DIVIDER.slice(0, 1))) return;
                 if (i >= 0 && i < cols.length && (n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) bodies[i].push(n);
             });
             const hasText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
@@ -1179,7 +1264,27 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item'];
+            // Clicking an item's tick box ticks it on the card (once per editor).
+            if (isMaster && !editor._kbTickWired) {
+                editor._kbTickWired = true;
+                const dom = editor.editing.view.getDomRoot();
+                if (dom) dom.addEventListener('mousedown', (e) => {
+                    const h = e.target && e.target.closest && e.target.closest('h6.kb-nc-item');
+                    if (!h || e.clientX > h.getBoundingClientRect().left + 34) return;
+                    // Which item: by its card heading above and its place under it.
+                    let head = h.previousElementSibling;
+                    let idx = 0;
+                    while (head && head.tagName !== 'H5') { if (head.tagName === 'H6') idx++; head = head.previousElementSibling; }
+                    if (!head) return;
+                    const card = this.kbCards().find(c => this.kbNoteLabel(c) === kbNorm(head.textContent));
+                    const items = card ? card.checklist.filter(x => x.text.trim()) : [];
+                    if (!items[idx]) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.kbToggleItem(items[idx].id);
+                }, true);
+            }
             const plan = new Map();
             const tags = new Map();
             // Card headings in board order, by their text, to find each one's label.
@@ -1204,7 +1309,7 @@
                         return;
                     }
                     if (el.name === 'h4') { close(); return; }
-                    if (open) { plan.set(el, ['kb-nc-body']); open.push(el); }
+                    if (open) { plan.set(el, ['kb-nc-body'].concat(el.name === 'h6' ? ['kb-nc-item'] : [])); open.push(el); }
                 });
                 close();
             }
@@ -1268,6 +1373,39 @@
             });
             this.kanbanChanged();
             this.showNotification(`Added card "${text}" to "${first.name}".`);
+        },
+
+        // A checklist item ticked / unticked from the notes or the flowchart.
+        kbToggleItem(itemId) {
+            for (const c of this.kbCards()) {
+                const it = c.checklist.find(x => x.id === itemId);
+                if (it) { it.done = !it.done; this.kanbanChanged(); return true; }
+            }
+            return false;
+        },
+
+        // Draws a tick box on the checklist items' nodes in the flowchart.
+        paintKanbanItemBoxes() {
+            if (typeof d3 === 'undefined' || !this.kanban) return;
+            const app = this;
+            d3.selectAll('#flowchart g.node').each(function (d) {
+                const id = d && d.data && d.data._kanban;
+                if (!id || !id.startsWith('ck:')) return;
+                const item = app.kbCards().reduce((f, c) => f || c.checklist.find(x => `ck:${x.id}` === id), null);
+                if (!item) return;
+                const rect = this.querySelector('rect');
+                if (!rect || this.querySelector('.kb-ck-box')) return;
+                const x = +rect.getAttribute('x') + 8;
+                const y = +rect.getAttribute('y') + (+rect.getAttribute('height')) / 2 - 7;
+                const g = d3.select(this).append('g').attr('class', 'kb-ck-box').style('cursor', 'pointer');
+                g.append('title').text(item.done ? 'Done - untick' : 'Tick off');
+                g.append('rect').attr('x', x).attr('y', y).attr('width', 14).attr('height', 14).attr('rx', 3)
+                    .attr('fill', item.done ? '#2e9e5b' : 'rgba(0,0,0,0.25)').attr('stroke', '#fff').attr('stroke-width', 1.4);
+                if (item.done) g.append('path').attr('d', `M${x + 3},${y + 7.5} l3,3 l5,-6`).attr('fill', 'none').attr('stroke', '#fff').attr('stroke-width', 2).attr('stroke-linecap', 'round');
+                g.on('mousedown', ev => ev.stopPropagation()).on('dblclick', ev => ev.stopPropagation())
+                    .on('click', (ev) => { ev.stopPropagation(); app.kbToggleItem(id.slice(3)); });
+                d3.select(this).select('text').style('text-decoration', item.done ? 'line-through' : null);
+            });
         },
 
         kanbanNotesOpen() {
@@ -1671,6 +1809,28 @@
             const due = el('input', { class: 'cs-input', type: 'date', value: card.due });
             const blocked = el('input', { type: 'checkbox', checked: card.blocked });
             const reason = el('input', { class: 'cs-input', type: 'text', value: card.blockReason, placeholder: 'Waiting on...' });
+            const issuer = el('input', { class: 'cs-input', type: 'text', value: card.issuer || '', placeholder: 'Optional - who asked for it', list: 'kb-people-list' });
+            const purpose = el('textarea', { class: 'cs-input kb-desc', rows: '2', placeholder: 'Optional - what it is for' });
+            purpose.value = card.purpose || '';
+            const cats = el('datalist', { id: 'kb-cat-list' }, ...this.kbCategories().map(n => el('option', { value: n })));
+            const category = el('input', { class: 'cs-input', type: 'text', value: card.category || '', placeholder: 'Pick one, or type a new one', list: 'kb-cat-list' });
+            // Links: web addresses or file paths (shown as links in the card's notes).
+            const links = (card.links || []).map(l => Object.assign({}, l));
+            const linkBox = el('div', { class: 'kb-links' });
+            const drawLinks = () => {
+                linkBox.innerHTML = '';
+                links.forEach((l, i) => {
+                    linkBox.append(el('div', { class: 'kb-ck-item' },
+                        el('a', { class: 'kb-link-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: l.label || l.url, title: l.url, onclick: (e) => kbOpenLink(e, l.url, this) }),
+                        el('button', { class: 'cs-btn kb-ck-del', type: 'button', text: '✕', title: 'Remove', onclick: () => { links.splice(i, 1); drawLinks(); } })));
+                });
+                const url = el('input', { class: 'cs-input', type: 'text', placeholder: 'https://... or C:\\folder\\file.pdf' });
+                const label = el('input', { class: 'cs-input', type: 'text', placeholder: 'Name (optional)' });
+                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim() }); drawLinks(); };
+                [url, label].forEach(i => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }));
+                linkBox.append(el('div', { class: 'cs-row' }, url, label, el('button', { class: 'cs-btn', type: 'button', text: '+ Link', onclick: add })));
+            };
+            drawLinks();
 
             // Labels: click to toggle; type a new one to add it.
             const chosen = new Set(card.labels);
@@ -1727,6 +1887,9 @@
                 row('Description', desc),
                 el('div', { class: 'kb-two' }, row('Column', column), row('Assignee', who, people)),
                 el('div', { class: 'kb-two' }, row('Due', due), el('div', null, el('label', { class: 'cs-label' }, blocked, ' Blocked'), reason)),
+                el('div', { class: 'kb-two' }, row('Issued by', issuer), row('Category', category, cats)),
+                row('Purpose', purpose),
+                el('label', { class: 'cs-label', text: 'Links and files' }), linkBox,
                 el('label', { class: 'cs-label', text: 'Labels' }), chips, el('div', { class: 'cs-row' }, newLabel),
                 el('label', { class: 'cs-label', text: 'Checklist' }), ckBox,
                 el('p', { class: 'cs-muted cs-small kb-facts', text: facts.join(' · ') }));
@@ -1738,6 +1901,10 @@
                 card.due = due.value;
                 card.blocked = blocked.checked;
                 card.blockReason = reason.value.trim();
+                card.issuer = issuer.value.trim();
+                card.purpose = purpose.value.trim();
+                card.category = category.value.trim();
+                card.links = links;
                 card.labels = k.labels.filter(l => chosen.has(l.id)).map(l => l.id);
                 card.checklist = list.filter(c => c.text.trim());
                 p.close();
@@ -1843,16 +2010,19 @@
             const wip = el('input', { class: 'cs-input', type: 'number', min: '0', step: '1', value: String(col.wip || 0) });
             const policy = el('textarea', { class: 'cs-input', rows: '2', placeholder: 'e.g. Ready to move on when it has been reviewed' });
             policy.value = col.policy;
+            const sortOld = el('input', { type: 'checkbox', checked: col.sort === 'oldest' });
             p.body.append(
                 el('label', { class: 'cs-label', text: 'Name' }), el('div', { class: 'cs-row' }, name),
                 el('label', { class: 'cs-label', text: 'WIP limit (0 = none)' }), el('div', { class: 'cs-row' }, wip),
                 el('p', { class: 'cs-muted cs-small', text: 'How many cards this column should hold at once. Going over is allowed, but the column turns red - finish work before starting more.' }),
                 el('label', { class: 'cs-label', text: 'Policy' }), el('div', { class: 'cs-row' }, policy),
+                el('label', { class: 'cs-label' }, sortOld, ' Oldest cards first'),
                 el('p', { class: 'cs-muted cs-small', text: 'When is a card ready to move here, or done here? Shown under the column name. The last column counts as done.' }));
             const save = () => {
                 col.name = name.value.trim() || col.name;
                 col.wip = Math.max(0, Math.round(+wip.value || 0));
                 col.policy = policy.value.trim();
+                col.sort = sortOld.checked ? 'oldest' : '';
                 p.close();
                 this.kanbanChanged();
             };
@@ -1997,10 +2167,12 @@
         };
     }
 
-    // Every redraw of the flowchart: edits in the Kanban branch go to the board.
+    // Every redraw of the flowchart: edits in the Kanban branch go to the board,
+    // and checklist items' nodes get their tick boxes.
     const origRenderFlow = FlowchartViewer.prototype.renderFlowchart;
     FlowchartViewer.prototype.renderFlowchart = function (...args) {
         const r = origRenderFlow.apply(this, args);
+        try { this.paintKanbanItemBoxes(); } catch (e) { /* drawn next time */ }
         if (!this._kanbanMode && !this._critView && this.kanban) {
             try { this.pullKanbanFlowEdits(); } catch (e) { console.error('Kanban branch edits:', e); }
         }
@@ -2095,6 +2267,17 @@
         if (u) u.classList.toggle('disabled', !canUndo);
         if (rd) rd.classList.toggle('disabled', !canRedo);
     };
+
+    // Tab (outside text fields and popups) switches between the board and the flowchart.
+    document.addEventListener('keydown', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+        const a = document.activeElement;
+        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return;
+        if (document.getElementById('kanban-popup') || app.nodeBeingEdited) return;
+        e.preventDefault();
+        app.toggleKanbanMode();
+    });
 
     // Keys on the board: Delete removes the selected card, Escape clears the
     // selection, Ctrl+Y / Cmd+Z also undo and redo. They never reach the
