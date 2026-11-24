@@ -935,6 +935,7 @@ class FlowchartViewer {
         // Gantt chart view (gantt.js) and Kanban board (kanban.js).
         this.gantt = null;
         this.kanban = null;
+        this.criteria = [];
         if (typeof this.setupGantt === 'function') this.setupGantt();
 
         // Set up event listeners
@@ -2872,6 +2873,7 @@ class FlowchartViewer {
                         if (this.flowchartList.length === 0) {
                             this.gantt = null;
                             this.kanban = null;
+                            this.criteria = [];
                             this.renderFlowchart(this.getSampleData());
                             this.currentSlotIndex = 0;
                             this.saveCurrentFlowchart();
@@ -2916,6 +2918,7 @@ class FlowchartViewer {
         this.resetReflectionState();
         this.gantt = null;
         this.kanban = null;
+        this.criteria = [];
 
         const defaultData = {
             name: "New Flowchart",
@@ -3044,6 +3047,8 @@ class FlowchartViewer {
                 this.gantt = typeof this.sanitizeGantt === 'function' ? this.sanitizeGantt(parsed.gantt) : (parsed.gantt || null);
                 // ... and its Kanban board (kanban.js).
                 this.kanban = typeof this.sanitizeKanban === 'function' ? this.sanitizeKanban(parsed.kanban) : (parsed.kanban || null);
+                // ... and its criteria (criteria.js).
+                this.criteria = typeof this.sanitizeCriteria === 'function' ? this.sanitizeCriteria(parsed.criteria) : [];
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
                 // migrate those to HTML once on load; anything already HTML (or
@@ -12181,9 +12186,14 @@ class FlowchartViewer {
         // Every node gets a stable id the first time it's saved - that's what lets
         // two devices' edits to the same flowchart be merged (see FlowchartMerge).
         FlowchartMerge.ensureIds(this.rootData);
+        const leanCriteria = typeof this.leanCriteriaTrees === 'function' ? this.leanCriteriaTrees.bind(this) : null;
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit } = node;
             const out = { name };
+            // What's been written under each criterion for this node (criteria.js) -
+            // only criteria with something under them, stored compactly.
+            const crit = _crit && leanCriteria ? leanCriteria(_crit) : null;
+            if (crit) out._crit = crit;
             // Nodes mirroring the Gantt chart (gantt.js) remember their task.
             if (_gantt) out._gantt = _gantt;
             // ... and the Kanban board (kanban.js) their card.
@@ -12220,7 +12230,9 @@ class FlowchartViewer {
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages,
             gantt: this.gantt || undefined,
-            kanban: this.kanban || undefined
+            kanban: this.kanban || undefined,
+            // The criteria every node's criteria view shows (criteria.js).
+            criteria: (this.criteria && this.criteria.length) ? this.criteria : undefined
         }, null, 2);
     }
 
@@ -13775,6 +13787,18 @@ class FlowchartViewer {
         }
         deleteRowBtns.push({ label: '📷', activate: activateAddPhoto, fontSize: 18 });
         deleteRowBtns.push({ label: '🎨', activate: activateAddDrawing, fontSize: 18 });
+        // Criteria view (criteria.js): its button, and only the buttons that make
+        // sense on the view's own nodes (the criteria and the nodes they belong to).
+        const critLock = typeof self.criteriaNodeLock === 'function' ? self.criteriaNodeLock(targetDatum) : null;
+        if (typeof self.criteriaRowButton === 'function') {
+            const b = self.criteriaRowButton(targetDatum);
+            if (b) deleteRowBtns.push(b);
+        }
+        if (critLock) {
+            for (let i = deleteRowBtns.length - 1; i >= 0; i--) {
+                if (!critLock.keep.includes(deleteRowBtns[i].label)) deleteRowBtns.splice(i, 1);
+            }
+        }
         const rowUnit = btnWidth + btnSpacing;
         const rowCount = deleteRowBtns.length;
         deleteRowBtns.forEach((btn, i) => {
@@ -13782,7 +13806,12 @@ class FlowchartViewer {
             makeRadialBtn(dx, deleteRowDy, btn.label, btn.activate, Boolean(btn.danger), btn.fontSize || 26);
         });
 
-        if (this.orientation === 'LR') {
+        if (critLock) {
+            if (critLock.addChild) {
+                if (this.orientation === 'LR') makeRadialBtn(NODE_WIDTH / 2 + horizGap, 0, '+', activateAddChild);
+                else makeRadialBtn(0, bottomHalf + vertGap, '+', activateAddChild);
+            }
+        } else if (this.orientation === 'LR') {
             // Children extend to the right and parents sit to the left in this
             // orientation, so the horizontal buttons follow that flow: left adds a new
             // parent, right adds a child. Siblings stack vertically, so they move to

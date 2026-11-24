@@ -467,6 +467,7 @@
                 if (this.flowchartList.length === 0) {
                     this.gantt = null;
                     this.kanban = null;
+                    this.criteria = [];
                     this.renderFlowchart(this.getSampleData());
                     this.currentSlotIndex = 0;
                     this.saveCurrentFlowchart();
