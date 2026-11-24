@@ -418,6 +418,13 @@ body {
     flex-shrink: 0;
 }
 
+/* A finished Gantt task or ticked checklist item, in the Gantt notes. */
+#notes-editor-wrap .ck.ck-content [data-done="true"], .notes-editor-wrap-el .ck.ck-content [data-done="true"] {
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+    opacity: 0.65;
+}
+
 /* Minor heading: one level below a Subheading (Gantt checklist items use it). */
 #notes-editor-wrap .ck.ck-content h6, .notes-editor-wrap-el .ck.ck-content h6 {
     font-size: 16px !important;

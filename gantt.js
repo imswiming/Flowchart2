@@ -1227,7 +1227,7 @@
             }
             if (t.checklist.length === 0) {
                 body.append(el('label', { class: 'gantt-ck-item' },
-                    el('input', { type: 'checkbox', checked: t.done, onchange: (e) => { t.done = e.target.checked; this.ganttChanged(false); this.renderGanttDock(); } }),
+                    el('input', { type: 'checkbox', checked: t.done, onchange: (e) => { t.done = e.target.checked; this.ganttChanged(true); this.renderGanttDock(); } }),
                     el('span', { text: t.kind === 'milestone' ? 'Milestone reached' : 'Done (or add checklist items below)' })));
             }
             t.checklist.forEach((item) => {
@@ -1395,21 +1395,22 @@
             preamble.forEach(b => out.push(html(b)));
             const titles = {};
             const live = new Set();
-            const writeSection = (id, tag, label, folded) => {
+            const writeSection = (id, tag, label, folded, done) => {
                 live.add(id);
                 titles[id] = label;
                 const sec = sections.get(id);
-                out.push(`<${tag}${folded && sec && sec.folded ? ' data-folded="true"' : ''}>${esc(label)}</${tag}>`);
+                // Finished ones are crossed out (data-done, see script.js).
+                out.push(`<${tag}${folded && sec && sec.folded ? ' data-folded="true"' : ''}${done ? ' data-done="true"' : ''}>${esc(label)}</${tag}>`);
                 // Writing under a heading is ordinary text: an empty normal line
                 // sits under any heading with nothing below it yet.
                 if (sec && sec.blocks.length) sec.blocks.forEach(b => out.push(html(b)));
                 else out.push('<p>&nbsp;</p>');
             };
             this.ganttOrdered(true).forEach((t) => {
-                writeSection(t.id, t.parent ? 'h5' : 'h4', this.ganttNoteLabel(t), !t.parent);
+                writeSection(t.id, t.parent ? 'h5' : 'h4', this.ganttNoteLabel(t), !t.parent, this.ganttComplete(t));
                 t.checklist.forEach((item) => {
                     if (!item.text.trim()) return;
-                    writeSection(`ck:${item.id}`, 'h6', `${item.done ? '✓ ' : ''}${item.text.trim()}`, false);
+                    writeSection(`ck:${item.id}`, 'h6', `${item.done ? '✓ ' : ''}${item.text.trim()}`, false, item.done);
                 });
             });
             sections.forEach((sec, id) => {

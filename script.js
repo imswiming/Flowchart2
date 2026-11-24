@@ -8692,6 +8692,19 @@ class FlowchartViewer {
             afterInit() {
                 const editor = this.editor;
                 editor.model.schema.extend('heading4', { allowAttributes: ['folded'] });
+                // A finished Gantt task / ticked checklist item (gantt.js) is
+                // crossed out: a "done" mark on its heading, kept as data-done.
+                ['heading4', 'heading5', 'heading6'].forEach((name) => {
+                    editor.model.schema.extend(name, { allowAttributes: ['ganttDone'] });
+                    editor.conversion.for('upcast').attributeToAttribute({
+                        view: { name: 'h' + name.slice(-1), key: 'data-done' },
+                        model: { key: 'ganttDone', value: () => true },
+                    });
+                    editor.conversion.for('downcast').attributeToAttribute({
+                        model: { name, key: 'ganttDone' },
+                        view: () => ({ key: 'data-done', value: 'true' }),
+                    });
+                });
                 editor.conversion.for('upcast').attributeToAttribute({
                     view: { name: 'h4', key: 'data-folded' },
                     model: { key: 'folded', value: () => true },
