@@ -467,3 +467,8 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item[data-done="true"]::before {
     background: #2e9e5b; border-color: #2e9e5b;
 }
+
+/* When / who on a card: on hover, or when it's selected. */
+.kb-card-stamp { display: none; font-size: 10.5px; color: var(--kb-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (hover: hover) { .kb-card:hover .kb-card-stamp { display: inline; } }
+.kb-card.selected .kb-card-stamp { display: inline; }

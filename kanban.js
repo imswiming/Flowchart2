@@ -172,6 +172,9 @@
                     labels: Array.isArray(c.labels) ? c.labels.filter(l => labelIds.has(l)) : [],
                     assignee: typeof c.assignee === 'string' ? c.assignee : '',
                     createdBy: typeof c.createdBy === 'string' ? c.createdBy : '',
+                    // When it was last changed, and by whom.
+                    editedAt: Number.isFinite(c.editedAt) ? c.editedAt : undefined,
+                    editedBy: typeof c.editedBy === 'string' && c.editedBy ? c.editedBy : undefined,
                     // Optional: a category (grouping), who issued it, what it's for, links.
                     category: typeof c.category === 'string' ? c.category : '',
                     issuer: typeof c.issuer === 'string' ? c.issuer : '',
@@ -247,8 +250,27 @@
         // ----- Changes, undo / redo -----
         // `fromNotes`: the change came from editing the notes, which are not
         // rewritten while you type in them.
+        // Cards that changed since last time get the time and your name.
+        kbStampCards(initOnly) {
+            const sig = c => JSON.stringify([c.title, c.desc, c.column, c.labels, c.assignee, c.due, c.blocked, c.blockReason, c.checklist, c.category, c.issuer, c.purpose, c.links]);
+            const me = this.kbMyName();
+            const old = this._kbCardSigs;
+            const next = new Map();
+            this.kbCards().forEach((c) => {
+                const now = sig(c);
+                next.set(c.id, now);
+                if (initOnly || !old) return;
+                if (old.get(c.id) !== now) {
+                    c.editedAt = Date.now();
+                    if (me) c.editedBy = me; else delete c.editedBy;
+                }
+            });
+            this._kbCardSigs = next;
+        },
+
         kanbanChanged(fromNotes) {
             this.pullKbCardTabEdits();
+            this.kbStampCards();
             this.recordKanbanHistory();
             this.renderKanban();
             if (!fromNotes) this.syncKanbanNotes();
@@ -817,6 +839,9 @@
                     !done && ageDays >= 3 ? el('span', { class: 'kb-age', title: `${Math.floor(ageDays)} days in this column`, text: '●'.repeat(Math.min(4, Math.floor(Math.log2(ageDays)))) }) : null,
                     el('span', { class: 'kb-spacer' }),
                     card.links && card.links.length ? el('span', { class: 'kb-meta', text: `🔗 ${card.links.length}`, title: card.links.map(l => l.label || l.url).join('\n') }) : null,
+                el('span', { class: 'kb-card-stamp', text: card.editedAt
+                    ? `Edited ${(window.__stampText || (() => ''))(card.editedAt, card.editedBy)}`
+                    : `Added ${(window.__stampText || (() => ''))(card.created, card.createdBy)}` }),
                     // Opens the flowchart on this card's node.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
                         onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
@@ -1266,7 +1291,10 @@
         // as a card. On-screen classes only; nothing is saved.
         decorateNotesEditor(editor) {
             const ref = editor._noteTabRef || editor.config.get('noteTab');
-            const isMaster = !!(this.kanban && ref && ref.tabId === this.kanban.notesTabId);
+            const isKb = !!(this.kanban && ref && ref.tabId === this.kanban.notesTabId);
+            // The Gantt notes get the same boxes, one per subtask (gantt.js).
+            const isGantt = !isKb && !!(this.gantt && ref && ref.tabId === this.gantt.notesTabId);
+            const isMaster = isKb || isGantt;
             if (!isMaster && !editor._kbDecorated) return;
             const view = editor.editing.view;
             const root = view.document.getRoot();
@@ -1285,6 +1313,22 @@
                     let idx = 0;
                     while (head && head.tagName !== 'H5') { if (head.tagName === 'H6') idx++; head = head.previousElementSibling; }
                     if (!head) return;
+                    const refNow = editor._noteTabRef || editor.config.get('noteTab');
+                    if (this.gantt && refNow && refNow.tabId === this.gantt.notesTabId) {
+                        // Gantt: the subtask by its heading (nth of that name), then the item.
+                        const name = kbNorm(head.textContent);
+                        const heads = Array.from(dom.querySelectorAll('h5')).filter(x => kbNorm(x.textContent) === name);
+                        const nth = heads.indexOf(head);
+                        const subs = this.ganttOrdered(true).filter(t => t.parent && kbNorm(this.ganttNoteLabel(t)) === name);
+                        const task = subs[Math.max(0, nth)];
+                        const gi = task ? task.checklist.filter(x => x.text.trim()) : [];
+                        if (!gi[idx]) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        gi[idx].done = !gi[idx].done;
+                        this.ganttChanged(true);
+                        return;
+                    }
                     const card = this.kbCards().find(c => this.kbNoteLabel(c) === kbNorm(head.textContent));
                     const items = card ? card.checklist.filter(x => x.text.trim()) : [];
                     if (!items[idx]) return;
@@ -1297,11 +1341,19 @@
             const tags = new Map();
             // Card headings in board order, by their text, to find each one's label.
             const byLabel = new Map();
-            if (isMaster) this.kanban.columns.forEach(col => this.kbNoteCards(col.id).forEach((c) => {
+            if (isKb) this.kanban.columns.forEach(col => this.kbNoteCards(col.id).forEach((c) => {
                 const key = this.kbNoteLabel(c);
                 if (!byLabel.has(key)) byLabel.set(key, []);
                 byLabel.get(key).push(c);
             }));
+            // Gantt: subtasks by their heading text, in chart order.
+            const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const fmt = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : ''; };
+            if (isGantt && typeof this.ganttOrdered === 'function') this.ganttOrdered(true).filter(t => t.parent).forEach((t) => {
+                const key = kbNorm(this.ganttNoteLabel(t));
+                if (!byLabel.has(key)) byLabel.set(key, []);
+                byLabel.get(key).push(t);
+            });
             const textOf = (vel) => { let t = ''; for (const ch of vel.getChildren()) { if (ch.is('$text')) t += ch.data; else if (ch.is('element')) for (const g of ch.getChildren()) if (g.is('$text')) t += g.data; } return kbNorm(t); };
             if (isMaster) {
                 let open = null;
@@ -1311,7 +1363,15 @@
                         close(); plan.set(el, ['kb-nc-head']); open = [el];
                         // Its tag: the card's first label (in its colour), else "CARD".
                         const q = byLabel.get(textOf(el));
-                        const card = q && q.shift();
+                        const item = q && q.shift();
+                        if (isGantt) {
+                            // A subtask's tag: its dates, in its bar's colour.
+                            const color = item && typeof this.ganttColor === 'function' ? this.ganttColor(item) : '#3cb4dc';
+                            const when = item ? (item.kind === 'milestone' ? `◆ ${fmt(item.start)}` : `${fmt(item.start)} - ${fmt(item.end)}`) : 'SUBTASK';
+                            tags.set(el, { text: when, color, dark: darkText(color) });
+                            return;
+                        }
+                        const card = item;
                         const l = card && card.labels.length ? this.kbLabel(card.labels[0]) : null;
                         tags.set(el, l ? { text: l.name.toUpperCase(), color: l.color, dark: darkText(l.color) } : { text: 'CARD', color: '#4c9aff', dark: true });
                         return;
@@ -2201,6 +2261,8 @@
         // The flowchart branch is brought up to date (names and layout as this
         // version draws them).
         if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }
+        this._kbCardSigs = null;
+        if (this.kanban) this.kbStampCards(true);
         if (this._kanbanMode) this.renderKanban();
         return r;
     };

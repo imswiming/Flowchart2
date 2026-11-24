@@ -34,6 +34,10 @@
         #collab-edits .collab-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
         #collab-edits .collab-count { color: #9aa8bb; font-size: 12px; }
         body.gantt-mode #collab-edits, body.kanban-mode #collab-edits { display: none; }
+        /* The when / who tag, in the notes history's small print. */
+        #node-stamp-tag { position: fixed; z-index: 2400; pointer-events: none; padding: 1px 6px; border-radius: 4px;
+            background: rgba(20, 25, 34, 0.9); color: var(--muted, #9aa6b2); font: 11px/1.4 "Segoe UI", system-ui, Arial, sans-serif; white-space: nowrap; }
+        body.gantt-mode #node-stamp-tag, body.kanban-mode #node-stamp-tag { display: none; }
         @media (max-width: 600px) { #collab-edits { bottom: 150px; right: 10px; } }
     `;
     document.head.append(style);
@@ -65,11 +69,12 @@
             this._collabSigs = sigs;
         },
 
-        // Marks the nodes changed (or new) since the snapshot as edited by you.
+        // Marks the nodes changed (or new) since the snapshot: when, and by you
+        // (your name, once set - Cloud Sync, or the name you joined a shared
+        // flowchart with).
         collabStamp() {
-            if (!this.rootData || this._critView || !this.collabShared()) return;
+            if (!this.rootData || this._critView) return;
             const me = this.collabMe();
-            if (!me) return;
             if (typeof FlowchartMerge !== 'undefined') FlowchartMerge.ensureIds(this.rootData);
             const sigs = this._collabSigs;
             if (!sigs) { this.collabSnapshot(); return; }
@@ -77,7 +82,10 @@
                 if (!n._id) return;
                 const now = sign(n);
                 const before = sigs.get(n._id);
-                if (before === undefined ? (sigs.size > 0 && plainName(n).trim()) : before !== now) n._by = me;
+                if (before === undefined ? (sigs.size > 0 && plainName(n).trim()) : before !== now) {
+                    n._at = Date.now();
+                    if (me) n._by = me; else delete n._by;
+                }
                 sigs.set(n._id, now);
             });
         },
@@ -153,8 +161,66 @@
         }
     };
 
+    // ----- When / who, on hover (or the selected node, on a phone) -----
+    const stampText = (at, by) => {
+        if (!at && !by) return '';
+        const d = at ? new Date(at) : null;
+        const when = d ? `${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+        return [when, by].filter(Boolean).join(' - ');
+    };
+    window.__stampText = stampText;
+    methods.showNodeStamp = function (nodeEl) {
+        let tag = document.getElementById('node-stamp-tag');
+        const d = nodeEl && typeof d3 !== 'undefined' ? d3.select(nodeEl).datum() : null;
+        const text = d && d.data ? stampText(d.data._at, d.data._by) : '';
+        if (!text) { if (tag) tag.remove(); return; }
+        if (!tag) { tag = document.createElement('div'); tag.id = 'node-stamp-tag'; document.body.append(tag); }
+        tag.textContent = text;
+        const r = (nodeEl.querySelector('rect') || nodeEl).getBoundingClientRect();
+        tag.style.left = Math.round(r.left) + 'px';
+        tag.style.top = Math.round(r.bottom + 4) + 'px';
+    };
+    document.addEventListener('mouseover', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || !window.matchMedia('(hover: hover)').matches) return;
+        const nodeEl = e.target && e.target.closest && e.target.closest('#flowchart g.node');
+        if (nodeEl) app.showNodeStamp(nodeEl);
+        else if (!(e.target && e.target.closest && e.target.closest('#node-stamp-tag'))) { const t = document.getElementById('node-stamp-tag'); if (t) t.remove(); }
+    });
+
+    // Your name: in the Cloud Sync popup (the same one shared flowcharts use).
+    const addNameField = () => {
+        const pop = document.getElementById('cloud-sync-popup');
+        if (!pop || document.getElementById('cloud-my-name')) return;
+        const status = document.getElementById('cloud-sync-popup-status');
+        const wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="cs-label" for="cloud-my-name">Your name</label><div class="cs-row"><input id="cloud-my-name" class="cs-input" type="text" maxlength="80" placeholder="Shown on what you add and change"></div><p class="cs-muted cs-small">Nodes, cards and notes you edit are marked with it and the time.</p>';
+        pop.insertBefore(wrap, status || null);
+        const input = wrap.querySelector('input');
+        const fill = () => { const app = window.__flowchartApp; input.value = (app && app.collabMe && app.collabMe()) || localStorage.getItem('flowchart-guest-name') || ''; };
+        fill();
+        new MutationObserver(fill).observe(pop, { attributes: true, attributeFilter: ['style'] });
+        input.addEventListener('change', () => {
+            const v = input.value.trim();
+            if (v) localStorage.setItem('flowchart-guest-name', v); else localStorage.removeItem('flowchart-guest-name');
+        });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addNameField); else addNameField();
+
     Object.assign(FlowchartViewer.prototype, methods);
     const proto = FlowchartViewer.prototype;
+
+    // On a phone the selected node shows its tag (no hover there).
+    const origSelect = proto.selectNode;
+    proto.selectNode = function (...args) {
+        const r = origSelect.apply(this, args);
+        if (window.matchMedia('(hover: none)').matches) {
+            const d = args[0];
+            const nodeEl = d && [...document.querySelectorAll('#flowchart g.node')].find(g => typeof d3 !== 'undefined' && d3.select(g).datum() && d3.select(g).datum().data === d.data);
+            if (nodeEl) this.showNodeStamp(nodeEl);
+        }
+        return r;
+    };
 
     const origExport = proto.exportAsJSON;
     proto.exportAsJSON = function (...args) {

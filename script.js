@@ -241,7 +241,7 @@ const NODE_BTN_TONES = {
     orange: { bg: 'rgba(255,140,26,0.18)', fg: '#ff8c1a' }
 };
 // The node menu's highlighter outline.
-const NODE_HIGHLIGHT = '#ff8c1a';
+const NODE_HIGHLIGHT = '#ffcc00';
 const NODE_BTN_ICONS = {
     '+': { d: 'M12 5v14M5 12h14' },
     '←': { d: 'M19 12H5M11 18l-6-6 6-6' },
@@ -254,7 +254,7 @@ const NODE_BTN_ICONS = {
     M: { title: 'Move to another parent', tone: 'blue', d: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20' },
     '✕': { title: 'Delete with everything under it', tone: 'red', d: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6' },
     P: { title: 'Delete, keeping its children', tone: 'red', d: 'M3 14h6v6H3zM13 3h5v5h-5zM4 4l16 16M17 13l4 4M21 13l-4 4' },
-    H: { title: 'Highlight the node (orange outline) - again to take it off', tone: 'orange', d: 'M9 11l7.5-7.5 4 4L13 15zM9 11l-5 5v4h4l5-5M14.5 5.5l4 4' },
+    H: { title: 'Highlight the node (yellow outline) - again to take it off', tone: 'yellow', d: 'M9 11l7.5-7.5 4 4L13 15zM9 11l-5 5v4h4l5-5M14.5 5.5l4 4' },
     '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
     '🎨': { title: 'Drawing', text: '🎨' },
     '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
@@ -12550,12 +12550,14 @@ class FlowchartViewer {
         FlowchartMerge.ensureIds(this.rootData);
         const leanCriteria = typeof this.leanCriteriaTrees === 'function' ? this.leanCriteriaTrees.bind(this) : null;
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by, _at } = node;
             const out = { name };
             // Highlighted with the node menu's highlighter (an orange outline).
             if (_hl) out._hl = true;
             // Who last edited it, on a shared flowchart (collab.js).
             if (_by) out._by = _by;
+            // ... and when (collab.js).
+            if (_at) out._at = _at;
             // What's been written under each criterion for this node (criteria.js) -
             // only criteria with something under them, stored compactly.
             const crit = _crit && leanCriteria ? leanCriteria(_crit) : null;
@@ -14203,10 +14205,11 @@ class FlowchartViewer {
                     .text(icon ? icon.text : item.label);
             }
         };
-        const drawPill = (items, cx, cy) => {
+        const drawPill = (items, cx, cy, bare) => {
             const w = items.length * TILE + (items.length - 1) * GAP + PAD * 2;
             const pill = btnLayer.append('g').attr('class', 'nb-group');
-            pill.append('rect')
+            // bare: just the buttons, no pill behind them.
+            if (!bare) pill.append('rect')
                 .attr('class', 'nb-pill')
                 .attr('x', cx - w / 2).attr('y', cy - PILL_H / 2)
                 .attr('width', w).attr('height', PILL_H)
@@ -14267,13 +14270,13 @@ class FlowchartViewer {
             const sideW = 2 * TILE + GAP + PAD * 2;
             const off = toolsW / 2 + 12 + sideW / 2;
             drawPill([
-                { icon: '+', label: '+', title: lr ? 'New sibling above' : 'New sibling before', activate: activateAddSiblingBefore },
-                { icon: '←', label: '←', title: lr ? 'Move up' : 'Move left', activate: () => self.swapNodeWithSibling(-1, targetDatum) }
-            ], -off, rowY);
+                { icon: '+', label: '+', tone: 'soft', title: lr ? 'New sibling above' : 'New sibling before', activate: activateAddSiblingBefore },
+                { icon: '←', label: '←', tone: 'soft', title: lr ? 'Move up' : 'Move left', activate: () => self.swapNodeWithSibling(-1, targetDatum) }
+            ], -off, rowY, true);
             drawPill([
-                { icon: '→', label: '→', title: lr ? 'Move down' : 'Move right', activate: () => self.swapNodeWithSibling(1, targetDatum) },
-                { icon: '+', label: '+', title: lr ? 'New sibling below' : 'New sibling after', activate: activateAddSiblingAfter }
-            ], off, rowY);
+                { icon: '→', label: '→', tone: 'soft', title: lr ? 'Move down' : 'Move right', activate: () => self.swapNodeWithSibling(1, targetDatum) },
+                { icon: '+', label: '+', tone: 'soft', title: lr ? 'New sibling below' : 'New sibling after', activate: activateAddSiblingAfter }
+            ], off, rowY, true);
         }
         if (!critLock || critLock.parent) {
             if (lr) drawPlus(-(NODE_WIDTH / 2 + 44), 0, activateAddParent, 'New parent');

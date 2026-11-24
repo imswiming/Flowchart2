@@ -4072,3 +4072,6 @@ body.gantt-mode #flowchart {
 }
 #node-tools-strip { display: none; }
 @media (max-width: 600px) { body.node-tools-on #node-tools-strip { display: flex; } }
+
+/* The share icon's dark purple people, lightened so they stand out. */
+#top-share-btn, #share-btn, #hamburger-share { filter: brightness(1.9) saturate(0.55); }
