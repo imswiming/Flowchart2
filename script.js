@@ -932,8 +932,9 @@ class FlowchartViewer {
         this.rehydrateAllFromImageDb().catch(err => console.error('Could not read saved pictures:', err));
         // Flowcharts shared with other people (sharing.js).
         if (typeof this.setupSharing === 'function') this.setupSharing();
-        // Gantt chart view (gantt.js).
+        // Gantt chart view (gantt.js) and Kanban board (kanban.js).
         this.gantt = null;
+        this.kanban = null;
         if (typeof this.setupGantt === 'function') this.setupGantt();
 
         // Set up event listeners
@@ -2870,6 +2871,7 @@ class FlowchartViewer {
                         this.showStoragePopup();
                         if (this.flowchartList.length === 0) {
                             this.gantt = null;
+                            this.kanban = null;
                             this.renderFlowchart(this.getSampleData());
                             this.currentSlotIndex = 0;
                             this.saveCurrentFlowchart();
@@ -2913,6 +2915,7 @@ class FlowchartViewer {
         }
         this.resetReflectionState();
         this.gantt = null;
+        this.kanban = null;
 
         const defaultData = {
             name: "New Flowchart",
@@ -3039,6 +3042,8 @@ class FlowchartViewer {
                 this.relinkMorphNodeRefs();
                 // This flowchart's Gantt chart (gantt.js), if it has one.
                 this.gantt = typeof this.sanitizeGantt === 'function' ? this.sanitizeGantt(parsed.gantt) : (parsed.gantt || null);
+                // ... and its Kanban board (kanban.js).
+                this.kanban = typeof this.sanitizeKanban === 'function' ? this.sanitizeKanban(parsed.kanban) : (parsed.kanban || null);
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
                 // migrate those to HTML once on load; anything already HTML (or
@@ -12212,7 +12217,8 @@ class FlowchartViewer {
             notesPinned: this.notesPinned,
             notesDrawings: this.notesDrawings,
             notesImages: this.notesImages,
-            gantt: this.gantt || undefined
+            gantt: this.gantt || undefined,
+            kanban: this.kanban || undefined
         }, null, 2);
     }
 
