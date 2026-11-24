@@ -488,3 +488,23 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 }
 .kb-board.grouped .kb-lane-head .kb-chip { font-size: 12px; padding: 2px 8px; }
 .kb-board.grouped .kb-cell { min-height: 70px; }
+
+/* A card's options: a panel along the bottom of the screen. */
+.cs-popup.kb-sheet {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    transform: none !important;
+    width: auto !important;
+    max-height: 48vh;
+    overflow-y: auto;
+    border-radius: 14px 14px 0 0;
+    padding: 12px 18px 14px;
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
+}
+.kb-sheet > div:nth-child(2) { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 18px; align-items: start; }
+.kb-sheet .cs-title { margin-bottom: 4px; }
+.kb-sheet > .cs-row:last-child { position: sticky; bottom: -14px; background: var(--popup-bg); padding: 8px 0 2px; margin-top: 6px !important; }
+.kb-sheet .kb-facts { grid-column: 1 / -1; }

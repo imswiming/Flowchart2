@@ -1011,9 +1011,12 @@
                         this.kbMoveCard(card.id, cell.dataset.col, next, lane);
                         if (JSON.stringify(this.kbCards().map(c => [c.id, c.column, c.assignee, c.labels[0] || ''])) === before) this.renderKanban();
                     } else if (ev.type === 'pointerup' && !(touch && armed)) {
-                        // A click: selects; a second click on the selected card opens it.
-                        if (this._kbSelected === card.id) this.openKanbanCard(card.id);
-                        else { this._kbSelected = card.id; this.renderKanbanBoard(this.kbScrollState()); if (this.notesPanelShowing()) this.openKbCardNotes(card.id); }
+                        // A click selects the card and opens its options along the
+                        // bottom of the screen (and its notes, if Notes is open).
+                        const fresh = this._kbSelected !== card.id;
+                        this._kbSelected = card.id;
+                        this.openKanbanCard(card.id);
+                        if (fresh && this.notesPanelShowing()) this.openKbCardNotes(card.id);
                     }
                 };
                 const cleanup = () => {
@@ -1209,7 +1212,9 @@
                     parts.push(`<p>${ROW_DIVIDER} ${escH((r && r.name) || 'Row')} ${ROW_DIVIDER}</p>`);
                     lastRow = col.row;
                 }
-                parts.push(`<h4>${escH(col.name)}</h4>`);
+                // Only the column the card is in starts open (written folded, so a
+                // later refresh of the note can't undo it).
+                parts.push(`<h4${col.id === card.column ? '' : ' data-folded="true"'}>${escH(col.name)}</h4>`);
                 parts.push((card.notes && card.notes[col.id]) || '<p>&nbsp;</p>');
             });
             const content = parts.join('');
@@ -1884,6 +1889,8 @@
             this._kbSelected = id;
             const k = this.kanban;
             const p = this.kbPopup('Card');
+            // Along the bottom of the screen rather than a popup in the middle.
+            p.pop.classList.add('kb-sheet');
             const row = (label, ...inputs) => el('div', null, el('label', { class: 'cs-label', text: label }), el('div', { class: 'cs-row' }, ...inputs));
             const title = el('input', { class: 'cs-input', type: 'text', value: card.title });
             const desc = el('textarea', { class: 'cs-input kb-desc', rows: '3', placeholder: 'Details, acceptance criteria, links...' });
@@ -1976,9 +1983,9 @@
                 el('div', { class: 'kb-two' }, row('Due', due), el('div', null, el('label', { class: 'cs-label' }, blocked, ' Blocked'), reason)),
                 el('div', { class: 'kb-two' }, row('Issued by', issuer), row('Category', category, cats)),
                 row('Purpose', purpose),
-                el('label', { class: 'cs-label', text: 'Links and files' }), linkBox,
-                el('label', { class: 'cs-label', text: 'Labels' }), chips, el('div', { class: 'cs-row' }, newLabel),
-                el('label', { class: 'cs-label', text: 'Checklist' }), ckBox,
+                el('div', null, el('label', { class: 'cs-label', text: 'Links and files' }), linkBox),
+                el('div', null, el('label', { class: 'cs-label', text: 'Labels' }), chips, el('div', { class: 'cs-row' }, newLabel)),
+                el('div', null, el('label', { class: 'cs-label', text: 'Checklist' }), ckBox),
                 el('p', { class: 'cs-muted cs-small kb-facts', text: facts.join(' · ') }));
 
             const save = () => {
