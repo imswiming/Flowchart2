@@ -408,6 +408,18 @@
             this.autosave();
         },
 
+        // In the view, the chart's own hidden top node and the empty node holding
+        // the criteria (with its "+" stub) are only there to hang the tree on:
+        // they and their lines aren't drawn, so the criteria are the top row.
+        hideCritScaffold() {
+            if (typeof d3 === 'undefined') return;
+            const scaffold = (d) => !!d && (d.depth === 0 || (d.data && d.data._critTop)
+                || (d.parent && d.parent.data && d.parent.data._critTop && this.isPlaceholderNodeData(d.data))
+                || (d.depth === 1 && this.isPlaceholderNodeData(d.data)));
+            d3.selectAll('#flowchart g.node').each(function (d) { if (scaffold(d)) this.style.display = 'none'; });
+            d3.selectAll('#flowchart path.link').each(function (l) { if (l && (scaffold(l.source) || scaffold(l.target))) this.style.display = 'none'; });
+        },
+
         updateCritBanner() {
             const v = this._critView;
             let banner = document.getElementById('crit-banner');
@@ -515,6 +527,7 @@
         const r = origRender.call(this, data, ...rest);
         this.paintCritPicks();
         this.updateCritBanner();
+        if (this._critView) this.hideCritScaffold();
         return r;
     };
 
