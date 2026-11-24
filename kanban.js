@@ -949,11 +949,18 @@
         },
 
         // Selecting a card while the Kanban notes are open goes to its heading.
+        // `cardId` can also be 'col:<column id>': that column's Title.
         focusKanbanNoteTitle(cardId, force) {
             if (!force && !this.kanbanNotesOpen()) return;
-            const card = this.kbCard(cardId);
-            if (!card) return;
-            const label = this.kbNoteLabel(card);
+            const isCol = typeof cardId === 'string' && cardId.startsWith('col:');
+            const col = isCol ? this.kbColumn(cardId.slice(4)) : null;
+            const card = isCol ? null : this.kbCard(cardId);
+            if (!card && !col) return;
+            const label = card ? this.kbNoteLabel(card) : kbNorm(col.name);
+            const want = card ? 'heading5' : 'heading4';
+            // Two columns / cards can share a name: the nth one goes with the nth heading.
+            const occurrence = card ? this.kbNoteOccurrence(card)
+                : Math.max(0, this.kanban.columns.filter(c => kbNorm(c.name) === label).indexOf(col));
             const tryJump = (left) => {
                 const editor = this.notesEditor;
                 const tab = this.kanbanNotesTab(false);
@@ -962,11 +969,12 @@
                 const root = editor.model.document.getRoot();
                 const all = Array.from(root.getChildren());
                 const textOf = (h) => { let s = ''; for (const it of h.getChildren()) if (it.is('$text')) s += it.data; return kbNorm(s); };
-                const matches = all.filter(c => c.is('element', 'heading5') && textOf(c) === label);
-                const target = matches[Math.min(this.kbNoteOccurrence(card), matches.length - 1)];
+                const matches = all.filter(c => c.is('element', want) && textOf(c) === label);
+                const target = matches[Math.min(occurrence, matches.length - 1)];
                 if (!target) return;
+                if (col && target.getAttribute('folded') && typeof this.toggleTitleFold === 'function') this.toggleTitleFold(editor, target, false);
                 // Unfold its column's Title.
-                for (let i = all.indexOf(target) - 1; i >= 0; i--) {
+                for (let i = all.indexOf(target) - 1; card && i >= 0; i--) {
                     if (all[i].is('element', 'heading4')) {
                         if (all[i].getAttribute('folded') && typeof this.toggleTitleFold === 'function') this.toggleTitleFold(editor, all[i], false);
                         break;
@@ -1505,6 +1513,23 @@
                 clearTimeout(this._kbNotesPullTimer);
                 this._kbNotesPullTimer = setTimeout(() => this.pullKanbanNotesEdits(), 700);
             }
+            return r;
+        };
+    }
+
+    // A column or card node selected in the flowchart while the Kanban notes
+    // are open goes to its heading there (a checklist item: its card). The
+    // keyboard stays with the flowchart.
+    const origSelectNode = FlowchartViewer.prototype.selectNode;
+    if (origSelectNode) {
+        FlowchartViewer.prototype.selectNode = function (d, ...rest) {
+            const r = origSelectNode.call(this, d, ...rest);
+            try {
+                let n = d && d.data;
+                let id = n && n._kanban;
+                if (id && id.startsWith('ck:') && d.parent && d.parent.data) id = d.parent.data._kanban;
+                if (id && id !== 'root' && this.kanban && this.kanbanNotesOpen()) this.focusKanbanNoteTitle(id);
+            } catch (e) { /* the notes aren't ready - nothing to jump to */ }
             return r;
         };
     }
