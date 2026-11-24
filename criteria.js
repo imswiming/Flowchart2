@@ -568,6 +568,50 @@
 
     // Shift + click picks nodes for the side-by-side view; a plain click on a
     // node that isn't picked starts over.
+    //
+    // The pick happens on mousedown, and the mousedown is kept from the page:
+    // otherwise it takes focus out of the open node's edit box, whose blur
+    // saves and redraws the whole chart before the button comes up - the node
+    // under the mouse is replaced, no click ever arrives, and the redraw drops
+    // the selected node's menu. Keeping it from the chart's pan/zoom also stops
+    // a slight wobble of the mouse counting as a drag that deselects.
+    document.addEventListener('mousedown', (e) => {
+        const app = window.__flowchartApp;
+        if (!app || app._critView || !e.shiftKey || e.button !== 0 || typeof d3 === 'undefined') return;
+        const nodeEl = e.target && e.target.closest && e.target.closest('#flowchart g.node');
+        if (!nodeEl || e.target.closest('.radial-add-btn-layer, .fold-arrow-btn')) return;
+        const d = d3.select(nodeEl).datum();
+        if (!d || !d.data) return;
+        e.preventDefault();
+        e.stopPropagation();
+        app._critShiftDown = true;
+        if (!d.parent || app.isPlaceholderNodeData(d.data)) return;
+        if (!app._critPicks) app._critPicks = new Set();
+        const picks = app._critPicks;
+        // The node already selected counts as the first pick.
+        if (!picks.size && app.selectedNode && app.selectedNode.data && app.selectedNode.data !== d.data && app.selectedNode.parent) picks.add(app.selectedNode.data);
+        if (picks.has(d.data)) picks.delete(d.data); else picks.add(d.data);
+        app.paintCritPicks();
+        // The selected node keeps its menu (for 🎯).
+        if (app.selectedNode && !document.querySelector('.radial-add-btn-layer')) app.refreshRadialButtons();
+        if (picks.size > 1) app.showNotification(`${picks.size} nodes picked - 🎯 on one of them shows their criteria side by side. Esc clears.`, 3500);
+    }, true);
+    // ... and the rest of that Shift + click goes nowhere either.
+    ['pointerup', 'mouseup', 'click', 'dblclick'].forEach((type) => {
+        document.addEventListener(type, (e) => {
+            const app = window.__flowchartApp;
+            if (!app || !app._critShiftDown) return;
+            if (type === 'click' || type === 'dblclick') {
+                if (type === 'click') app._critShiftDown = false;
+                e.preventDefault();
+                e.stopPropagation();
+            } else {
+                // No click comes if the mouse left the node: let go anyway.
+                setTimeout(() => { app._critShiftDown = false; }, 300);
+            }
+        }, true);
+    });
+
     document.addEventListener('click', (e) => {
         const app = window.__flowchartApp;
         if (!app || app._critView || typeof d3 === 'undefined') return;
@@ -575,26 +619,14 @@
         // A click on empty space in the chart lets go of the picked nodes.
         if (!nodeEl) {
             const inChart = e.target && e.target.closest && e.target.closest('#flowchart svg');
-            if (inChart && !e.target.closest('.radial-add-btn-layer, .fold-arrow-btn')) app.clearCritPicks();
+            if (inChart && !e.shiftKey && !e.target.closest('.radial-add-btn-layer, .fold-arrow-btn')) app.clearCritPicks();
             return;
         }
-        if (e.target.closest('.radial-add-btn')) return;
+        if (e.target.closest('.radial-add-btn') || e.shiftKey) return;
         const d = d3.select(nodeEl).datum();
         if (!d || !d.data) return;
-        if (!app._critPicks) app._critPicks = new Set();
         const picks = app._critPicks;
-        if (!e.shiftKey) {
-            if (picks.size && !picks.has(d.data)) app.clearCritPicks();
-            return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        if (!d.parent || app.isPlaceholderNodeData(d.data)) return;
-        // The node already selected counts as the first pick.
-        if (!picks.size && app.selectedNode && app.selectedNode.data && app.selectedNode.data !== d.data && app.selectedNode.parent) picks.add(app.selectedNode.data);
-        if (picks.has(d.data)) picks.delete(d.data); else picks.add(d.data);
-        app.paintCritPicks();
-        if (picks.size > 1) app.showNotification(`${picks.size} nodes picked - 🎯 on one of them shows their criteria side by side. Esc clears.`, 3500);
+        if (picks && picks.size && !picks.has(d.data)) app.clearCritPicks();
     }, true);
 
     // A drag or click on the chart can drop the selection without going
