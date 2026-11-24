@@ -472,3 +472,19 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-card-stamp { display: none; font-size: 10.5px; color: var(--kb-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 @media (hover: hover) { .kb-card:hover .kb-card-stamp { display: inline; } }
 .kb-card.selected .kb-card-stamp { display: inline; }
+
+/* Grouped (label, assignee, category): each group is a band across the
+   board like a row - its name as a heading over a line the full width,
+   with room between groups. */
+.kb-board.grouped .kb-lane-head {
+    margin-top: 14px;
+    padding: 8px 2px 8px;
+    border-top: 2px solid #dfe1e6;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--kb-text);
+    position: sticky;
+    left: 0;
+}
+.kb-board.grouped .kb-lane-head .kb-chip { font-size: 12px; padding: 2px 8px; }
+.kb-board.grouped .kb-cell { min-height: 70px; }
