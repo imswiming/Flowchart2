@@ -354,6 +354,25 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-flow-num { text-align: right; }
 .kb-flow-age { grid-column: 2 / 4; font-size: 11px; color: var(--muted); margin-top: -4px; }
 
+/* Rows of columns (several rows: one scrolling area, each row's grid at
+   its natural height under the row's name). */
+.kb-rows { flex: 1 1 0; overflow: auto; padding: 0 18px 16px; }
+.kb-row { margin-bottom: 18px; }
+.kb-row-head { display: flex; align-items: center; gap: 6px; padding: 4px 2px 8px; font-weight: 600; font-size: 14px; color: var(--kb-text); position: sticky; left: 0; width: max-content; }
+.kb-row-head:hover .kb-col-menu { opacity: 1; }
+.kb-board.in-rows { overflow: visible; padding: 0; width: max-content; }
+.kb-board.in-rows .kb-cell.joined { overflow: visible; min-height: 140px; }
+.kb-add-row { align-self: flex-start; margin: 2px 0 12px; padding: 6px 12px; border: 1px dashed #b3b9c4; border-radius: 6px; background: none; color: var(--kb-sub); font: inherit; font-size: 13px; cursor: pointer; }
+.kb-add-row:hover { background: #f1f2f4; color: var(--kb-text); }
+.kb-board > .kb-add-row { grid-column: 1 / -1; position: sticky; left: 0; margin-top: 10px; }
+
+/* Grouped: the grey column strips run on, unbroken, behind the lane headings. */
+.kb-board.grouped .kb-col-head { border-radius: 6px 6px 0 0; margin-bottom: 0; }
+.kb-board.grouped .kb-cell { border-radius: 0; margin-bottom: 0; }
+.kb-board.grouped .kb-cell.last { border-radius: 0 0 6px 6px; }
+.kb-lane-fill { background: var(--kb-col); }
+.kb-lane-head { position: relative; z-index: 1; }
+
 /* One row: title, search and filters, then Group by / Insights and the board
    buttons at the right (the header and bar's own boxes step aside). */
 .kb-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 18px 12px; flex: 0 0 auto; }
@@ -376,3 +395,55 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     .kb-stats { grid-template-columns: repeat(2, 1fr); }
     .kb-two { grid-template-columns: 1fr; }
 }
+
+/* Kanban notes: each card is a box - its heading marked as a card, and its
+   text (down to the next card or column) inside the same outline. */
+.ck.ck-content .kb-nc-head {
+    margin: 16px 0 0 !important;
+    padding: 7px 12px 7px 12px !important;
+    background: rgba(76, 154, 255, 0.16);
+    border: 1px solid rgba(76, 154, 255, 0.55);
+    border-bottom-color: rgba(76, 154, 255, 0.25);
+    border-radius: 8px 8px 0 0;
+    color: #cfe3ff;
+}
+.ck.ck-content .kb-nc-head::before {
+    content: 'CARD';
+    display: inline-block;
+    margin-right: 8px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #4c9aff;
+    color: #0b1a2e;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    vertical-align: middle;
+}
+.ck.ck-content .kb-nc-body {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    border-left: 1px solid rgba(76, 154, 255, 0.55);
+    border-right: 1px solid rgba(76, 154, 255, 0.55);
+    background: rgba(76, 154, 255, 0.04);
+}
+.ck.ck-content ul.kb-nc-body, .ck.ck-content ol.kb-nc-body { padding-left: 32px !important; }
+.ck.ck-content .kb-nc-end {
+    border-bottom: 1px solid rgba(76, 154, 255, 0.55);
+    border-radius: 0 0 8px 8px;
+    padding-bottom: 8px !important;
+    margin-bottom: 6px !important;
+}
+/* Heading and text share one left edge and width: a card heading is a
+   Subheading, drawn 52 characters wide (21px), so the text under it is too. */
+.ck.ck-content .kb-nc-head, .ck.ck-content .kb-nc-body {
+    margin-left: 14px !important;
+    margin-right: 0 !important;
+    box-sizing: border-box;
+    display: block !important;
+    width: calc(52 * var(--note-title-char-em, 0.52) * 21px) !important;
+    max-width: none !important;
+}
+.ck.ck-content .kb-nc-head.kb-nc-end { border-radius: 8px; border-bottom-color: rgba(76, 154, 255, 0.55); }

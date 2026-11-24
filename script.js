@@ -8912,6 +8912,18 @@ class FlowchartViewer {
                 editor.model.document.selection.on('change:range', markActiveTitle);
                 editor.model.document.on('change:data', markActiveTitle, { priority: 'lowest' });
 
+                // Other parts of the app can mark up a note's blocks on screen
+                // (e.g. kanban.js boxes each card in the Kanban notes).
+                const decorate = () => {
+                    const app = editor.notesApp || window.__flowchartApp;
+                    if (app && typeof app.decorateNotesEditor === 'function' && editor.state !== 'destroyed') {
+                        try { app.decorateNotesEditor(editor); } catch (e) { /* drawn next change */ }
+                    }
+                };
+                editor.model.document.on('change:data', decorate, { priority: 'lowest' });
+                editor.once('ready', decorate);
+                editor._noteDecorate = decorate;
+
                 // Enter at the end of a folded title: open it, so the new line
                 // that Enter adds underneath is visible (and not swallowed by
                 // the fold).

@@ -31,6 +31,7 @@
     const AVATAR_COLORS = ['#e2735a', '#4c9aff', '#36b37e', '#9f8fef', '#f5a623', '#00b8d9', '#e774bb', '#8f7ee7', '#57d9a3', '#ff8f73'];
 
     const kbNorm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    const ROW_DIVIDER = '━━━━━━';
     const uid = p => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const now = () => Date.now();
     const el = (tag, props, ...kids) => {
@@ -116,13 +117,25 @@
     const methods = {
         sanitizeKanban(raw) {
             if (!raw || typeof raw !== 'object') return null;
+            // Rows: each with its own columns (one unnamed row on older boards).
+            const rowSeen = new Set();
+            let rows = (Array.isArray(raw.rows) ? raw.rows : []).filter(r => r && typeof r.id === 'string' && !rowSeen.has(r.id) && rowSeen.add(r.id))
+                .map(r => ({ id: r.id, name: typeof r.name === 'string' ? r.name : '' }));
+            if (!rows.length) rows = [{ id: 'r0', name: '' }];
+            const rowIds = new Set(rows.map(r => r.id));
             const columns = (Array.isArray(raw.columns) ? raw.columns : []).filter(c => c && typeof c.id === 'string').map(c => ({
                 id: c.id,
+                row: rowIds.has(c.row) ? c.row : rows[0].id,
                 name: typeof c.name === 'string' ? c.name : 'Column',
                 wip: Number.isFinite(+c.wip) && +c.wip > 0 ? Math.round(+c.wip) : 0,
                 policy: typeof c.policy === 'string' ? c.policy : ''
             }));
             if (!columns.length) return null;
+            // Columns kept grouped by row, in row order.
+            const rowOrder = new Map(rows.map((r, i) => [r.id, i]));
+            columns.sort((a, b) => rowOrder.get(a.row) - rowOrder.get(b.row));
+            // A row without columns goes.
+            rows = rows.filter(r => columns.some(c => c.row === r.id));
             const colIds = new Set(columns.map(c => c.id));
             const labels = (Array.isArray(raw.labels) ? raw.labels : []).filter(l => l && typeof l.id === 'string').map(l => ({
                 id: l.id, name: typeof l.name === 'string' ? l.name : 'Label',
@@ -155,7 +168,7 @@
             let next = Math.max(maxNum + 1, Number.isFinite(raw.nextNum) ? raw.nextNum : 1);
             cards.forEach((c) => { if (!c.num) c.num = next++; });
             return {
-                columns, cards, labels,
+                rows, columns, cards, labels,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
                 nextNum: next,
                 groupBy: ['assignee', 'label'].includes(raw.groupBy) ? raw.groupBy : 'none',
@@ -173,7 +186,14 @@
         kbCard(id) { return this.kbCards().find(c => c.id === id) || null; },
         kbColumn(id) { return this.kanban ? this.kanban.columns.find(c => c.id === id) || null : null; },
         kbColIndex(id) { return this.kanban ? this.kanban.columns.findIndex(c => c.id === id) : -1; },
-        kbIsDone(card) { const cols = this.kanban.columns; return cols.length > 1 && card.column === cols[cols.length - 1].id; },
+        // Rows: each holds its own columns; the first column of a row is its
+        // backlog and the last one its "done".
+        kbRows() { return (this.kanban && this.kanban.rows) || []; },
+        kbRowCols(rowId) { return this.kanban ? this.kanban.columns.filter(c => c.row === rowId) : []; },
+        kbMultiRow() { const r = this.kbRows(); return r.length > 1 || !!(r[0] && r[0].name); },
+        kbColPos(id) { const col = this.kbColumn(id); return col ? this.kbRowCols(col.row).indexOf(col) : -1; },
+        kbColIsDone(col) { if (!col) return false; const cols = this.kbRowCols(col.row); return cols.length > 1 && cols[cols.length - 1] === col; },
+        kbIsDone(card) { return this.kbColIsDone(this.kbColumn(card.column)); },
         kbLabel(id) { return this.kanban ? this.kanban.labels.find(l => l.id === id) || null : null; },
         kbKey(card) { return `${this.kanban.prefix}-${card.num}`; },
         // Whether the open flowchart is shared (sharing.js), and the name this
@@ -218,7 +238,7 @@
 
         kanbanSnapshot() {
             const k = this.kanban;
-            return JSON.stringify(k ? { columns: k.columns, cards: k.cards, labels: k.labels, prefix: k.prefix, nextNum: k.nextNum } : null);
+            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, labels: k.labels, prefix: k.prefix, nextNum: k.nextNum } : null);
         },
         resetKanbanHistory() {
             this._kbUndo = [];
@@ -265,7 +285,8 @@
         newKanbanBoard(columns) {
             const old = this.kanban || {};
             this.kanban = {
-                columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), name, wip: wip || 0, policy: policy || '' })),
+                rows: [{ id: 'r0', name: '' }],
+                columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), row: 'r0', name, wip: wip || 0, policy: policy || '' })),
                 cards: [], labels: [], prefix: 'KB', nextNum: 1, groupBy: 'none',
                 // The notes tab stays; what was written under old cards goes under "Removed".
                 notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {},
@@ -282,7 +303,7 @@
                 assignee: '', createdBy: this.kbMyName(), due: '', blocked: false, blockReason: '', checklist: [],
                 created: t, started: null, finished: null, moved: t
             }, fields || {});
-            const i = this.kbColIndex(card.column);
+            const i = this.kbColPos(card.column);
             if (i > 0) card.started = card.started || t;
             if (this.kbIsDone(card)) card.finished = card.finished || t;
             return card;
@@ -395,8 +416,8 @@
                 const t = now();
                 card.column = colId;
                 card.moved = t;
-                if (this.kbColIndex(colId) > 0 && !card.started) card.started = t;
-                if (this.kbColIndex(colId) === 0) card.started = null;
+                if (this.kbColPos(colId) > 0 && !card.started) card.started = t;
+                if (this.kbColPos(colId) === 0) card.started = null;
                 card.finished = this.kbIsDone(card) ? t : null;
                 const col = this.kbColumn(colId);
                 const count = k.cards.filter(c => c.column === colId).length;
@@ -479,10 +500,10 @@
 
         kbScrollState() {
             const view = document.getElementById('kanban-view');
-            const board = view && view.querySelector('.kb-board');
+            const board = view && (view.querySelector('.kb-rows') || view.querySelector('.kb-board'));
             if (!board) return null;
             const cells = {};
-            board.querySelectorAll('.kb-cell').forEach((c) => { cells[c.dataset.col + '|' + c.dataset.lane] = c.scrollTop; });
+            view.querySelectorAll('.kb-cell').forEach((c) => { cells[c.dataset.col + '|' + c.dataset.lane] = c.scrollTop; });
             return { left: board.scrollLeft, top: board.scrollTop, cells };
         },
 
@@ -598,22 +619,50 @@
             const view = document.getElementById('kanban-view');
             const wrap = view && view.querySelector('.kb-board-wrap');
             if (!wrap) return;
-            const k = this.kanban;
-            const cols = k.columns;
             const lanes = this.kbLanes();
-            const grouped = k.groupBy !== 'none';
+            const grouped = this.kanban.groupBy !== 'none';
+            const visible = this.kbCards().filter(c => this.kbMatches(c));
             wrap.innerHTML = '';
-            const board = el('div', { class: 'kb-board' + (grouped ? ' grouped' : '') });
+            const rows = this.kbRows();
+            if (!this.kbMultiRow()) {
+                // One row: the board fills the view, each column scrolling on its own.
+                const board = this.buildKanbanGrid(this.kbRowCols(rows[0].id), lanes, grouped, visible, true);
+                board.append(el('button', { class: 'kb-add-row', type: 'button', text: '+ Row', title: 'Add a row with columns of its own', onclick: () => this.addKanbanRow() }));
+                wrap.append(board);
+            } else {
+                const scroller = el('div', { class: 'kb-rows' });
+                rows.forEach((row) => {
+                    scroller.append(el('div', { class: 'kb-row', 'data-row': row.id },
+                        el('div', { class: 'kb-row-head' },
+                            el('span', { class: 'kb-row-name', text: row.name || 'Row' }),
+                            el('button', { class: 'kb-col-menu', type: 'button', text: '⋯', title: 'Row: name, order, delete', onclick: () => this.openKanbanRow(row.id) })),
+                        this.buildKanbanGrid(this.kbRowCols(row.id), lanes, grouped, visible, false)));
+                });
+                scroller.append(el('button', { class: 'kb-add-row', type: 'button', text: '+ Add row', title: 'Add a row with columns of its own', onclick: () => this.addKanbanRow() }));
+                wrap.append(scroller);
+            }
+            if (keep) {
+                const sc = wrap.querySelector('.kb-rows') || wrap.querySelector('.kb-board');
+                if (sc) { sc.scrollLeft = keep.left; sc.scrollTop = keep.top; }
+                wrap.querySelectorAll('.kb-cell').forEach((c) => {
+                    const v = keep.cells[c.dataset.col + '|' + c.dataset.lane];
+                    if (v) c.scrollTop = v;
+                });
+            }
+        },
+
+        // One row's columns as a grid: headers, then (grouped) a heading per lane
+        // with the grey column strips running on under it, and the cells.
+        buildKanbanGrid(cols, lanes, grouped, visible, fill) {
+            const board = el('div', { class: 'kb-board' + (grouped ? ' grouped' : '') + (fill ? '' : ' in-rows') });
             board.style.gridTemplateColumns = `repeat(${cols.length}, var(--kb-col-w)) 40px`;
-            if (!grouped) board.style.gridTemplateRows = 'auto minmax(0, 1fr)';
+            if (!grouped && fill) board.style.gridTemplateRows = 'auto minmax(0, 1fr)';
             // Lanes as tall as their cards (plain auto rows shrink in a scrolling grid).
             else board.style.gridAutoRows = 'max-content';
-            const visible = this.kbCards().filter(c => this.kbMatches(c));
-
             cols.forEach((col, i) => {
                 const all = this.kbCards().filter(c => c.column === col.id);
                 const over = col.wip && all.length > col.wip;
-                const last = i === cols.length - 1 && cols.length > 1;
+                const last = this.kbColIsDone(col);
                 const head = el('div', { class: 'kb-col-head' + (over ? ' over' : '') + (grouped ? '' : ' joined'), title: col.policy ? `Policy: ${col.policy}` : '' },
                     el('div', { class: 'kb-col-row' },
                         el('span', { class: 'kb-col-name', text: col.name }),
@@ -627,15 +676,17 @@
                 head.style.gridRow = '1';
                 board.append(head);
             });
-            board.append(el('button', { class: 'kb-add-col', type: 'button', text: '+', title: 'Add a column', style: 'grid-column:' + (cols.length + 1) + '; grid-row:1;', onclick: () => this.addKanbanColumn() }));
-
+            const rowId = cols.length ? cols[0].row : null;
+            board.append(el('button', { class: 'kb-add-col', type: 'button', text: '+', title: 'Add a column', style: 'grid-column:' + (cols.length + 1) + '; grid-row:1;', onclick: () => this.addKanbanColumn(rowId) }));
             let row = 2;
+            const cellsByCol = cols.map(() => []);
             lanes.forEach((lane) => {
                 const laneCards = visible.filter(lane.test);
                 if (grouped) {
-                    const n = laneCards.length;
-                    if (!n && lane.key === '' ) { /* show empty catch-all lanes too, so cards can be dropped there */ }
+                    const n = laneCards.filter(c => cols.some(col => col.id === c.column)).length;
                     const collapsed = this._kbCollapsed && this._kbCollapsed.has(lane.key);
+                    // The grey strips carry on behind the lane's heading.
+                    cols.forEach((col, i) => board.append(el('div', { class: 'kb-lane-fill', style: `grid-column:${i + 1}; grid-row:${row};` })));
                     board.append(el('div', { class: 'kb-lane-head', style: `grid-column:1 / ${cols.length + 1}; grid-row:${row};`, onclick: () => {
                         if (!this._kbCollapsed) this._kbCollapsed = new Set();
                         if (collapsed) this._kbCollapsed.delete(lane.key); else this._kbCollapsed.add(lane.key);
@@ -656,18 +707,13 @@
                     laneCards.filter(c => c.column === col.id).forEach(c => cell.append(this.buildKanbanCard(c)));
                     cell.append(this.buildKanbanAdd(col, lane));
                     board.append(cell);
+                    cellsByCol[i].push(cell);
                 });
                 row++;
             });
-            wrap.append(board);
-            if (keep) {
-                board.scrollLeft = keep.left;
-                board.scrollTop = keep.top;
-                board.querySelectorAll('.kb-cell').forEach((c) => {
-                    const v = keep.cells[c.dataset.col + '|' + c.dataset.lane];
-                    if (v) c.scrollTop = v;
-                });
-            }
+            // The strips end with rounded corners under the last lane.
+            if (grouped) cellsByCol.forEach((list) => { if (list.length) list[list.length - 1].classList.add('last'); });
+            return board;
         },
 
         kbChipStyle(l) { return `background:${l.color}; color:${darkText(l.color) ? '#172b4d' : '#fff'}`; },
@@ -796,7 +842,7 @@
                 let offX = 0, offY = 0;
                 let holdTimer = null;
                 let armed = !touch;
-                const board = node.closest('.kb-board');
+                const board = node.closest('.kb-rows') || node.closest('.kb-board');
                 const stopTouchScroll = (te) => { if (dragging) te.preventDefault(); };
                 if (touch) {
                     holdTimer = setTimeout(() => { armed = true; node.classList.add('kb-armed'); if (navigator.vibrate) navigator.vibrate(15); }, 320);
@@ -1029,7 +1075,15 @@
             if (!tab || !card) return null;
             const escH = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
             const parts = [`<p><strong>${escH(card.title)}</strong> - notes for each column</p>`];
+            const multi = this.kbMultiRow();
+            let lastRow = null;
             this.kanban.columns.forEach((col) => {
+                // Rows divided by a line with the row's name (not part of any column's notes).
+                if (multi && col.row !== lastRow) {
+                    const r = this.kanban.rows.find(x => x.id === col.row);
+                    parts.push(`<p>${ROW_DIVIDER} ${escH((r && r.name) || 'Row')} ${ROW_DIVIDER}</p>`);
+                    lastRow = col.row;
+                }
                 parts.push(`<h4>${escH(col.name)}</h4>`);
                 parts.push((card.notes && card.notes[col.id]) || '<p>&nbsp;</p>');
             });
@@ -1056,6 +1110,7 @@
             const bodies = cols.map(() => []);
             Array.from(doc.body.childNodes).forEach((n) => {
                 if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
+                if ((n.textContent || '').trim().startsWith(ROW_DIVIDER)) return;
                 if (i >= 0 && i < cols.length && (n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) bodies[i].push(n);
             });
             const hasText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
@@ -1115,6 +1170,42 @@
                 };
                 tryJump(15);
             }, 60);
+        },
+
+        // In the Kanban notes each card - its heading and everything under it,
+        // up to the next card or column - is drawn as a box, its heading marked
+        // as a card. On-screen classes only; nothing is saved.
+        decorateNotesEditor(editor) {
+            const ref = editor._noteTabRef || editor.config.get('noteTab');
+            const isMaster = !!(this.kanban && ref && ref.tabId === this.kanban.notesTabId);
+            if (!isMaster && !editor._kbDecorated) return;
+            const view = editor.editing.view;
+            const root = view.document.getRoot();
+            if (!root) return;
+            const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end'];
+            const plan = new Map();
+            if (isMaster) {
+                let open = null;
+                const close = () => { if (open && open.length) plan.get(open[open.length - 1]).push('kb-nc-end'); open = null; };
+                kids.forEach((el) => {
+                    if (el.name === 'h5') { close(); plan.set(el, ['kb-nc-head']); open = [el]; return; }
+                    if (el.name === 'h4') { close(); return; }
+                    if (open) { plan.set(el, ['kb-nc-body']); open.push(el); }
+                });
+                close();
+            }
+            view.change((writer) => {
+                kids.forEach((el) => {
+                    const want = plan.get(el) || [];
+                    CLS.forEach((c) => {
+                        const has = el.hasClass(c);
+                        if (want.includes(c) && !has) writer.addClass(c, el);
+                        else if (!want.includes(c) && has) writer.removeClass(c, el);
+                    });
+                });
+            });
+            editor._kbDecorated = isMaster;
         },
 
         kanbanNotesOpen() {
@@ -1319,19 +1410,33 @@
             // Every card node already in the branch, wherever it is (older
             // boards had the cards straight under the branch).
             const pool = new Map();
+            const colPool = new Map();
             const collect = (n) => [].concat(n._critOn ? (n._critSaved || []) : (n.children || [])).forEach((c) => {
                 if (!c) return;
-                if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('col:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
+                if (c._kanban && c._kanban.startsWith('col:')) colPool.set(c._kanban, c);
+                else if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('row:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
                 collect(c);
             });
             collect(branch);
-            const colNode = (col, i) => {
+            const colNode = (col) => {
                 const n = k.cards.filter(c => c.column === col.id).length;
                 const over = col.wip && n > col.wip;
-                const last = i === k.columns.length - 1 && k.columns.length > 1;
+                const last = this.kbColIsDone(col);
                 return { id: `col:${col.id}`, name: `${col.name}${last ? ' ✓' : ''}`, color: over ? '#c9372c' : (last ? DONE_GREEN : '#0c66e4') };
             };
-            const colNodes = reconcile(branch, k.columns.map(colNode));
+            // Several rows (or a named one): row nodes, each the parent of its columns.
+            let colNodes;
+            if (this.kbMultiRow()) {
+                const rowNodes = reconcile(branch, k.rows.map(r => ({ id: `row:${r.id}`, name: r.name || 'Row', color: '#5e6c84' })));
+                colNodes = [];
+                k.rows.forEach((r, ri) => {
+                    const made = reconcile(rowNodes[ri], this.kbRowCols(r.id).map(colNode), colPool);
+                    colNodes.push(...made);
+                    if (typeof this.ensureRightmostPlaceholderNodes === 'function' && !rowNodes[ri]._critOn) this.ensureRightmostPlaceholderNodes(rowNodes[ri]);
+                });
+            } else {
+                colNodes = reconcile(branch, k.columns.map(colNode), colPool);
+            }
             k.columns.forEach((col, i) => {
                 const cards = k.cards.filter(c => c.column === col.id);
                 const cardNodes = reconcile(colNodes[i], cards.map(c => Object.assign({ id: c.id }, cardNode(c))), pool);
@@ -1373,8 +1478,20 @@
                     }
                 });
             };
-            real(branch).forEach((colNode) => {
-                if (!colNode || !colNode._kanban || !colNode._kanban.startsWith('col:')) return;
+            const colNodesOf = (n) => real(n).filter(c => c && c._kanban && c._kanban.startsWith('col:'));
+            const colNodeList = [];
+            real(branch).forEach((n) => {
+                if (!n || !n._kanban) return;
+                if (n._kanban.startsWith('row:')) {
+                    const row = (k.rows || []).find(r => `row:${r.id}` === n._kanban);
+                    const rname = strip(n.name);
+                    if (row && rname && rname !== (row.name || 'Row')) { row.name = rname; changed = true; }
+                    colNodeList.push(...colNodesOf(n));
+                } else if (n._kanban.startsWith('col:')) {
+                    colNodeList.push(n);
+                }
+            });
+            colNodeList.forEach((colNode) => {
                 const col = this.kbColumn(colNode._kanban.slice(4));
                 if (!col) return;
                 const cname = strip(colNode.name).replace(/\s*✓$/, '');
@@ -1484,7 +1601,8 @@
             const title = el('input', { class: 'cs-input', type: 'text', value: card.title });
             const desc = el('textarea', { class: 'cs-input kb-desc', rows: '3', placeholder: 'Details, acceptance criteria, links...' });
             desc.value = card.desc;
-            const column = el('select', { class: 'cs-input' }, ...k.columns.map(c => el('option', { value: c.id, text: c.name })));
+            const rowName = (c) => { const r = k.rows.find(x => x.id === c.row); return r && this.kbMultiRow() ? `${r.name || 'Row'} › ` : ''; };
+            const column = el('select', { class: 'cs-input' }, ...k.columns.map(c => el('option', { value: c.id, text: rowName(c) + c.name })));
             column.value = card.column;
             const people = el('datalist', { id: 'kb-people-list' }, ...this.kbAssignees().map(n => el('option', { value: n })));
             const who = el('input', { class: 'cs-input', type: 'text', value: card.assignee, placeholder: 'Who is doing it', list: 'kb-people-list' });
@@ -1576,13 +1694,79 @@
             setTimeout(() => title.focus(), 30);
         },
 
-        addKanbanColumn() {
+        addKanbanColumn(rowId) {
             const k = this.kanban;
-            const col = { id: uid('kc'), name: 'New column', wip: 0, policy: '' };
-            // Before "done", so done stays last.
-            k.columns.splice(Math.max(k.columns.length - 1, 0), 0, col);
+            const row = rowId || (this.kbRows()[0] || {}).id;
+            const col = { id: uid('kc'), row, name: 'New column', wip: 0, policy: '' };
+            // Before the row's "done", so done stays last.
+            const rowCols = this.kbRowCols(row);
+            const anchor = rowCols.length > 1 ? rowCols[rowCols.length - 1] : null;
+            if (anchor) k.columns.splice(k.columns.indexOf(anchor), 0, col);
+            else k.columns.splice(rowCols.length ? k.columns.indexOf(rowCols[0]) + 1 : k.columns.length, 0, col);
             this.kanbanChanged();
             this.openKanbanColumn(col.id);
+        },
+
+        async addKanbanRow() {
+            const k = this.kanban;
+            const name = await this.showNameDialog('Name the new row', '', { plain: true, placeholder: 'e.g. Manufacturing' });
+            if (!name) return;
+            // Name the first row too, so both have a heading.
+            if (k.rows.length === 1 && !k.rows[0].name) {
+                const first = await this.showNameDialog('Name the existing row', 'Main', { plain: true });
+                k.rows[0].name = first || 'Main';
+            }
+            const row = { id: uid('kr'), name };
+            k.rows.push(row);
+            TEMPLATES.basic.columns.forEach(([cn, wip, policy]) => k.columns.push({ id: uid('kc'), row: row.id, name: cn, wip: wip || 0, policy: policy || '' }));
+            this.kanbanChanged();
+            this.showNotification(`Added row "${name}" - ⋯ on its columns renames them, + adds more.`, 4000);
+        },
+
+        openKanbanRow(rowId) {
+            const k = this.kanban;
+            const row = k.rows.find(r => r.id === rowId);
+            if (!row) return;
+            const i = k.rows.indexOf(row);
+            const p = this.kbPopup(`Row: ${row.name || 'Row'}`);
+            const name = el('input', { class: 'cs-input', type: 'text', value: row.name });
+            p.body.append(el('label', { class: 'cs-label', text: 'Name' }), el('div', { class: 'cs-row' }, name),
+                el('p', { class: 'cs-muted cs-small', text: 'Each row has its own columns; in the flowchart the row is the parent of its column nodes.' }));
+            const regroup = () => {
+                const order = new Map(k.rows.map((r, j) => [r.id, j]));
+                k.columns.sort((a, b) => order.get(a.row) - order.get(b.row));
+            };
+            const save = () => { row.name = name.value.trim() || row.name; p.close(); this.kanbanChanged(); };
+            const shift = (d) => {
+                const j = i + d;
+                if (j < 0 || j >= k.rows.length) return;
+                k.rows.splice(i, 1);
+                k.rows.splice(j, 0, row);
+                regroup();
+                p.close();
+                this.kanbanChanged();
+            };
+            const remove = async () => {
+                if (k.rows.length <= 1) { this.showNotification('A board needs at least one row.'); return; }
+                const other = k.rows[i > 0 ? 0 : 1];
+                const to = this.kbRowCols(other.id)[0];
+                const cards = this.kbCards().filter(c => this.kbColumn(c.column).row === row.id);
+                if (!(await this.showConfirmDialog(`Delete the row "${row.name || 'Row'}" and its columns?${cards.length ? ` Its ${cards.length} card${cards.length === 1 ? '' : 's'} move to "${to.name}" in "${other.name || 'Row'}".` : ''}`))) return;
+                cards.forEach((c) => { c.column = to.id; c.moved = now(); c.finished = null; });
+                k.columns = k.columns.filter(c => c.row !== row.id);
+                k.rows.splice(i, 1);
+                p.close();
+                this.kanbanChanged();
+            };
+            name.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+            p.footer.append(
+                el('button', { class: 'cs-btn', type: 'button', text: '▲', title: 'Move up', disabled: i === 0, onclick: () => shift(-1) }),
+                el('button', { class: 'cs-btn', type: 'button', text: '▼', title: 'Move down', disabled: i === k.rows.length - 1, onclick: () => shift(1) }),
+                el('button', { class: 'cs-btn kb-danger', type: 'button', text: '🗑', title: 'Delete row', onclick: remove }),
+                el('span', { class: 'kb-spacer' }),
+                el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }),
+                el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Save', onclick: save }));
+            setTimeout(() => { name.focus(); name.select(); }, 30);
         },
 
         openKanbanColumn(id) {
@@ -1590,6 +1774,8 @@
             const col = this.kbColumn(id);
             if (!col) return;
             const i = this.kbColIndex(id);
+            const rowCols = this.kbRowCols(col.row);
+            const ri = rowCols.indexOf(col);
             const p = this.kbPopup(`Column: ${col.name}`);
             const name = el('input', { class: 'cs-input', type: 'text', value: col.name });
             const wip = el('input', { class: 'cs-input', type: 'number', min: '0', step: '1', value: String(col.wip || 0) });
@@ -1608,18 +1794,20 @@
                 p.close();
                 this.kanbanChanged();
             };
+            // Moves within its row.
             const shift = (d) => {
-                const j = i + d;
-                if (j < 0 || j >= k.columns.length) return;
-                k.columns.splice(i, 1);
-                k.columns.splice(j, 0, col);
+                const other = rowCols[ri + d];
+                if (!other) return;
+                const j = k.columns.indexOf(other);
+                k.columns[i] = other;
+                k.columns[j] = col;
                 p.close();
                 this.kanbanChanged();
             };
             const remove = async () => {
-                if (k.columns.length <= 1) { this.showNotification('A board needs at least one column.'); return; }
+                if (rowCols.length <= 1) { this.showNotification(k.rows.length > 1 ? 'A row needs at least one column - delete the row instead (⋯ next to its name).' : 'A board needs at least one column.'); return; }
                 const cards = this.kbCards().filter(c => c.column === col.id);
-                const to = k.columns[i > 0 ? i - 1 : 1];
+                const to = rowCols[ri > 0 ? ri - 1 : 1];
                 if (cards.length && !(await this.showConfirmDialog(`Delete "${col.name}"? Its ${cards.length} card${cards.length === 1 ? '' : 's'} move to "${to.name}".`))) return;
                 cards.forEach((c) => { c.column = to.id; c.moved = now(); });
                 k.columns.splice(i, 1);
@@ -1629,8 +1817,8 @@
             };
             name.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
             p.footer.append(
-                el('button', { class: 'cs-btn', type: 'button', text: '◀', title: 'Move left', disabled: i === 0, onclick: () => shift(-1) }),
-                el('button', { class: 'cs-btn', type: 'button', text: '▶', title: 'Move right', disabled: i === k.columns.length - 1, onclick: () => shift(1) }),
+                el('button', { class: 'cs-btn', type: 'button', text: '◀', title: 'Move left', disabled: ri === 0, onclick: () => shift(-1) }),
+                el('button', { class: 'cs-btn', type: 'button', text: '▶', title: 'Move right', disabled: ri === rowCols.length - 1, onclick: () => shift(1) }),
                 el('button', { class: 'cs-btn kb-danger', type: 'button', text: '🗑', title: 'Delete column', onclick: remove }),
                 el('span', { class: 'kb-spacer' }),
                 el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }),
@@ -1682,7 +1870,7 @@
             const avg = a => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN);
             const lead = avg(recent.map(c => days(c.finished - c.created)));
             const cycle = avg(recent.filter(c => c.started).map(c => days(c.finished - c.started)));
-            const wip = cards.filter(c => { const i = this.kbColIndex(c.column); return i > 0 && !this.kbIsDone(c); }).length;
+            const wip = cards.filter(c => { const i = this.kbColPos(c.column); return i > 0 && !this.kbIsDone(c); }).length;
             const week = done.filter(c => t - c.finished < 7 * DAY).length;
             const month = done.filter(c => t - c.finished < 30 * DAY).length;
             const blocked = cards.filter(c => c.blocked && !this.kbIsDone(c)).length;
@@ -1700,7 +1888,7 @@
             const table = el('div', { class: 'kb-flow' });
             cols.forEach((col, i) => {
                 const here = cards.filter(c => c.column === col.id);
-                const isDone = i === cols.length - 1 && cols.length > 1;
+                const isDone = this.kbColIsDone(col);
                 const ages = here.map(c => days(t - (c.moved || c.created)));
                 const oldest = here.reduce((o, c) => (!o || (c.moved || c.created) < (o.moved || o.created) ? c : o), null);
                 const over = col.wip && here.length > col.wip;
@@ -1714,10 +1902,10 @@
             });
             p.body.append(el('label', { class: 'cs-label', text: 'Cards per column (the line is the WIP limit)' }), table);
             // Where work waits longest - the bottleneck to look at first.
-            const waits = cols.slice(0, -1).map((col) => {
+            const waits = cols.filter(col => !this.kbColIsDone(col)).map((col) => {
                 const here = cards.filter(c => c.column === col.id);
                 return { col, age: avg(here.map(c => days(t - (c.moved || c.created)))), n: here.length };
-            }).filter(w => w.n && this.kbColIndex(w.col.id) > 0).sort((a, b) => b.age - a.age);
+            }).filter(w => w.n && this.kbColPos(w.col.id) > 0).sort((a, b) => b.age - a.age);
             if (waits.length) {
                 p.body.append(el('p', { class: 'cs-muted cs-small', text: `Cards wait longest in "${waits[0].col.name}" (${fmtDays(waits[0].age)} on average) - a likely bottleneck.` }));
             }
