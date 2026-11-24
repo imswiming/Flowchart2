@@ -398,7 +398,7 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 
 /* Kanban notes: each card is a box - its heading marked as a card, and its
    text (down to the next card or column) inside the same outline. */
-.ck.ck-content .kb-nc-head {
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-head {
     margin: 16px 0 0 !important;
     padding: 7px 12px 7px 12px !important;
     background: rgba(76, 154, 255, 0.16);
@@ -407,7 +407,7 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     border-radius: 8px 8px 0 0;
     color: #cfe3ff;
 }
-.ck.ck-content .kb-nc-head::before {
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-head::before {
     /* The card's first label (set by decorateNotesEditor), else CARD. */
     content: attr(data-kb-tag);
     display: inline-block;
@@ -421,7 +421,7 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     letter-spacing: 0.06em;
     vertical-align: middle;
 }
-.ck.ck-content .kb-nc-body {
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-body {
     margin-top: 0 !important;
     margin-bottom: 0 !important;
     padding-left: 12px !important;
@@ -430,8 +430,8 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     border-right: 1px solid rgba(76, 154, 255, 0.55);
     background: rgba(76, 154, 255, 0.04);
 }
-.ck.ck-content ul.kb-nc-body, .ck.ck-content ol.kb-nc-body { padding-left: 32px !important; }
-.ck.ck-content .kb-nc-end {
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content ul.kb-nc-body, :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content ol.kb-nc-body { padding-left: 32px !important; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-end {
     border-bottom: 1px solid rgba(76, 154, 255, 0.55);
     border-radius: 0 0 8px 8px;
     padding-bottom: 8px !important;
@@ -439,7 +439,7 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 }
 /* Heading and text share one left edge and width: a card heading is a
    Subheading, drawn 52 characters wide (21px), so the text under it is too. */
-.ck.ck-content .kb-nc-head, .ck.ck-content .kb-nc-body {
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-head, :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-body {
     margin-left: 14px !important;
     margin-right: 0 !important;
     box-sizing: border-box;
@@ -447,4 +447,9 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
     width: calc(52 * var(--note-title-char-em, 0.52) * 21px) !important;
     max-width: none !important;
 }
-.ck.ck-content .kb-nc-head.kb-nc-end { border-radius: 8px; border-bottom-color: rgba(76, 154, 255, 0.55); }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-head.kb-nc-end { border-radius: 8px; border-bottom-color: rgba(76, 154, 255, 0.55); }
+
+/* Inside a card's box: its text keeps the box's width, and checklist items
+   (Minor headings) stay indented under the card's heading. */
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-body { padding-left: 26px !important; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-nc-body li { width: auto !important; }
