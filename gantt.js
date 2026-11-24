@@ -1708,7 +1708,7 @@
             this.renderFlowchart(this.rootData);
             const d = d3.select('#flowchart').selectAll('g.node').data().find(x => x && x.data === target);
             if (d) {
-                this.selectedNode = d;
+                if (typeof this.selectNode === 'function') this.selectNode(d); else this.selectedNode = d;
                 if (typeof this.refreshRadialButtons === 'function') this.refreshRadialButtons();
                 const svg = d3.select('#flowchart svg');
                 if (this._zoomBehavior && !svg.empty() && Number.isFinite(d.x)) {

@@ -2376,16 +2376,37 @@
         if (rd) rd.classList.toggle('disabled', !canRedo);
     };
 
-    // Tab (outside text fields and popups) switches between the board and the flowchart.
+    // Tab (outside text fields and popups - a node's name box counts as outside)
+    // switches views keeping the selection: from the board or the Gantt chart
+    // to the flowchart with the selected card's / task's node selected, and
+    // from the flowchart back to the view it came from, with the selected
+    // node's card / task selected.
     document.addEventListener('keydown', (e) => {
         const app = window.__flowchartApp;
         if (!app || e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
         const a = document.activeElement;
-        if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return;
-        if (document.getElementById('kanban-popup') || app.nodeBeingEdited) return;
+        const nameBox = a && a.id === 'node-edit-input';
+        if (!nameBox && a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return;
+        if (document.getElementById('kanban-popup') || document.getElementById('gantt-popup') || document.getElementById('event-popup')) return;
         e.preventDefault();
-        app.toggleKanbanMode();
-    });
+        if (nameBox && app.nodeBeingEdited) app.hideNodeEditPopup(true);
+        if (app._kanbanMode) {
+            app._tabBack = 'kanban';
+            const id = app._kbSelected;
+            if (id && app.kbCard(id)) app.showKanbanCardInFlowchart(id); else app.toggleKanbanMode(false);
+        } else if (app._ganttMode) {
+            app._tabBack = 'gantt';
+            const id = app._ganttSelected;
+            if (id && typeof app.showGanttTaskInFlowchart === 'function' && app.ganttTask(id)) app.showGanttTaskInFlowchart(id);
+            else app.toggleGanttMode(false);
+        } else if (app._tabBack === 'gantt' && typeof app.toggleGanttMode === 'function') {
+            const n = app.selectedNode && app.selectedNode.data;
+            if (n && n._gantt && n._gantt !== 'root' && app.ganttTask(n._gantt)) { app._ganttSelected = n._gantt; app._ganttScrollToToday = false; }
+            app.toggleGanttMode(true);
+        } else {
+            app.toggleKanbanMode(true);
+        }
+    }, true);
 
     // Keys on the board: Delete removes the selected card, Escape clears the
     // selection, Ctrl+Y / Cmd+Z also undo and redo. They never reach the
