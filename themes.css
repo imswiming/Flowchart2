@@ -47,7 +47,7 @@ html.theme-paper .link { stroke: #5c6270; stroke-width: 1.4px; }
 html.theme-paper .link.selected, html.theme-paper .custom-link.selected { stroke: #c5812f; }
 html.theme-paper #flowchart .node > rect { rx: 5; ry: 5; } /* (no shadow: a filter on every node makes panning slow) */
 html.theme-paper #flowchart .node > text { font-weight: 600; }
-html.theme-paper #flowchart .node > rect[fill="#323a4a"] { fill: #faf7ee; stroke-width: 1.2px; stroke-dasharray: 5 3.5; }
+html.theme-paper #flowchart .node > rect[fill="#323a4a"] { fill: #faf9f0; stroke-width: 1.2px; stroke-dasharray: 5 3.5; }
 html.theme-paper #flowchart .node > text[fill="#323a4a"] { fill: transparent; }
 html.theme-paper .fold-badge { fill: #f3ecdc; stroke: #a9a48f; }
 html.theme-paper .fold-arrow-btn > path { stroke: #4a4a42; }

@@ -14,7 +14,7 @@
 // Only this site's own files are touched - cloud sync calls and anything else
 // go straight to the network.
 
-const CACHE_NAME = 'flowchart-v40';
+const CACHE_NAME = 'flowchart-v41';
 
 const IMMUTABLE = [
     'd3.v7.min.js',
