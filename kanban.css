@@ -253,7 +253,7 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-cl-text:hover { background: #f1f2f4; }
 .kb-cl-text:focus, .kb-cl-add:focus { outline: none; background: #fff; border-color: var(--kb-blue); }
 .kb-cl-text.done { text-decoration: line-through; color: var(--kb-sub); }
-.kb-cl-add { color: var(--kb-sub); display: none; margin-left: 20px; }
+.kb-cl-add { color: var(--kb-sub); display: none; margin-left: 0; }
 .kb-cl.adding .kb-cl-add, .kb-cl-add:focus { display: block; }
 /* Only real hover reveals it: on a touch screen a tap would first "hover"
    (growing the card) and only a second tap would reach the button. */
