@@ -230,7 +230,7 @@
                     category: typeof c.category === 'string' ? c.category : '',
                     issuer: typeof c.issuer === 'string' ? c.issuer : '',
                     purpose: typeof c.purpose === 'string' ? c.purpose : '',
-                    links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: x.url.trim() })) : [],
+                    links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: x.url.trim(), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
                     due: typeof c.due === 'string' ? c.due : '',
                     highlight: !!c.highlight,
                     blocked: !!c.blocked,
@@ -258,7 +258,7 @@
             return {
                 rows, columns, cards, archived, labels,
                 // Links and folders added in the Links panel itself (on no card).
-                panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: x.url.trim() })) : [],
+                panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: x.url.trim(), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
                 // The old Kanban notes tab has been put away (kbRetireNotes).
                 notesRetired: !!raw.notesRetired,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
@@ -810,7 +810,7 @@
                 url = '';
                 add.value = '';
                 if (!u) return;
-                card.links.push({ label, url: u });
+                card.links.push({ label, url: u, added: now() });
                 this._kbSelected = card.id;
                 this.kanbanChanged();
             };
@@ -837,7 +837,7 @@
                 add.value = '';
                 const now0 = u && this.kbCard(card.id);
                 if (!now0) return;
-                now0.links = (now0.links || []).concat({ label, url: u });
+                now0.links = (now0.links || []).concat({ label, url: u, added: now() });
                 afterClick(() => this.kanbanChanged());
             });
             box.append(add);
@@ -1192,10 +1192,15 @@
 
         kbAllLinks() {
             const map = new Map();
+            // When each was first added (links from before that was kept: when
+            // their card was made).
+            const idTime = (id) => { const m = /^pl-([0-9a-z]+)-/.exec(id || ''); return m ? parseInt(m[1], 36) : 0; };
+            const first = (e, t) => { if (t && (!e.added || t < e.added)) e.added = t; };
             ((this.kanban && this.kanban.panelLinks) || []).forEach((l) => {
                 const key = String(l.url).trim().toLowerCase();
                 if (!map.has(key)) map.set(key, { key, url: l.url, label: l.label || '', cards: [] });
                 map.get(key).panel = true;
+                first(map.get(key), l.added || idTime(l.id));
             });
             this.kbCards().forEach(c => (c.links || []).forEach((l) => {
                 const key = String(l.url).trim().toLowerCase();
@@ -1203,17 +1208,32 @@
                 const e = map.get(key);
                 if (!e.label && l.label) e.label = l.label;
                 if (!e.cards.includes(c)) e.cards.push(c);
+                first(e, l.added || c.created);
             }));
-            const all = [...map.values()].sort((a, b) => (a.label || a.url).localeCompare(b.label || b.url, undefined, { sensitivity: 'base' }));
+            const byName = (a, b) => (a.label || a.url).localeCompare(b.label || b.url, undefined, { sensitivity: 'base', numeric: true });
+            const how = this.kbLinksSort();
+            const all = [...map.values()].sort((a, b) => {
+                if (how === 'za') return byName(b, a);
+                if (how === 'new') return (b.added || 0) - (a.added || 0) || byName(a, b);
+                if (how === 'old') return (a.added || 0) - (b.added || 0) || byName(a, b);
+                return byName(a, b);
+            });
             const isPath = u => kbHref(u).startsWith('file:');
             return { urls: all.filter(e => !isPath(e.url)), paths: all.filter(e => isPath(e.url)) };
+        },
+
+        // How the Links panel is sorted (kept on this device).
+        kbLinksSort() {
+            let v = null;
+            try { v = localStorage.getItem('flowchart-kb-links-sort'); } catch (e) { /* private mode */ }
+            return ['az', 'za', 'new', 'old'].includes(v) ? v : 'az';
         },
 
         buildKanbanLinks() {
             const { urls, paths } = this.kbAllLinks();
             const list = el('div', { class: 'kb-links-list' });
             const rowOf = (e) => {
-                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}Drag onto a card to add it there` });
+                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there` });
                 const show = () => {
                     row.innerHTML = '';
                     row.append(
@@ -1262,7 +1282,7 @@
                     const key = u.toLowerCase();
                     const list0 = this.kanban.panelLinks || (this.kanban.panelLinks = []);
                     const had = list0.find(l => String(l.url).trim().toLowerCase() === key);
-                    if (had) { if (label) had.label = label; } else list0.push({ id: uid('pl'), label, url: u });
+                    if (had) { if (label) had.label = label; } else list0.push({ id: uid('pl'), label, url: u, added: now() });
                     this.kanbanChanged();
                 };
                 inp.addEventListener('keydown', (ke) => {
@@ -1290,8 +1310,14 @@
             adder('url', '+ Add web link');
             group('📁 Folders and files', paths, 'None yet.');
             adder('path', '+ Add folder or file path');
+            const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
+                ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
+            sort.addEventListener('change', () => {
+                try { localStorage.setItem('flowchart-kb-links-sort', sort.value); } catch (e) { /* not kept */ }
+                this.renderKanbanBoard(this.kbScrollState());
+            });
             return el('div', { class: 'kb-links' },
-                el('div', { class: 'kb-links-title' }, el('b', { text: '🔗 Links' }), el('span', { class: 'kb-spacer' }),
+                el('div', { class: 'kb-links-title' }, el('b', { text: '🔗 Links' }), el('span', { class: 'kb-spacer' }), sort,
                     el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Hide (🔗 at the top shows it again)', onclick: () => { localStorage.setItem('flowchart-kb-links', '0'); this.renderKanbanBoard(this.kbScrollState()); } })),
                 list);
         },
@@ -1334,7 +1360,7 @@
                     const card = over && ev.type === 'pointerup' && this.kbCard(over.dataset.id);
                     if (!card) return;
                     if ((card.links || []).some(l => String(l.url).trim().toLowerCase() === entry.key)) { this.showNotification(`"${card.title}" already has that link.`); return; }
-                    card.links = (card.links || []).concat({ label: entry.label, url: entry.url });
+                    card.links = (card.links || []).concat({ label: entry.label, url: entry.url, added: now() });
                     this.kanbanChanged();
                     this.showNotification(`Added the link to "${card.title}".`);
                 };
@@ -2902,7 +2928,7 @@
                 });
                 const url = el('input', { class: 'cs-input', type: 'text', placeholder: 'https://... or C:\\folder\\file.pdf' });
                 const label = el('input', { class: 'cs-input', type: 'text', placeholder: 'Name (optional)' });
-                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim() }); draw(); };
+                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim(), added: now() }); draw(); };
                 [url, label].forEach(x => x.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }));
                 box.append(el('div', { class: 'cs-row' }, url, label, el('button', { class: 'cs-btn', type: 'button', text: '+ Link', onclick: add })));
                 setTimeout(() => url.focus(), 0);
@@ -3048,7 +3074,7 @@
                 });
                 const url = el('input', { class: 'cs-input', type: 'text', placeholder: 'https://... or C:\\folder\\file.pdf' });
                 const label = el('input', { class: 'cs-input', type: 'text', placeholder: 'Name (optional)' });
-                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim() }); drawLinks(); };
+                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim(), added: now() }); drawLinks(); };
                 [url, label].forEach(i => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }));
                 linkBox.append(el('div', { class: 'cs-row' }, url, label, el('button', { class: 'cs-btn', type: 'button', text: '+ Link', onclick: add })));
             };
