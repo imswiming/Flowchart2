@@ -257,6 +257,8 @@
             cards.forEach((c) => { if (!c.num) c.num = next++; });
             return {
                 rows, columns, cards, archived, labels,
+                // Links and folders added in the Links panel itself (on no card).
+                panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: x.url.trim() })) : [],
                 // The old Kanban notes tab has been put away (kbRetireNotes).
                 notesRetired: !!raw.notesRetired,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
@@ -363,7 +365,7 @@
 
         kanbanSnapshot() {
             const k = this.kanban;
-            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, archived: k.archived || [], labels: k.labels, prefix: k.prefix, nextNum: k.nextNum } : null);
+            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, archived: k.archived || [], labels: k.labels, panelLinks: k.panelLinks || [], prefix: k.prefix, nextNum: k.nextNum } : null);
         },
         resetKanbanHistory() {
             this._kbUndo = [];
@@ -413,7 +415,7 @@
             this.kanban = {
                 rows: [{ id: 'r0', name: '' }],
                 columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), row: 'r0', name, wip: wip || 0, policy: policy || '' })),
-                cards: [], archived: old.archived || [], labels: [], prefix: 'KB', nextNum: 1, groupBy: 'none', notesRetired: true,
+                cards: [], archived: old.archived || [], labels: [], panelLinks: old.panelLinks || [], prefix: 'KB', nextNum: 1, groupBy: 'none', notesRetired: true,
                 // The notes tab stays; what was written under old cards goes under "Removed".
                 notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {},
                 noteCols: {}, cardTabId: old.cardTabId || null
@@ -1190,6 +1192,11 @@
 
         kbAllLinks() {
             const map = new Map();
+            ((this.kanban && this.kanban.panelLinks) || []).forEach((l) => {
+                const key = String(l.url).trim().toLowerCase();
+                if (!map.has(key)) map.set(key, { key, url: l.url, label: l.label || '', cards: [] });
+                map.get(key).panel = true;
+            });
             this.kbCards().forEach(c => (c.links || []).forEach((l) => {
                 const key = String(l.url).trim().toLowerCase();
                 if (!map.has(key)) map.set(key, { key, url: l.url, label: '', cards: [] });
@@ -1206,14 +1213,18 @@
             const { urls, paths } = this.kbAllLinks();
             const list = el('div', { class: 'kb-links-list' });
             const rowOf = (e) => {
-                const row = el('div', { class: 'kb-links-row', title: `${e.url}\nOn: ${e.cards.map(c => c.title).join(', ')}\nDrag onto a card to add it there` });
+                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}Drag onto a card to add it there` });
                 const show = () => {
                     row.innerHTML = '';
                     row.append(
                         el('span', { class: 'kb-links-grip', text: '⠿' }),
                         el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || e.url, onclick: (ev) => kbOpenLink(ev, e.url, this) }),
-                        el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }),
-                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it on every card', onclick: rename }));
+                        e.cards.length ? el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }) : '',
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it (here and on every card)', onclick: rename }),
+                        e.panel ? el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: e.cards.length ? 'Remove from the panel (its cards keep it)' : 'Remove from the panel', onclick: () => {
+                            this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(l => String(l.url).trim().toLowerCase() !== e.key);
+                            this.kanbanChanged();
+                        } }) : '');
                 };
                 const rename = () => {
                     const inp = el('input', { class: 'kb-links-in', type: 'text', value: e.label, placeholder: 'Name for it' });
@@ -1224,6 +1235,7 @@
                         const v = inp.value.trim();
                         if (!save || v === e.label) { show(); return; }
                         this.kbCards().forEach(c => (c.links || []).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; }));
+                        (this.kanban.panelLinks || []).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; });
                         afterClick(() => this.kanbanChanged());
                     };
                     inp.addEventListener('keydown', (ke) => { ke.stopPropagation(); if (ke.key === 'Enter') { ke.preventDefault(); finish(true); } if (ke.key === 'Escape') finish(false); });
@@ -1238,8 +1250,46 @@
                 return row;
             };
             const group = (name, items, none) => list.append(el('div', { class: 'kb-links-head', text: `${name} (${items.length})` }), ...(items.length ? items.map(rowOf) : [el('div', { class: 'kb-links-none', text: none })]));
+            // Adding one here: the address or path, Enter, then a name (or none), Enter.
+            const adder = (kind, hint) => {
+                const inp = el('input', { class: 'kb-links-in kb-links-add', type: 'text', placeholder: hint, 'data-kind': kind });
+                let url = '';
+                const reset = () => { url = ''; inp.value = ''; inp.placeholder = hint; };
+                const save = (label) => {
+                    const u = url;
+                    reset();
+                    if (!u) return;
+                    const key = u.toLowerCase();
+                    const list0 = this.kanban.panelLinks || (this.kanban.panelLinks = []);
+                    const had = list0.find(l => String(l.url).trim().toLowerCase() === key);
+                    if (had) { if (label) had.label = label; } else list0.push({ id: uid('pl'), label, url: u });
+                    this.kanbanChanged();
+                };
+                inp.addEventListener('keydown', (ke) => {
+                    ke.stopPropagation();
+                    if (ke.key === 'Escape') { reset(); inp.blur(); return; }
+                    if (ke.key !== 'Enter') return;
+                    ke.preventDefault();
+                    const v = inp.value.trim().replace(/^["']+|["']+$/g, '').trim();
+                    if (url) {
+                        save(v);
+                        const again = document.querySelector(`#kanban-view .kb-links-add[data-kind="${kind}"]`);
+                        if (again) again.focus();
+                        return;
+                    }
+                    if (!v) return;
+                    if (kind === 'path' && !kbHref(v).startsWith('file:')) { this.showNotification('That is not a full path - for example C:\\Projects or \\\\server\\folder.'); return; }
+                    url = v;
+                    inp.value = '';
+                    inp.placeholder = 'Name for it (Enter to skip)';
+                });
+                inp.addEventListener('blur', () => { if (url) afterClick(() => save(inp.value.trim())); });
+                list.append(inp);
+            };
             group('🌐 Web links', urls, 'None yet.');
+            adder('url', '+ Add web link');
             group('📁 Folders and files', paths, 'None yet.');
+            adder('path', '+ Add folder or file path');
             return el('div', { class: 'kb-links' },
                 el('div', { class: 'kb-links-title' }, el('b', { text: '🔗 Links' }), el('span', { class: 'kb-spacer' }),
                     el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Hide (🔗 at the top shows it again)', onclick: () => { localStorage.setItem('flowchart-kb-links', '0'); this.renderKanbanBoard(this.kbScrollState()); } })),
