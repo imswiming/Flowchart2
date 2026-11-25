@@ -202,20 +202,16 @@ html.theme-paper .morph-row-name { color: #7d555b; }
 html.theme-paper .morph-option-selected { background: #6f8f6b !important; color: #fff !important; }
 
 /* ----- Kanban board ----- */
-html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #e8e3d7; --kb-card: #fdfcf6; --kb-text: #1f1f1c; --kb-sub: #4f4d44; --kb-line: #d6c9ae; --kb-blue: #6f8f69; background: #fbfaf2 var(--paper-tex); }
+html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #e3e7dc; --kb-card: #fdfcf6; --kb-text: #1f1f1c; --kb-sub: #4f4d44; --kb-line: #d6c9ae; --kb-blue: #6f8f69; background: #fbfaf2 var(--paper-tex); }
 html.theme-paper .kb-crumb { color: #1f1f1c; }
 html.theme-paper .kb-btn { background: #e3d7bf; border: 1px solid #cdbd9c; }
 html.theme-paper .kb-btn:hover { background: #d8c9ab; }
 html.theme-paper .kb-head-actions .kb-btn:last-child, html.theme-paper .kb-bar .kb-btn:last-child { background: #b2bf99; border-color: #9aa981; }
 html.theme-paper .kb-search { background: #ece4d4; border-color: #d6c9ae; }
 html.theme-paper .kb-select { background: #dec89d; border: 1px solid #c8b083; }
-html.theme-paper :is(.kb-col-head, .kb-cell).kb-c0 { --kb-col: #ebe1cf; }
-html.theme-paper :is(.kb-col-head, .kb-cell).kb-c1 { --kb-col: #e6e2d7; }
-html.theme-paper :is(.kb-col-head, .kb-cell).kb-c2 { --kb-col: #ece6da; }
-html.theme-paper :is(.kb-col-head, .kb-cell).kb-cdone { --kb-col: #e3e7dc; }
 html.theme-paper .kb-col-name { color: #1f1f1c; font-weight: 500; }
 html.theme-paper .kb-col-done { color: #5d8a55; }
-html.theme-paper .kb-col-head.over { background: #eed6c8; }
+html.theme-paper .kb-col-head.over { background: var(--kb-col); }
 html.theme-paper :is(.kb-col-head.over .kb-col-count, .kb-col-warn, .kb-blocked) { color: #98432a; }
 html.theme-paper .kb-add-col { background: #dfe3d3; border: 1px solid #b6c0a5; color: #5b6a52; }
 html.theme-paper :is(.kb-col-menu, .kb-add-col, .kb-card-flow, .kb-create-btn, .kb-lk-btn):hover { background: #d3d7c2; }
