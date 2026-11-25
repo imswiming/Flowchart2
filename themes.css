@@ -198,12 +198,16 @@ html.theme-paper .morph-row-name { color: #7d555b; }
 html.theme-paper .morph-option-selected { background: #6f8f6b !important; color: #fff !important; }
 
 /* ----- Kanban board ----- */
-html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #e3e7dc; --kb-card: #fdfcf6; --kb-text: #1f1f1c; --kb-sub: #4f4d44; --kb-line: #d6c9ae; --kb-blue: #6f8f69; background: #fbfaf2 var(--paper-tex); }
+html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #fdfcf6; --kb-card: #fdfcf6; --kb-text: #1f1f1c; --kb-sub: #4f4d44; --kb-line: #d6c9ae; --kb-blue: #6f8f69; background: #fbfaf2 var(--paper-tex); }
 html.theme-paper .kb-crumb { color: #1f1f1c; }
 html.theme-paper .kb-btn { background: #f1ecde; border: 1px solid #e0d8c3; }
 html.theme-paper .kb-btn:hover { background: #e8e0cc; }
 html.theme-paper .kb-search { background: #ece4d4; border-color: #d6c9ae; }
 html.theme-paper .kb-select { background: #f1ecde; border: 1px solid #e0d8c3; }
+/* Columns: filled and edged like the Links panel (the header and the cards' part joined). */
+html.theme-paper :is(.kb-col-head, .kb-cell) { box-shadow: 0 1px 4px rgba(90, 75, 45, 0.42), 0 0 0 1px rgba(190, 175, 140, 0.55); }
+html.theme-paper .kb-col-head.joined { clip-path: inset(-6px -6px 0 -6px); }
+html.theme-paper .kb-cell.joined { clip-path: inset(0 -6px -6px -6px); }
 html.theme-paper .kb-col-name { color: #1f1f1c; font-weight: 500; }
 html.theme-paper .kb-col-done { color: #5d8a55; }
 html.theme-paper .kb-col-head.over { background: var(--kb-col); }
