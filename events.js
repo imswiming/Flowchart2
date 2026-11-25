@@ -195,7 +195,7 @@
                     const day = dayOf(c.created);
                     if (day < r0 || day > r1) return;
                     const l = c.labels && c.labels.length && typeof this.kbLabel === 'function' ? this.kbLabel(c.labels[0]) : null;
-                    strip.append(el('div', { class: 'gh-dot', style: `left:${xOf(day) + Math.min(ppd, 24) / 2}px; background:${l ? l.color : '#4c9aff'};`,
+                    strip.append(el('div', { class: 'gh-dot', style: `left:${xOf(day) + Math.min(ppd, 24) / 2}px; background:${(window.flowThemeLabelColor || (c => c))(l ? l.color : '#4c9aff')};`,
                         title: `Card: ${c.title} (added ${new Date(c.created).toLocaleDateString()})`,
                         onclick: () => { this._kbSelected = c.id; if (typeof this.toggleKanbanMode === 'function') this.toggleKanbanMode(true); } }));
                 });

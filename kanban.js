@@ -75,6 +75,8 @@
         kids.flat().forEach(k => { if (k !== null && k !== undefined && k !== false) e.append(k); });
         return e;
     };
+    // A label's colour as the theme draws it (themes.js).
+    const labelColor = (c) => (typeof window.flowThemeLabelColor === 'function' ? window.flowThemeLabelColor(c) : c);
     const darkText = (hex) => {
         const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
         if (!m) return false;
@@ -1261,7 +1263,7 @@
             });
         },
 
-        kbChipStyle(l) { return `background:${l.color}; color:${darkText(l.color) ? '#172b4d' : '#fff'}`; },
+        kbChipStyle(l) { const c = labelColor(l.color); return `background:${c}; color:${darkText(c) ? '#172b4d' : '#fff'}`; },
 
         buildKanbanCard(card) {
             const done = this.kbIsDone(card);
@@ -1982,7 +1984,7 @@
                         }
                         const card = item;
                         const l = card && card.labels.length ? this.kbLabel(card.labels[0]) : null;
-                        tags.set(el, l ? { text: l.name.toUpperCase(), color: l.color, dark: darkText(l.color) } : { text: 'CARD', color: '#4c9aff', dark: true });
+                        tags.set(el, l ? { text: l.name.toUpperCase(), color: labelColor(l.color), dark: darkText(labelColor(l.color)) } : { text: 'CARD', color: labelColor('#4c9aff'), dark: true });
                         return;
                     }
                     if (el.name === 'h4') { close(); return; }

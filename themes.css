@@ -9,6 +9,9 @@
 #themes-menu .tm-name { flex: 1 1 auto; }
 #themes-menu small { color: var(--muted); }
 
+/* Paper's title font (SIL Open Font License, vendor/fonts). Only fetched when used. */
+@font-face { font-family: 'Fraunces Paper'; font-weight: 600; font-display: swap; src: url('vendor/fonts/fraunces.ttf') format('truetype'); }
+
 /* ===== Paper: the light theme ===== */
 html.theme-paper {
     --bg: #fbfaf2;
@@ -23,7 +26,7 @@ html.theme-paper {
     --accent: #6f8f69;
     --scrollbar-thumb: #cfc6b4;
     --scrollbar-thumb-hover: #b9af9a;
-    --paper-serif: "Recoleta", "Sitka Heading", "Sitka Text", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --paper-serif: "Fraunces Paper", "Sitka Heading", "Sitka Text", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
     /* Faint fibres and grain, as of handmade paper. */
     --paper-tex: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .4 0 0 0 0 .3 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='420' height='420' filter='url(%23n)' opacity='.75'/%3E%3Cg fill='none' stroke='%23a89c80' stroke-opacity='.3' stroke-width='.8' stroke-linecap='round'%3E%3Cpath d='M40 60q5-4 11-3M180 30q3 5 1 10M330 88q7 1 12-4M88 190q4 4 9 2M250 160q2-6 8-7M380 230q-5 3-6 9M30 300q6 1 10-3M160 340q5-1 7 4M290 300q7-2 11 2M220 400q3-5 9-5M392 372q-2 6-7 8'/%3E%3C/g%3E%3C/svg%3E");
     background: #fbfaf2;

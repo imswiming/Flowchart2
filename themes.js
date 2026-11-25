@@ -56,6 +56,13 @@
         return MAP[c] || c;
     };
 
+    // Kanban labels (and their tags and event dots).
+    const LABELS = {
+        '#1f845a': '#5f8258', '#0c66e4': '#64788a', '#6e5dc6': '#7d6474', '#e2b203': '#d29a42',
+        '#c9372c': '#a4452b', '#227d9b': '#6d8f8c', '#ae4787': '#9a6068', '#5b7f24': '#8d9a5f', '#4c9aff': '#a9b98c'
+    };
+    window.flowThemeLabelColor = (c) => (isPaper() && LABELS[String(c).toLowerCase()]) || c;
+
     // ----- Choosing -----
     const meta = (name, value) => { const m = document.querySelector(`meta[name="${name}"]`); if (m) m.setAttribute('content', value); };
     const apply = (id, redraw) => {
@@ -66,6 +73,9 @@
         if (redraw && app && app.rootData) {
             try {
                 app.renderFlowchart(app.rootData);
+                if (app._kanbanMode && typeof app.renderKanban === 'function') app.renderKanban();
+                if (app._ganttMode && typeof app.renderGantt === 'function') app.renderGantt();
+                if (app.notesEditor && typeof app.notesEditor._noteDecorate === 'function') app.notesEditor._noteDecorate();
                 if (typeof app.refreshRadialButtons === 'function') app.refreshRadialButtons();
             } catch (e) { console.error('Theme:', e); }
         }
