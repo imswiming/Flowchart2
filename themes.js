@@ -60,7 +60,7 @@
     const isLight = rgb => rgb[0] === 255 && rgb[1] === 204 && rgb[2] === 0;
     const readable = (hex) => {
         const rgb = rgbOf(hex);
-        if (!rgb || isLight(rgb)) return hex;
+        if (!rgb || isLight(rgb) || hex === '#4db8f0') return hex; // (baby blue stays as it is)
         let [h, s, l] = toHsl(rgb);
         let out = fromHsl(h, s, l);
         while (l > 0.1 && 1.05 / (lum(out) + 0.05) < 2.8) { l -= 0.01; out = fromHsl(h, s, l); }
