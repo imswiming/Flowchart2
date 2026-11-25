@@ -9113,6 +9113,9 @@ class FlowchartViewer {
                             hiding = !!child.getAttribute('folded');
                             if (hiding) anyFolded = true;
                             tasks.push([child, false]);
+                        } else if (child.is('element', 'heading5') && child.childCount && child.getChild(0).is('$text') && child.getChild(0).data.startsWith('\u2063')) {
+                            // A row's name in a card's notes (kanban.js): never folded away.
+                            tasks.push([child, false]);
                         } else {
                             tasks.push([child, hiding]);
                         }

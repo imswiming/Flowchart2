@@ -38,7 +38,11 @@
     const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const blocksHaveText = bs => bs.some(b => (b.textContent || '').trim() || (b.querySelector && b.querySelector('img')));
     const blocksHtml = bs => bs.map(b => b.outerHTML || `<p>${escHtml(b.textContent)}</p>`).join('');
-    const ROW_DIVIDER = '━━━━━━';
+    const ROW_DIVIDER = '━━━━━━'; // (older card notes)
+    // Invisible marks at the start of the card notes' own headings: a row's name
+    // (one) and the card's title (two).
+    const ROW_MARK = '\u2063';
+    const TITLE_MARK = '\u2063\u2063';
     // A link's address: web addresses as they are, file paths as file:// links.
     const kbHref = (u) => {
         const s = String(u || '').trim();
@@ -207,6 +211,7 @@
                     purpose: typeof c.purpose === 'string' ? c.purpose : '',
                     links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: x.url.trim() })) : [],
                     due: typeof c.due === 'string' ? c.due : '',
+                    highlight: !!c.highlight,
                     blocked: !!c.blocked,
                     blockReason: typeof c.blockReason === 'string' ? c.blockReason : '',
                     checklist: Array.isArray(c.checklist) ? c.checklist.filter(i => i && typeof i.id === 'string').map(ckItem) : [],
@@ -294,7 +299,7 @@
         // rewritten while you type in them.
         // Cards that changed since last time get the time and your name.
         kbStampCards(initOnly) {
-            const sig = c => JSON.stringify([c.title, c.desc, c.column, c.labels, c.assignee, c.due, c.blocked, c.blockReason, c.checklist, c.category, c.issuer, c.purpose, c.links]);
+            const sig = c => JSON.stringify([c.title, c.desc, c.column, c.labels, c.assignee, c.due, c.blocked, c.blockReason, c.checklist, c.category, c.issuer, c.purpose, c.links, !!c.highlight]);
             const me = this.kbMyName();
             const old = this._kbCardSigs;
             const next = new Map();
@@ -924,6 +929,7 @@
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
                     this.kanban ? btn('📝', 'Card notes: the selected card\'s notes for each column', () => this.openKanbanNotes(null)) : null,
                     this.kanban ? btn(`🗄${(this.kanban.archived || []).length ? ' ' + this.kanban.archived.length : ''}`, 'Archived cards: bring them back', () => this.openKanbanArchive()) : null,
+                    this.kanban ? btn('🔗', 'Links: every link on the cards', () => { const on = this.kbLinksOpen(); localStorage.setItem('flowchart-kb-links', on ? '0' : '1'); this.renderKanbanBoard(this.kbScrollState()); }, 'kb-links-btn') : null,
                     this.kanban ? btn('🌳', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
@@ -1038,6 +1044,8 @@
             const lanes = this.kbLanes();
             const grouped = this.kanban.groupBy !== 'none';
             const visible = this.kbCards().filter(c => this.kbMatches(c));
+            const oldLinks = wrap.querySelector('.kb-links-list');
+            const linksTop = oldLinks ? oldLinks.scrollTop : 0;
             wrap.innerHTML = '';
             const rows = this.kbRows();
             if (!this.kbMultiRow()) {
@@ -1056,6 +1064,10 @@
                 });
                 scroller.append(el('button', { class: 'kb-add-row', type: 'button', text: '+ Add row', title: 'Add a row with columns of its own', onclick: () => this.addKanbanRow() }));
                 wrap.append(scroller);
+            }
+            if (this.kbLinksOpen()) {
+                wrap.append(this.buildKanbanLinks());
+                wrap.querySelector('.kb-links-list').scrollTop = linksTop;
             }
             if (keep) {
                 const sc = wrap.querySelector('.kb-rows') || wrap.querySelector('.kb-board');
@@ -1132,6 +1144,121 @@
             return board;
         },
 
+        // ----- Links list -----
+        // Every link on the cards, once each: web addresses, then folders and
+        // files. ✎ renames it on every card that has it; dragging it onto a card
+        // adds it there.
+        kbLinksOpen() {
+            const v = localStorage.getItem('flowchart-kb-links');
+            return v === null ? window.innerWidth > 900 : v === '1';
+        },
+
+        kbAllLinks() {
+            const map = new Map();
+            this.kbCards().forEach(c => (c.links || []).forEach((l) => {
+                const key = String(l.url).trim().toLowerCase();
+                if (!map.has(key)) map.set(key, { key, url: l.url, label: '', cards: [] });
+                const e = map.get(key);
+                if (!e.label && l.label) e.label = l.label;
+                if (!e.cards.includes(c)) e.cards.push(c);
+            }));
+            const all = [...map.values()].sort((a, b) => (a.label || a.url).localeCompare(b.label || b.url, undefined, { sensitivity: 'base' }));
+            const isPath = u => kbHref(u).startsWith('file:');
+            return { urls: all.filter(e => !isPath(e.url)), paths: all.filter(e => isPath(e.url)) };
+        },
+
+        buildKanbanLinks() {
+            const { urls, paths } = this.kbAllLinks();
+            const list = el('div', { class: 'kb-links-list' });
+            const rowOf = (e) => {
+                const row = el('div', { class: 'kb-links-row', title: `${e.url}\nOn: ${e.cards.map(c => c.title).join(', ')}\nDrag onto a card to add it there` });
+                const show = () => {
+                    row.innerHTML = '';
+                    row.append(
+                        el('span', { class: 'kb-links-grip', text: '⠿' }),
+                        el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || e.url, onclick: (ev) => kbOpenLink(ev, e.url, this) }),
+                        el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }),
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it on every card', onclick: rename }));
+                };
+                const rename = () => {
+                    const inp = el('input', { class: 'kb-links-in', type: 'text', value: e.label, placeholder: 'Name for it' });
+                    let over = false;
+                    const finish = (save) => {
+                        if (over) return;
+                        over = true;
+                        const v = inp.value.trim();
+                        if (!save || v === e.label) { show(); return; }
+                        this.kbCards().forEach(c => (c.links || []).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; }));
+                        afterClick(() => this.kanbanChanged());
+                    };
+                    inp.addEventListener('keydown', (ke) => { ke.stopPropagation(); if (ke.key === 'Enter') { ke.preventDefault(); finish(true); } if (ke.key === 'Escape') finish(false); });
+                    inp.addEventListener('blur', () => finish(true));
+                    row.innerHTML = '';
+                    row.append(inp);
+                    inp.focus();
+                    inp.select();
+                };
+                show();
+                this.wireKanbanLinkDrag(row, e);
+                return row;
+            };
+            const group = (name, items, none) => list.append(el('div', { class: 'kb-links-head', text: `${name} (${items.length})` }), ...(items.length ? items.map(rowOf) : [el('div', { class: 'kb-links-none', text: none })]));
+            group('🌐 Web links', urls, 'None yet.');
+            group('📁 Folders and files', paths, 'None yet.');
+            return el('div', { class: 'kb-links' },
+                el('div', { class: 'kb-links-title' }, el('b', { text: '🔗 Links' }), el('span', { class: 'kb-spacer' }),
+                    el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Hide (🔗 at the top shows it again)', onclick: () => { localStorage.setItem('flowchart-kb-links', '0'); this.renderKanbanBoard(this.kbScrollState()); } })),
+                list);
+        },
+
+        // Drag by the row (on a touch screen: by its ⠿).
+        wireKanbanLinkDrag(row, entry) {
+            row.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || e.target.closest('button, input')) return;
+                if (e.pointerType === 'touch' && !e.target.closest('.kb-links-grip')) return;
+                const sx = e.clientX, sy = e.clientY;
+                let ghost = null;
+                let over = null;
+                const move = (ev) => {
+                    if (ev.pointerId !== e.pointerId) return;
+                    if (!ghost) {
+                        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+                        ghost = el('div', { class: 'kb-links-ghost', text: `🔗 ${entry.label || entry.url}` });
+                        document.body.append(ghost);
+                        document.body.classList.add('kb-dragging-body');
+                    }
+                    ev.preventDefault();
+                    ghost.style.transform = `translate(${ev.clientX + 10}px, ${ev.clientY + 10}px)`;
+                    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+                    const card = under && under.closest('#kanban-view .kb-card');
+                    if (over && over !== card) over.classList.remove('kb-link-drop');
+                    over = card;
+                    if (over) over.classList.add('kb-link-drop');
+                };
+                const up = (ev) => {
+                    if (ev.pointerId !== e.pointerId) return;
+                    ['pointermove', 'pointerup', 'pointercancel'].forEach((t, i) => window.removeEventListener(t, i ? up : move));
+                    if (!ghost) return;
+                    ghost.remove();
+                    document.body.classList.remove('kb-dragging-body');
+                    // The click ending a drag doesn't open the link.
+                    const eat = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+                    window.addEventListener('click', eat, { capture: true, once: true });
+                    setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
+                    if (over) over.classList.remove('kb-link-drop');
+                    const card = over && ev.type === 'pointerup' && this.kbCard(over.dataset.id);
+                    if (!card) return;
+                    if ((card.links || []).some(l => String(l.url).trim().toLowerCase() === entry.key)) { this.showNotification(`"${card.title}" already has that link.`); return; }
+                    card.links = (card.links || []).concat({ label: entry.label, url: entry.url });
+                    this.kanbanChanged();
+                    this.showNotification(`Added the link to "${card.title}".`);
+                };
+                window.addEventListener('pointermove', move, { passive: false });
+                window.addEventListener('pointerup', up);
+                window.addEventListener('pointercancel', up);
+            });
+        },
+
         kbChipStyle(l) { return `background:${l.color}; color:${darkText(l.color) ? '#172b4d' : '#fff'}`; },
 
         buildKanbanCard(card) {
@@ -1140,13 +1267,16 @@
             const overdue = card.due && !done && card.due < todayStr();
             const ageDays = days(now() - (card.moved || card.created));
             const node = el('div', {
-                class: 'kb-card' + (card.id === this._kbSelected ? ' selected' : '') + (card.blocked ? ' blocked' : '') + (done ? ' done' : ''),
+                class: 'kb-card' + (card.id === this._kbSelected ? ' selected' : '') + (card.blocked ? ' blocked' : '') + (done ? ' done' : '') + (card.highlight ? ' highlighted' : ''),
                 'data-id': card.id, tabindex: '0'
             },
                 // The title, with the card's buttons and bubbles at the top right.
                 el('div', { class: 'kb-card-head' },
                     el('div', { class: 'kb-card-title', text: card.title }),
                     el('div', { class: 'kb-card-tools' },
+                    // Highlights the card (shown on the selected card, and on highlighted ones).
+                    el('button', { class: 'kb-card-flow kb-hl-btn', type: 'button', text: '🖍', title: card.highlight ? 'Remove the highlight' : 'Highlight this card',
+                        onclick: (e) => { e.stopPropagation(); card.highlight = !card.highlight; this.kanbanChanged(); } }),
                     // Opens the card's details.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
                         onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
@@ -1567,16 +1697,18 @@
         writeKbCardTab(card) {
             const tab = this.kbCardTab(true);
             if (!tab || !card) return null;
-            const parts = [];
-            // Its links and files (above the columns, not part of any of them).
-            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(l.label ? `${l.label} - ${l.url}` : l.url)}</p>`); });
+            // The card itself as the note's title (editing it renames the card), its
+            // description and its links - above the columns, not part of any of them.
+            const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
+            if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
+            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(l.label || l.url)}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
                 // Several rows: divided by a line with the row's name.
                 if (multi && col.row !== lastRow) {
                     const r = this.kanban.rows.find(x => x.id === col.row);
-                    parts.push(`<p>${ROW_DIVIDER} ${escHtml((r && r.name) || 'Row')} ${ROW_DIVIDER}</p>`);
+                    parts.push(`<h5>${ROW_MARK}${escHtml((r && r.name) || 'Row')}</h5>`);
                     lastRow = col.row;
                 }
                 // Only the column the card is in starts open (written folded, so a
@@ -1612,9 +1744,21 @@
             const doc = new DOMParser().parseFromString(`<body>${tab.content}</body>`, 'text/html');
             const cols = this.kanban.columns;
             let i = -1;
+            let newTitle = '';
+            let desc = null; // the lines under the title
+            let inRows = false;
             const parts = cols.map(() => ({ body: [], items: [] }));
             Array.from(doc.body.childNodes).forEach((n) => {
                 if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
+                if (n.nodeType === 1 && n.tagName === 'H5' && n.textContent.startsWith(ROW_MARK)) {
+                    if (n.textContent.startsWith(TITLE_MARK)) { newTitle = kbNorm(n.textContent.replace(/\u2063/g, '')); desc = desc || []; } else inRows = true;
+                    return;
+                }
+                if (i === -1 && desc && !inRows && n.nodeType === 1) {
+                    n.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+                    n.textContent.replace(/[\u2063\u200b]/g, '').replace(/\u00a0/g, ' ').split('\n').map(x => x.trim()).forEach((line) => { if (line && !line.startsWith('🔗')) desc.push(line); });
+                    return;
+                }
                 if ((n.textContent || '').trim().startsWith(ROW_DIVIDER.slice(0, 1))) return;
                 if (i < 0 || i >= cols.length || !(n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim()))) return;
                 const p = parts[i];
@@ -1626,6 +1770,11 @@
             if (i !== cols.length - 1) return;
             let changed = false;
             let listChanged = false;
+            if (newTitle && newTitle !== kbNorm(card.title)) { card.title = newTitle; listChanged = true; }
+            if (newTitle && desc) {
+                const was = (card.desc || '').split(/\n+/).map(x => x.trim()).filter(Boolean).join('\n');
+                if (desc.join('\n') !== was) { card.desc = desc.join('\n'); listChanged = true; }
+            }
             cols.forEach((col, j) => {
                 const text = blocksHaveText(parts[j].body) ? blocksHtml(parts[j].body) : '';
                 if (text !== ((card.notes && card.notes[col.id]) || '')) {
@@ -1736,7 +1885,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -1817,7 +1966,22 @@
                 });
                 close();
             }
-            if (isCard) kids.forEach((el) => { if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item']); });
+            if (isCard) {
+                // The card's title, the rows' names, and a box behind each
+                // column's checklist (its items and what's written under them).
+                let list = [];
+                const endList = () => { if (list.length) { plan.get(list[0]).push('kb-cl-first'); plan.get(list[list.length - 1]).push('kb-cl-last'); } list = []; };
+                kids.forEach((el) => {
+                    const mark = el.name === 'h5' ? textOf(el) : '';
+                    if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
+                    if (el.name === 'h4') { endList(); return; }
+                    if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
+                    else if (list.length) plan.set(el, ['kb-cl-box']);
+                    else return;
+                    list.push(el);
+                });
+                endList();
+            }
             view.change((writer) => {
                 kids.forEach((el) => {
                     const want = plan.get(el) || [];
@@ -2204,7 +2368,7 @@
             const cardNode = (card) => {
                 const done = this.kbIsDone(card);
                 return {
-                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : (card.assignee ? ` (${card.assignee})` : '')} ${CARD_EMOJI}`,
+                    name: `${card.blocked && !done ? '⛔ ' : ''}${card.title}${done ? ' ✓' : ''} ${CARD_EMOJI}`,
                     color: done ? DONE_GREEN : CARD_COLOR
                 };
             };
@@ -2439,7 +2603,8 @@
                         changed = true;
                     } else if (card) {
                         let t = strip(cardNode.name).replace(/(\s*🃏)+\s*$/u, '').replace(/^⛔\s*/, '').replace(/\s*✓$/, '');
-                        if (card.assignee && t.endsWith(` (${card.assignee})`)) t = t.slice(0, -(card.assignee.length + 3));
+                        // (older node names ended with the assignee)
+                        if (card.assignee && t === `${card.title} (${card.assignee})`) t = t.slice(0, -(card.assignee.length + 3));
                         t = t.trim();
                         if (t && t !== card.title) { card.title = t; changed = true; }
                     }
