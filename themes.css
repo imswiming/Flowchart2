@@ -202,15 +202,15 @@ html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #e3e7dc; --kb-card: 
 html.theme-paper .kb-crumb { color: #1f1f1c; }
 html.theme-paper .kb-btn { background: #e3d7bf; border: 1px solid #cdbd9c; }
 html.theme-paper .kb-btn:hover { background: #d8c9ab; }
-html.theme-paper .kb-head-actions .kb-btn:last-child, html.theme-paper .kb-bar .kb-btn:last-child { background: #b2bf99; border-color: #9aa981; }
 html.theme-paper .kb-search { background: #ece4d4; border-color: #d6c9ae; }
-html.theme-paper .kb-select { background: #dec89d; border: 1px solid #c8b083; }
+html.theme-paper .kb-select { background: #e3d7bf; border: 1px solid #cdbd9c; }
 html.theme-paper .kb-col-name { color: #1f1f1c; font-weight: 500; }
 html.theme-paper .kb-col-done { color: #5d8a55; }
 html.theme-paper .kb-col-head.over { background: var(--kb-col); }
 html.theme-paper :is(.kb-col-head.over .kb-col-count, .kb-col-warn, .kb-blocked) { color: #98432a; }
-html.theme-paper .kb-add-col { background: #dfe3d3; border: 1px solid #b6c0a5; color: #5b6a52; }
-html.theme-paper :is(.kb-col-menu, .kb-add-col, .kb-card-flow, .kb-create-btn, .kb-lk-btn):hover { background: #d3d7c2; }
+html.theme-paper .kb-add-col { background: #e3d7bf; border: 1px solid #cdbd9c; color: #4f4d44; }
+html.theme-paper .kb-add-col:hover { background: #d8c9ab; }
+html.theme-paper :is(.kb-col-menu, .kb-card-flow, .kb-create-btn, .kb-lk-btn):hover { background: #d3d7c2; }
 html.theme-paper .kb-row-head { color: #1f1f1c; border-bottom: 1px solid #b5bfa8; width: 100%; box-sizing: border-box; margin-bottom: 6px; border-image: linear-gradient(90deg, #9fac92 70%, transparent) 1; }
 html.theme-paper .kb-row:nth-child(even) .kb-row-head { color: #8a2f22; }
 html.theme-paper .kb-add-row { border-color: #b9a78a; color: #8a5a35; }
