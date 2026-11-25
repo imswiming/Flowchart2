@@ -112,7 +112,19 @@
     };
     // Browsers don't let a web page open files on the computer: for a file the
     // path is copied too, to paste into File Explorer / Finder.
+    // When each link was last opened on this device (to sort the panel by it).
+    const OPENED_KEY = 'flowchart-kb-link-opened';
+    const linksOpened = () => { try { const m = JSON.parse(localStorage.getItem(OPENED_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } };
+    const noteOpened = (u, app) => {
+        const m = linksOpened();
+        m[kbPlainUrl(u).toLowerCase()] = Date.now();
+        const keep = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 1000);
+        try { localStorage.setItem(OPENED_KEY, JSON.stringify(Object.fromEntries(keep))); } catch (e) { /* not kept */ }
+        // The panel re-sorts once the click is done.
+        if (app && app._kanbanMode && app.kbLinksSort && app.kbLinksSort() === 'opened') setTimeout(() => app.renderKanbanBoard(app.kbScrollState()), 400);
+    };
     const kbOpenLink = (e, u, app) => {
+        noteOpened(u, app);
         const href = kbHref(u);
         if (!href.startsWith('file:')) return;
         try { navigator.clipboard.writeText(kbPlainUrl(u)); } catch (err) { /* no clipboard */ }
@@ -1384,7 +1396,7 @@
         kbLinksSort() {
             let v = null;
             try { v = localStorage.getItem('flowchart-kb-links-sort'); } catch (e) { /* private mode */ }
-            return ['az', 'za', 'new', 'old'].includes(v) ? v : 'az';
+            return ['az', 'za', 'new', 'old', 'opened'].includes(v) ? v : 'az';
         },
 
         // ----- Groups in the Links panel -----
@@ -1431,7 +1443,10 @@
         kbSortLinks(list) {
             const byName = (a, b) => (a.label || a.url).localeCompare(b.label || b.url, undefined, { sensitivity: 'base', numeric: true });
             const how = this.kbLinksSort();
+            const opened = how === 'opened' ? linksOpened() : {};
             return list.sort((a, b) => {
+                // (Never opened: at the end, by name.)
+                if (how === 'opened') return (opened[linkKey(b.url)] || 0) - (opened[linkKey(a.url)] || 0) || byName(a, b);
                 if (how === 'za') return byName(b, a);
                 if (how === 'new') return (b.added || 0) - (a.added || 0) || byName(a, b);
                 if (how === 'old') return (a.added || 0) - (b.added || 0) || byName(a, b);
@@ -1514,7 +1529,7 @@
                 labels.forEach(lb => labelPart(lb, labels.length > 1));
             }
             const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
-                ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
+                ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first'], ['opened', 'Last opened']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
             sort.addEventListener('change', () => {
                 try { localStorage.setItem('flowchart-kb-links-sort', sort.value); } catch (e) { /* not kept */ }
                 this.renderKanbanBoard(this.kbScrollState());
@@ -2590,7 +2605,7 @@
                 if (!l) return;
                 const href = kbHref(l.url);
                 if (href.startsWith('file:')) kbOpenLink(e, l.url, this);
-                else window.open(href, '_blank', 'noopener');
+                else { noteOpened(l.url, this); window.open(href, '_blank', 'noopener'); }
             }, true);
             // A click on an item's box ticks it: which column, and which item in it.
             if (dom) dom.addEventListener('mousedown', (e) => {
