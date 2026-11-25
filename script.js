@@ -14369,8 +14369,12 @@ class FlowchartViewer {
         const tools = deleteRowBtns.map(btn => Object.assign({}, btn, {
             icon: btn.icon || (btn.label === 'F' ? (targetDatum.data._collapsed ? 'unfold' : 'fold') : btn.label)
         }));
-        const rowY = -(topHalf + 26 + PILL_H / 2);
         const phone = window.matchMedia('(max-width: 600px)').matches;
+        // The + for a new parent sits right above the node, the row above that
+        // (phones have no row by the node, so there it stays on top).
+        const plusBetween = !lr && !phone && (!critLock || critLock.parent);
+        const plusY = -(topHalf + 12 + 16);
+        const rowY = plusBetween ? plusY - 16 - 10 - PILL_H / 2 : -(topHalf + 26 + PILL_H / 2);
         let toolsW = 0;
         if (phone) {
             // Phone: only + and the arrows stay by the node; its other tools take
@@ -14425,7 +14429,7 @@ class FlowchartViewer {
         }
         if (!critLock || critLock.parent) {
             if (lr) drawPlus(-(NODE_WIDTH / 2 + 44), 0, activateAddParent, 'New parent');
-            else drawPlus(0, rowY - PILL_H / 2 - 12 - 16, activateAddParent, 'New parent');
+            else drawPlus(0, plusBetween ? plusY : rowY - PILL_H / 2 - 12 - 16, activateAddParent, 'New parent');
         }
         if (!critLock || critLock.addChild) {
             if (lr) drawPlus(targetDatum._boxWidth / 2 + 58, 0, activateAddChild, 'New child');
