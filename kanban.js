@@ -1779,10 +1779,10 @@
                     return l ? el('button', { class: 'kb-chip', type: 'button', style: this.kbChipStyle(l), text: l.name, title: 'Change the labels', onclick: (e) => { e.stopPropagation(); this.openKbLabelPicker(card.id, e.currentTarget.getBoundingClientRect()); } }) : null;
                 }), el('button', { class: 'kb-chip-add', type: 'button', text: '+ label', title: 'Add a label', onclick: (e) => { e.stopPropagation(); this.openKbLabelPicker(card.id, e.currentTarget.getBoundingClientRect()); } })),
                 el('div', { class: 'kb-card-foot' },
+                    card.checklist.length ? el('span', { class: 'kb-meta' + (ckDone === card.checklist.length ? ' full' : ''), text: `☑ ${ckDone}/${card.checklist.length}`, title: 'Checklist' }) : null,
                     card.due ? el('span', { class: 'kb-meta' + (overdue ? ' overdue' : ''), text: `🗓 ${fmtDue(card.due)}`, title: overdue ? 'Overdue' : 'Due' }) : null,
                     !done && ageDays >= 3 ? el('span', { class: 'kb-age', title: `${Math.floor(ageDays)} days in this column`, text: '●'.repeat(Math.min(4, Math.floor(Math.log2(ageDays)))) }) : null,
                     el('span', { class: 'kb-spacer' }),
-                    card.checklist.length ? el('span', { class: 'kb-meta' + (ckDone === card.checklist.length ? ' full' : ''), text: `☑ ${ckDone}/${card.checklist.length}`, title: 'Checklist' }) : null,
                     card.links && card.links.length ? el('span', { class: 'kb-meta', text: `🔗 ${card.links.length}`, title: card.links.map(l => l.label || l.url).join('\n') }) : null,
                 el('span', { class: 'kb-card-stamp', text: card.editedAt
                     ? `Edited ${(window.__stampText || (() => ''))(card.editedAt, card.editedBy)}`
