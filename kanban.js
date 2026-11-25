@@ -44,8 +44,10 @@
     const ROW_MARK = '\u2063';
     const TITLE_MARK = '\u2063\u2063';
     // A link's address: web addresses as they are, file paths as file:// links.
+    // (Explorer's "Copy as path" puts quotes round it.)
+    const kbPlainUrl = u => String(u || '').trim().replace(/^["']+|["']+$/g, '').trim();
     const kbHref = (u) => {
-        const s = String(u || '').trim();
+        const s = kbPlainUrl(u);
         // Only these kinds of address: anything else (javascript: and the like,
         // which someone sharing the board could have put there) isn't run.
         if (/^(https?|file|ftp):\/\//i.test(s) || /^mailto:/i.test(s)) return s;
@@ -55,15 +57,30 @@
     // A folder's icon, or a link's. (In the notes the folder's is followed by an
     // invisible mark, so a line of your own starting with one isn't taken for a link.)
     const kbIsFolder = (u) => {
-        const t = String(u || '').trim();
+        const t = kbPlainUrl(u);
         if (!kbHref(t).startsWith('file:')) return false;
         // Ends in a slash, or in a name without a file ending ("v1.2" is no ending).
         return /[\\/]$/.test(t) || !/\.(?=[a-z0-9]*[a-z])[a-z0-9]{1,8}$/i.test(t);
     };
-    const kbLinkIcon = u => (kbIsFolder(u) ? '📁' : '🔗');
+    const kbLinkIcon = u => (kbIsFolder(u) ? '📁' : kbHref(u).startsWith('file:') ? '📄' : '🔗');
     const FOLDER_MARK = '📁\u2060';
-    const kbNoteLinkText = l => `${kbIsFolder(l.url) ? FOLDER_MARK : '🔗'} ${kbLinkText(l)}`;
-    const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK);
+    const FILE_MARK = '📄\u2060';
+    const kbNoteLinkText = l => `${{ '📁': FOLDER_MARK, '📄': FILE_MARK }[kbLinkIcon(l.url)] || '🔗'} ${kbLinkText(l)}`;
+    // In the notes a card's links are in groups, each under its heading (also
+    // told by the invisible mark).
+    const WEB_HEAD = '🌐\u2060 Web links';
+    const FOLDER_HEAD = '📂\u2060 Folders';
+    const FILE_HEAD = '📑\u2060 Files';
+    const isLinkHead = t => ['🌐', '📂', '📑'].some(i => t.startsWith(`${i}\u2060`));
+    const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK) || t.startsWith(FILE_MARK) || isLinkHead(t);
+    const kbNoteLinkLines = (links) => {
+        const all = links || [];
+        const group = (head, icon) => {
+            const of = all.filter(l => kbLinkIcon(l.url) === icon);
+            return of.length ? [head].concat(of.map(kbNoteLinkText)) : [];
+        };
+        return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'));
+    };
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
     const kbLinkText = (l) => {
@@ -71,7 +88,7 @@
         const href = kbHref(l.url);
         const cut = s => (s.length > 60 ? s.slice(0, 57) + '...' : s);
         const dec = (s) => { try { return decodeURIComponent(s); } catch (e) { return s; } };
-        if (href.startsWith('file:')) return cut(String(l.url).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(l.url));
+        if (href.startsWith('file:')) return cut(kbPlainUrl(l.url).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(l.url));
         try {
             const u = new URL(href);
             const host = (u.hostname || u.pathname).replace(/^www\./, '');
@@ -85,7 +102,7 @@
     const kbOpenLink = (e, u, app) => {
         const href = kbHref(u);
         if (!href.startsWith('file:')) return;
-        try { navigator.clipboard.writeText(String(u)); } catch (err) { /* no clipboard */ }
+        try { navigator.clipboard.writeText(kbPlainUrl(u)); } catch (err) { /* no clipboard */ }
         if (app && app.showNotification) app.showNotification('File path copied - browsers block opening files from a web page, so paste it into File Explorer (or Finder) to open it.', 6000);
     };
     const uid = p => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -242,7 +259,7 @@
                     category: typeof c.category === 'string' ? c.category : '',
                     issuer: typeof c.issuer === 'string' ? c.issuer : '',
                     purpose: typeof c.purpose === 'string' ? c.purpose : '',
-                    links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: x.url.trim(), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
+                    links: Array.isArray(c.links) ? c.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
                     due: typeof c.due === 'string' ? c.due : '',
                     highlight: !!c.highlight,
                     blocked: !!c.blocked,
@@ -270,7 +287,7 @@
             return {
                 rows, columns, cards, archived, labels,
                 // Links and folders added in the Links panel itself (on no card).
-                panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: x.url.trim(), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
+                panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
                 // The old Kanban notes tab has been put away (kbRetireNotes).
                 notesRetired: !!raw.notesRetired,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
@@ -798,7 +815,7 @@
                     const show = () => {
                         row.innerHTML = '';
                         row.append(
-                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${l.label || l.url}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${l.label || kbPlainUrl(l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
                     };
@@ -1232,8 +1249,8 @@
                 if (how === 'old') return (a.added || 0) - (b.added || 0) || byName(a, b);
                 return byName(a, b);
             });
-            const isPath = u => kbHref(u).startsWith('file:');
-            return { urls: all.filter(e => !isPath(e.url)), paths: all.filter(e => isPath(e.url)) };
+            const of = icon => all.filter(e => kbLinkIcon(e.url) === icon);
+            return { urls: of('🔗'), folders: of('📁'), files: of('📄') };
         },
 
         // How the Links panel is sorted (kept on this device).
@@ -1244,7 +1261,7 @@
         },
 
         buildKanbanLinks() {
-            const { urls, paths } = this.kbAllLinks();
+            const { urls, folders, files } = this.kbAllLinks();
             const list = el('div', { class: 'kb-links-list' });
             const rowOf = (e) => {
                 const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there` });
@@ -1253,7 +1270,7 @@
                     row.append(
                         el('span', { class: 'kb-links-grip', text: '⠿' }),
                         el('span', { class: 'kb-links-icon', text: kbLinkIcon(e.url) }),
-                        el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || e.url, onclick: (ev) => kbOpenLink(ev, e.url, this) }),
+                        el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || kbPlainUrl(e.url), onclick: (ev) => kbOpenLink(ev, e.url, this) }),
                         e.cards.length ? el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }) : '',
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it (here and on every card)', onclick: rename }),
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete this link', onclick: async () => {
@@ -1318,7 +1335,7 @@
                         return;
                     }
                     if (!v) return;
-                    if (kind === 'path' && !kbHref(v).startsWith('file:')) { this.showNotification('That is not a full path - for example C:\\Projects or \\\\server\\folder.'); return; }
+                    if (kind !== 'url' && !kbHref(v).startsWith('file:')) { this.showNotification('That is not a full path - for example C:\\Projects or \\\\server\\folder.'); return; }
                     url = v;
                     inp.value = '';
                     inp.placeholder = 'Name for it (Enter to skip)';
@@ -1328,8 +1345,10 @@
             };
             group('🌐 Web links', urls, 'None yet.');
             adder('url', '+ Add web link');
-            group('📁 Folders and files', paths, 'None yet.');
-            adder('path', '+ Add folder or file path');
+            group('📁 Folders', folders, 'None yet.');
+            adder('folder', '+ Add folder path');
+            group('📄 Files', files, 'None yet.');
+            adder('file', '+ Add file path');
             const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
                 ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
             sort.addEventListener('change', () => {
@@ -1859,7 +1878,7 @@
             const top = end < 0 ? kids : kids.slice(0, end);
             if (!top.length || top[0].tagName !== 'H5') return;
             const old = top.filter(n => n.tagName === 'P' && isLinkLine(n.textContent.trim()));
-            const want = (card.links || []).map(kbNoteLinkText);
+            const want = kbNoteLinkLines(card.links);
             if (old.length === want.length && old.every((n, i) => kbNorm(n.textContent) === kbNorm(want[i]))) return;
             let at = top[top.length - 1];
             while (old.includes(at)) at = at.previousElementSibling;
@@ -1879,7 +1898,7 @@
             // description and its links - above the columns, not part of any of them.
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
-            (card.links || []).forEach((l) => { parts.push(`<p>${escHtml(kbNoteLinkText(l))}</p>`); });
+            kbNoteLinkLines(card.links).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -2063,7 +2082,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2154,7 +2173,7 @@
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
-                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, ['kb-nc-link']); return; }
+                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, [isLinkHead(textOf(el)) ? 'kb-nc-linkhead' : 'kb-nc-link']); return; }
                     if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
@@ -2203,7 +2222,7 @@
                 this.kbFindCardTabCard();
                 const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
                 const links = (card && card.links) || [];
-                const text = kbNorm(p.textContent).replace(/^(?:🔗|📁\u2060)\s*/u, '');
+                const text = kbNorm(p.textContent).replace(/^(?:🔗|📁\u2060|📄\u2060)\s*/u, '');
                 const l = links.find(x => [kbLinkText(x), kbNorm(x.label), kbNorm(x.url)].includes(text))
                     || links[Array.from(dom.querySelectorAll('p.kb-nc-link')).indexOf(p)];
                 if (!l) return;
