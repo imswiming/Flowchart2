@@ -12763,7 +12763,7 @@ class FlowchartViewer {
         FlowchartMerge.ensureIds(this.rootData);
         const leanCriteria = typeof this.leanCriteriaTrees === 'function' ? this.leanCriteriaTrees.bind(this) : null;
         function stripParents(node) {
-            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by, _at, _colTrees, _kbCol, _kbGroup, _colParent } = node;
+            const { name, children, color, _collapsed, _reflectionAnswers, _isPlaceholder, _nodePhotoUrl, _nodePhotoIsDrawing, _id, _gantt, _kanban, _crit, _hl, _by, _at, _colTrees, _kbCol, _kbGroup, _kbBl, _colParent } = node;
             const out = { name };
             // Highlighted with the node menu's highlighter (an orange outline).
             if (_hl) out._hl = true;
@@ -12779,6 +12779,8 @@ class FlowchartViewer {
             // A node holding Kanban cards (a group), and where a card sat in each
             // column's structure.
             if (_kbGroup) out._kbGroup = true;
+            // Bullets from the card notes have been drawn under this node (kanban.js).
+            if (_kbBl) out._kbBl = true;
             if (_colParent && typeof _colParent === 'object' && Object.keys(_colParent).length) out._colParent = _colParent;
             if (_colTrees && typeof _colTrees === 'object') {
                 const trees = {};

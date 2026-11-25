@@ -138,7 +138,7 @@
                 if (a.data && (a.data._critId || a.data._gantt || a.data._colViewId)) return null;
             }
             // A Kanban card node: its column history (kanban.js) - and criteria.
-            const isCard = data._kanban && !/^(col|ck|row):/.test(data._kanban) && data._kanban !== 'root' && typeof this.toggleKbColView === 'function';
+            const isCard = data._kanban && !/^(col|ck|row|bl):/.test(data._kanban) && data._kanban !== 'root' && typeof this.toggleKbColView === 'function';
             if (isCard && data._kbColView) return { label: '🕘', icon: '↩', title: 'Put the column history away (changes are kept)', activate: () => this.toggleKbColView(data) };
             const histBtn = isCard ? { label: '🕘', title: 'Column history: every column, with what was built under this card in each', activate: () => this.toggleKbColView(data), fontSize: 18 } : null;
             if (data._critOn) {

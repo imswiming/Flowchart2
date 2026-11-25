@@ -42,6 +42,30 @@
         if (id.startsWith('ck:')) return ['#a77bea', '#ef9126', '#2fb5a0', '#3fa8dd', '#63b53a'][hash(id) % 5];
         return ['#a77bea', '#1fb955'][hash(id) % 2];
     };
+    // Which card a node is under (not the card's own node): found by walking the Kanban
+    // branch, remembered for a moment so drawing the chart walks it once.
+    let ownerCache = null;
+    const cardOwnerOf = (data) => {
+        const root = app && app.rootData;
+        if (!root) return null;
+        const now = Date.now();
+        if (!ownerCache || ownerCache.root !== root || now - ownerCache.at > 150) {
+            const map = new Map();
+            const walk = (n, owner) => {
+                if (!n || typeof n !== 'object') return;
+                const id = typeof n._kanban === 'string' ? n._kanban : null;
+                let next = owner;
+                if (id && !/^(root|row:|col:|ck:|bl:)/.test(id)) next = id;
+                else if (owner) map.set(n, owner);
+                const kids = new Set();
+                ['children', '_children', '_critSaved', '_kbColSaved'].forEach((f) => { if (Array.isArray(n[f])) n[f].forEach(x => kids.add(x)); });
+                kids.forEach(x => walk(x, next));
+            };
+            walk(root, null);
+            ownerCache = { root, at: now, map };
+        }
+        return ownerCache.map.get(data) || null;
+    };
     // Node text is white, each colour deepened just until white stands out on it.
     // Only the requirements' yellow keeps its colour, with dark text.
     const rgbOf = (hex) => { const m = /^#([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -95,6 +119,15 @@
         const c = (col || '#00a67e').toLowerCase();
         // A colour picked by hand on a Kanban node stays that colour.
         const auto = ['#0c66e4', '#5e6c84', '#6e5dc6', '#2e9e5b', '#c9372c'].includes(c);
+        // Everything under a card (its checklist items, their bullets, nodes added by
+        // hand) is drawn in the card's own colour.
+        if (data && c === '#6e5dc6' && !(data._kanban && !/^(ck|bl):/.test(data._kanban))) {
+            const own = cardOwnerOf(data);
+            const card = own && app && typeof app.kbCard === 'function' ? app.kbCard(own) : null;
+            if (card && typeof app.kbIsDone === 'function' && app.kbIsDone(card)) return readable(MAP['#2e9e5b']);
+            const k = own && kanbanColor(own, c);
+            if (k) return readable(k);
+        }
         if (data && data._kanban && auto) { const k = kanbanColor(data._kanban, c); if (k) return readable(k); }
         return readable(MAP[c] || notRed(c, data));
     };

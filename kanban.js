@@ -148,6 +148,59 @@
     // A card, item or column made an assumption (Pink in the node menu) is pink
     // like any other; the rest have the board's colours.
     const kbNodeColor = (name, color) => (/^(?:[^\p{L}\p{N}]+\s*)?Assumption: /u.test(String(name || '')) ? '#e75480' : color);
+    // ----- Bullets under a checklist item -----
+    // The bullet points written under an item in a card's notes are nodes under the
+    // item's node in the flowchart (sub-bullets under their bullet's node). The notes
+    // hold the text; a node is `bl:<item id>:<path>` (path = position, e.g. 0 or 0.1).
+    const kbIsBulletNode = c => !!(c && typeof c._kanban === 'string' && c._kanban.startsWith('bl:'));
+    const kbIsList = x => x && (x.tagName === 'UL' || x.tagName === 'OL');
+    const kbLiText = (li) => {
+        const c = li.cloneNode(true);
+        c.querySelectorAll('ul,ol').forEach(x => x.remove());
+        return kbNorm(c.textContent.replace(/[⁣​]/g, '').replace(/ /g, ' '));
+    };
+    // The bullets of a list: { text, li, kids }. An empty bullet is skipped (what is
+    // under it moves up a level).
+    const kbListTree = (list) => {
+        const out = [];
+        Array.from(list.children).forEach((li) => {
+            if (li.tagName !== 'LI') return;
+            const sub = [];
+            Array.from(li.children).forEach((ch) => { if (kbIsList(ch)) sub.push(...kbListTree(ch)); });
+            const text = kbLiText(li);
+            if (text) out.push({ text, li, kids: sub }); else out.push(...sub);
+        });
+        return out;
+    };
+    const kbNoteDoc = note => new DOMParser().parseFromString(`<body>${note || ''}</body>`, 'text/html');
+    const kbBulletTree = (doc) => {
+        const out = [];
+        Array.from(doc.body.children).forEach((b) => { if (kbIsList(b)) out.push(...kbListTree(b)); });
+        return out;
+    };
+    // The bullets' text and nesting as a string: two notes with the same one need the
+    // same nodes.
+    const kbBulletSig = (note) => {
+        const sig = t => t.map(b => [b.text, sig(b.kids)]);
+        return note ? JSON.stringify(sig(kbBulletTree(kbNoteDoc(note)))) : '[]';
+    };
+    const kbSetLiText = (li, text) => {
+        Array.from(li.childNodes).forEach((n) => { if (!(n.nodeType === 1 && kbIsList(n))) n.remove(); });
+        li.insertBefore(li.ownerDocument.createTextNode(text), li.firstChild);
+    };
+    const kbAddLi = (container, text) => {
+        let list = Array.from(container.children).filter(kbIsList).pop();
+        if (!list) { list = container.ownerDocument.createElement('ul'); container.appendChild(list); }
+        const li = container.ownerDocument.createElement('li');
+        li.textContent = text;
+        list.appendChild(li);
+        return li;
+    };
+    const kbDropLi = (li) => {
+        const list = li.parentNode;
+        li.remove();
+        if (list && !Array.from(list.children).some(x => x.tagName === 'LI')) list.remove();
+    };
     // A label's colour as the theme draws it (themes.js).
     const labelColor = (c) => (typeof window.flowThemeLabelColor === 'function' ? window.flowThemeLabelColor(c) : c);
     const darkText = (hex) => {
@@ -1058,7 +1111,8 @@
             const sel = this.selectedNode && this.selectedNode.data;
             if (sel && sel._kanban) {
                 let id = sel._kanban;
-                if (id.startsWith('ck:') && this.selectedNode.parent) id = this.selectedNode.parent.data._kanban;
+                // A checklist item or one of its bullets: the card above it.
+                for (let up = this.selectedNode; id && /^(ck|bl):/.test(id) && up.parent && up.parent.data; ) { up = up.parent; id = up.data._kanban; }
                 if (id && this.kbCard(id)) return id;
             }
             if (this._kbCardTabFor && this.notesPanelShowing && this.notesPanelShowing()) {
@@ -1442,7 +1496,7 @@
             const walk = (n, id) => {
                 if (!n) return;
                 const k = n._kanban;
-                if (k && !k.startsWith('ck:')) id = out.has(k) ? k : null;
+                if (k && !/^(ck|bl):/.test(k)) id = out.has(k) ? k : null;
                 if (id) add(id, n._nodePhotoUrl, `flowchart${(n.name || '').trim() ? `, ${n.name.trim()}` : ''}`);
                 // (A node showing something else keeps its real children aside.)
                 const kids = new Set();
@@ -2503,6 +2557,8 @@
                         listChanged = true;
                     }
                     const note = blocksHaveText(ln.blocks) ? blocksHtml(ln.blocks) : '';
+                    // Bullets added, edited or removed there are nodes in the flowchart.
+                    if (note !== (it.note || '') && kbBulletSig(note) !== kbBulletSig(it.note || '')) listChanged = true;
                     if (note !== (it.note || '')) { if (note) it.note = note; else delete it.note; changed = true; }
                     next.push(it);
                 });
@@ -3124,6 +3180,44 @@
             // nodes added by hand (and placeholders) where they are. `pool`:
             // nodes to reuse from anywhere in the branch (a card's node moving
             // to another column keeps what's under it).
+            // The bullets of an item's note as nodes under its node (and sub-bullets under
+            // theirs). Nodes are kept by text first, then by position, so what was built
+            // under a bullet follows it; nodes added by hand are left where they are.
+            const stripS = v => String(v || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').trim();
+            const syncBullets = (node, wanted, itemId, prefix, color) => {
+                const field = node._critOn ? '_critSaved' : node._kbColView ? '_kbColSaved' : 'children';
+                const kids = Array.isArray(node[field]) ? node[field] : [];
+                const existing = kids.filter(kbIsBulletNode);
+                if (!wanted.length && !existing.length) { delete node._kbBl; return; }
+                const used = new Set();
+                const same = wanted.map((w) => {
+                    const e = existing.find(x => !used.has(x) && kbNorm(stripS(x.name)) === w.text);
+                    if (e) used.add(e);
+                    return e || null;
+                });
+                const rest = existing.filter(x => !used.has(x));
+                const nodes = wanted.map((w, i) => {
+                    const n = same[i] || rest.shift() || {};
+                    n.name = w.text;
+                    n.color = kbNodeColor(w.text, color);
+                    n._kanban = `bl:${itemId}:${prefix}${i}`;
+                    delete n._isPlaceholder;
+                    return n;
+                });
+                const out = [];
+                let qi = 0;
+                kids.forEach((c) => {
+                    if (kbIsBulletNode(c)) { if (qi < nodes.length) out.push(nodes[qi++]); } else out.push(c);
+                });
+                while (qi < nodes.length) {
+                    let at = out.length;
+                    while (at > 0 && this.isPlaceholderNodeData(out[at - 1]) && !(out[at - 1].name || '').trim()) at--;
+                    out.splice(at, 0, nodes[qi++]);
+                }
+                node[field] = out;
+                if (wanted.length) node._kbBl = true; else delete node._kbBl;
+                nodes.forEach((n, i) => syncBullets(n, wanted[i].kids, itemId, `${prefix}${i}.`, color));
+            };
             const reconcile = (parentNode, wanted, pool) => {
                 // A node showing its criteria (criteria.js) keeps its real
                 // children aside in _critSaved: those are what follow the board.
@@ -3163,7 +3257,7 @@
             const collect = (n) => [].concat(n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || [])).forEach((c) => {
                 if (!c) return;
                 if (c._kanban && c._kanban.startsWith('col:')) colPool.set(c._kanban, c);
-                else if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('row:') && !c._kanban.startsWith('ck:')) pool.set(c._kanban, c);
+                else if (c._kanban && c._kanban !== 'root' && !c._kanban.startsWith('row:') && !c._kanban.startsWith('ck:') && !c._kanban.startsWith('bl:')) pool.set(c._kanban, c);
                 collect(c);
             });
             collect(branch);
@@ -3193,7 +3287,7 @@
             // Every node in it gets a lasting id, so a card can find its way back
             // into the structure it sat in.
             if (typeof FlowchartMerge !== 'undefined') FlowchartMerge.ensureIds(this.rootData);
-            const isCardNode = c => c && c._kanban && !c._kanban.startsWith('ck:') && !c._kanban.startsWith('col:') && !c._kanban.startsWith('row:') && c._kanban !== 'root';
+            const isCardNode = c => c && c._kanban && !c._kanban.startsWith('ck:') && !c._kanban.startsWith('bl:') && !c._kanban.startsWith('col:') && !c._kanban.startsWith('row:') && c._kanban !== 'root';
             const nestedIn = (colNode) => {
                 const out = new Map();
                 // Hand-made nodes on the way down to a card are its structure
@@ -3276,7 +3370,9 @@
                         }
                         n._kbCol = card.column;
                     }
-                    reconcile(n, card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+                    const liveItems = card.checklist.filter(it => it.text.trim());
+                    const itemNodes = reconcile(n, liveItems.map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+                    itemNodes.forEach((inode, j) => syncBullets(inode, liveItems[j].note ? kbBulletTree(kbNoteDoc(liveItems[j].note)) : [], liveItems[j].id, '', inode.color));
                     // Whatever is built under a card takes the card node's colour. The
                     // checklist items were coloured above (green once ticked), so this is
                     // for the hand-made nodes in between and below them.
@@ -3305,9 +3401,46 @@
             const strip = n => String(n || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').trim();
             const real = n => (n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || []));
             // A hand-made node holding cards (a parent added to cards) is a group, not a new card.
-            const holdsCards = (n) => !!n._kbGroup || real(n).some(c => c && ((c._kanban && !c._kanban.startsWith('ck:')) || (!c._kanban && holdsCards(c))));
+            const holdsCards = (n) => !!n._kbGroup || real(n).some(c => c && ((c._kanban && !/^(ck|bl):/.test(c._kanban)) || (!c._kanban && holdsCards(c))));
             const isNew = n => n && !n._kanban && !n._critId && !this.isPlaceholderNodeData(n) && strip(n.name);
             let changed = false;
+            // Bullet nodes under a checklist item go back into the item's note: a renamed one
+            // renames its bullet, one added by hand becomes a new bullet (sub-bullet under a
+            // bullet's node), a deleted one removes the bullet.
+            const pullBullets = (item, node) => {
+                const kids0 = real(node).filter(Boolean);
+                if (!node._kbBl && !kids0.some(c => kbIsBulletNode(c) || isNew(c))) return;
+                const doc = kbNoteDoc(item.note);
+                const tree = kbBulletTree(doc);
+                let dirty = false;
+                const walk = (n, list, prefix, container) => {
+                    const kids = real(n).filter(Boolean);
+                    const byPath = new Map();
+                    kids.filter(kbIsBulletNode).forEach((c) => {
+                        const p = c._kanban.split(':');
+                        if (p[1] === item.id) byPath.set(p.slice(2).join(':'), c);
+                    });
+                    list.forEach((b, i) => {
+                        const child = byPath.get(`${prefix}${i}`);
+                        if (child) {
+                            const t = strip(child.name);
+                            if (t && t !== b.text) { kbSetLiText(b.li, t); dirty = true; }
+                            walk(child, b.kids, `${prefix}${i}.`, b.li);
+                        } else if (n._kbBl) {
+                            kbDropLi(b.li);
+                            dirty = true;
+                        }
+                    });
+                    let at = list.length;
+                    kids.filter(isNew).forEach((c) => {
+                        kbAddLi(container, strip(c.name));
+                        c._kanban = `bl:${item.id}:${prefix}${at++}`;
+                        dirty = true;
+                    });
+                };
+                walk(node, tree, '', doc.body);
+                if (dirty) { item.note = doc.body.innerHTML; changed = true; }
+            };
             const pullChecklist = (card, node) => {
                 const kids = real(node);
                 kids.forEach((c) => {
@@ -3316,6 +3449,7 @@
                         const item = card.checklist.find(x => `ck:${x.id}` === c._kanban);
                         const text = strip(c.name).replace(/^✓\s*/, '');
                         if (item && text && text !== item.text) { item.text = text; changed = true; }
+                        if (item) pullBullets(item, c);
                     } else if (isNew(c)) {
                         const item = { id: uid('ck'), text: strip(c.name).replace(/^✓\s*/, ''), done: false };
                         card.checklist.push(item);
@@ -4137,7 +4271,7 @@
             try {
                 let n = d && d.data;
                 let id = n && n._kanban;
-                if (id && id.startsWith('ck:') && d.parent && d.parent.data) id = d.parent.data._kanban;
+                for (let up = d; id && /^(ck|bl):/.test(id) && up.parent && up.parent.data; ) { up = up.parent; id = up.data._kanban; }
                 if (id && id !== 'root' && this.kanban && this.notesPanelShowing()) {
                     if (this.kbCard(id)) {
                         this.openKbCardNotes(id);
