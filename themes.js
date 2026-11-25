@@ -72,7 +72,7 @@
         while (l > 0.1 && 1.05 / (lum(out) + 0.05) < 4.5) { l -= 0.01; out = fromHsl(h, s, l); }
         return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
     };
-    window.flowThemeTextColor = (fill) => { const rgb = isPaper() && rgbOf(fill); return rgb ? (isLight(rgb) ? '#2f3d49' : '#ffffff') : null; };
+    window.flowThemeTextColor = (fill) => { const rgb = isPaper() && rgbOf(fill); return rgb ? (isLight(rgb) ? '#262622' : '#ffffff') : null; };
     window.flowThemeNodeColor = (col, data) => {
         if (!isPaper()) return null;
         const c = (col || '#00a67e').toLowerCase();
