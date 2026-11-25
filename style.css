@@ -4076,11 +4076,11 @@ body.gantt-mode #flowchart {
     #reflection-panel-close { position: fixed !important; top: 8px; left: 8px; z-index: 5200; width: 36px; height: 36px;
         border-radius: 50%; background: rgba(30, 36, 48, 0.95) !important; border: 1px solid rgba(255,255,255,0.18) !important; }
     #reflection-panel-header { padding-left: 50px !important; }
-    /* Notes' tabs look like tabs (an underline), not like the square edit buttons. */
-    #notes-tab-bar .matrix-tab { border: none !important; border-radius: 0 !important; background: transparent !important;
-        border-bottom: 2px solid transparent !important; padding-left: 6px !important; padding-right: 6px !important; }
-    #notes-tab-bar .matrix-tab.active { border-bottom-color: var(--accent, #00a67e) !important; color: var(--accent, #00a67e) !important; }
 }
+/* Notes' tabs look like tabs (an underline), not like the square edit buttons. */
+#notes-tab-bar .matrix-tab { border: none !important; border-radius: 0 !important; background: transparent !important;
+    border-bottom: 2px solid transparent !important; padding-left: 6px !important; padding-right: 6px !important; }
+#notes-tab-bar .matrix-tab.active { border-bottom-color: var(--accent, #00a67e) !important; color: var(--accent, #00a67e) !important; }
 
 /* ===== Phone: the top strip ===== */
 @media (max-width: 600px) {

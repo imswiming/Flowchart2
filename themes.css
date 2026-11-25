@@ -274,10 +274,13 @@ html.theme-paper .gantt-dock-sub { background: #fffdf6; border-color: #e0d8c4; }
 html.theme-paper .gantt-dock-mini { background: #ddd4c1; }
 html.theme-paper .gantt-dock-sub.done .gantt-dock-sub-name { color: #4b7a44; }
 
+/* Notes tabs: an underline, no pill. */
+html.theme-paper #notes-tab-bar .matrix-tab { background: transparent !important; box-shadow: none; }
+html.theme-paper #notes-tab-bar .matrix-tab.active .matrix-tab-label { color: #4b6b46; }
+html.theme-paper #notes-tab-bar .matrix-tab.active .matrix-tab-delete-btn { color: #7c7260; }
+
 /* ----- Phone ----- */
 @media (max-width: 600px) {
-    html.theme-paper #notes-tab-bar .matrix-tab { background: transparent !important; box-shadow: none; }
-    html.theme-paper #notes-tab-bar .matrix-tab.active .matrix-tab-label { color: #4b6b46; }
     html.theme-paper #reflection-panel-close { background: #d8d1c1 !important; }
     html.theme-paper #node-tools-strip .nts-btn { border-color: #cfc4a9; }
     html.theme-paper html, html.theme-paper body, html.theme-paper .container { background: #fbfaf2 !important; }

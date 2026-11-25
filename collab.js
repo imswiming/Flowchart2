@@ -38,6 +38,8 @@
         #node-stamp-tag { position: fixed; z-index: 2400; pointer-events: none; padding: 1px 6px; border-radius: 4px;
             background: rgba(20, 25, 34, 0.9); color: var(--muted, #9aa6b2); font: 11px/1.4 "Segoe UI", system-ui, Arial, sans-serif; white-space: nowrap; }
         body.gantt-mode #node-stamp-tag, body.kanban-mode #node-stamp-tag { display: none; }
+        #collab-edits-btn.on { border-color: #4dabf7 !important; }
+        @media (min-width: 601px) { body:not(.panel-bottom) #collab-edits { bottom: var(--collab-up, 110px); } body:not(.panel-bottom) #collab-edits button { display: none; } }
         @media (max-width: 600px) { #collab-edits { bottom: 150px; right: 10px; } }
     `;
     document.head.append(style);
@@ -98,7 +100,8 @@
             const counts = new Map();
             this.collabWalk((n) => { if (n._by && n._by !== me) counts.set(n._by, (counts.get(n._by) || 0) + 1); });
             let box = document.getElementById('collab-edits');
-            if (!this.collabShared() && !counts.size) { if (box) box.remove(); return; }
+            let desk = document.getElementById('collab-edits-btn');
+            if (!this.collabShared() && !counts.size) { if (box) box.remove(); if (desk) desk.remove(); return; }
             if (!box) { box = document.createElement('div'); box.id = 'collab-edits'; panel.append(box); }
             const on = this.collabShown();
             box.innerHTML = '';
@@ -125,13 +128,31 @@
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = on ? 'on' : '';
-            btn.textContent = on ? '👥 Hide edits' : '👥 Edits';
-            btn.title = 'Show or hide the nodes other people edited last, in a colour per person';
-            btn.addEventListener('click', () => {
+            const toggle = () => {
                 localStorage.setItem(SHOW_KEY, on ? '0' : '1');
                 this.paintCollabEdits();
-            });
+            };
+            btn.textContent = on ? '👥 Hide edits' : '👥 Edits';
+            btn.title = 'Show or hide the nodes other people edited last, in a colour per person';
+            btn.addEventListener('click', toggle);
             box.append(btn);
+            // With the other buttons at the bottom right. (The one above is for
+            // where those are hidden: phones, and the panel along the bottom.)
+            const controls = document.querySelector('.desktop-controls');
+            if (controls) {
+                if (!desk) {
+                    desk = document.createElement('div');
+                    desk.id = 'collab-edits-btn';
+                    controls.insertBefore(desk, document.getElementById('gantt-btn'));
+                }
+                desk.className = 'reset-view-btn' + (on ? ' on' : '');
+                desk.textContent = btn.textContent;
+                desk.title = btn.title;
+                desk.onclick = toggle;
+                // The list of names stays clear of however many rows of buttons there are.
+                const placed = controls.closest('.reset-view-controls');
+                box.style.setProperty('--collab-up', `${(placed ? placed.offsetHeight : 70) + 30}px`);
+            }
             if (typeof d3 === 'undefined') return;
             d3.selectAll('#flowchart g.node').each(function (d) {
                 const rect = this.querySelector('rect');
