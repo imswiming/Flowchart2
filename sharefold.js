@@ -2,18 +2,12 @@
 // A flowchart the owner shares is kept in a row of its own (sharing.js). If the
 // owner's ordinary list still holds the original - shared before signing in,
 // or brought back by another device - the owner sees both "X" and
-// "X (shared)", and they drift apart. Here the two become one again: a single
-// flowchart with the original's name, still shared, holding what both had.
-//
-// Nothing is thrown away on the way:
-// - both copies are backed up on this device first (Manage access downloads it);
-// - the two are combined; where the same thing differs, the shared copy's stands;
-// - if anything in the shared copy would be missing from the result, or a
-//   picture isn't here to be copied, it stops and changes nothing;
-// - the ordinary copy goes only once the combined one is saved on the server
-//   and only if it hasn't changed meanwhile.
-// It happens by itself only when the ordinary copy has nothing the shared one
-// lacks; otherwise it asks.
+// "X (shared)", and they drift apart. Here the shared one, being the newest,
+// takes the original's place: one flowchart with the original's name, still
+// shared. It asks first, and:
+// - both copies are backed up on this device and downloaded as a file first;
+// - the shared one's contents are never changed by this;
+// - the original goes only once the shared one is confirmed on the server.
 (function () {
     if (typeof FlowchartViewer === 'undefined') return;
 
@@ -48,16 +42,6 @@
     // (An empty matrix's default names are no content.)
     const missing = (from, inn) => [...from].filter(x => !inn.has(x) && !/^(Matrix|Solution|Row|Idea|Notes) ?\d*$/.test(x));
 
-    // Old saves hold the top node bare; newer ones under the hidden root. Both
-    // the same way, or combining would see two different trees.
-    const wrapRoot = (str) => {
-        const d = JSON.parse(str);
-        if (d.tree && d.tree._id !== '__root__' && !d.tree._isPlaceholder) {
-            d.tree = { name: '', color: '#323a4a', _isPlaceholder: true, _id: '__root__', children: [d.tree] };
-        }
-        return JSON.stringify(d);
-    };
-
     // Nodes as "id|name", to tell whether two flowcharts started as the same one.
     const nodeKeys = (data) => {
         const out = new Set();
@@ -69,8 +53,6 @@
         walk(data && data.tree);
         return out;
     };
-
-    const nodeIds = (data) => new Set([...nodeKeys(data)].map(k => k.slice(0, k.indexOf('|'))));
 
     const openDb = () => new Promise((res, rej) => {
         const r = indexedDB.open('flowchart-backups', 1);
@@ -87,6 +69,13 @@
             tx.onerror = tx.onabort = () => rej(tx.error);
         });
         db.close();
+    };
+    const download = (data, name) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     };
     const listBackups = async () => {
         const db = await openDb();
@@ -113,30 +102,13 @@
             return least > 0 && common >= Math.max(1, Math.ceil(least * 0.3)) ? own : null;
         },
 
-        // What combining would give, without changing anything.
-        planShareFold(own, item) {
-            own = { title: own.title, data: wrapRoot(own.data) };
-            item = { title: item.title, data: wrapRoot(item.data) };
-            const a = this.stripImagesFromDataString(own.data || '');
-            const b = this.stripImagesFromDataString(item.data || '');
-            const images = Object.assign({}, a.imageMap, b.imageMap);
-            // The shared copy is given as "this device's": its side stands where both differ.
-            const merged = this.mergeFlowchartItem(null, { title: own.title, data: item.data }, b.stripped, { title: own.title, data: a.stripped }, images);
-            const m = this.stripImagesFromDataString(merged.data || '').stripped;
-            const A = contentOf(JSON.parse(a.stripped));
-            const B = contentOf(JSON.parse(b.stripped));
-            const M = contentOf(JSON.parse(m));
-            return {
-                data: merged.data,
-                onlyInOwn: missing(A, B),
-                lostFromShared: missing(B, M),
-                lostFromOwn: missing(A, M),
-                // Nodes of either that aren't in the result at all.
-                lostNodes: [...nodeIds(JSON.parse(a.stripped)), ...nodeIds(JSON.parse(b.stripped))].filter(x => !nodeIds(JSON.parse(m)).has(x))
-            };
+        // What the original has that the shared one doesn't.
+        onlyInOriginal(own, item) {
+            const of = it => contentOf(JSON.parse(this.stripImagesFromDataString(it.data || '{}').stripped));
+            return missing(of(own), of(item));
         },
 
-        async foldShare(ownTitle, shareId, { ask = true } = {}) {
+        async foldShare(ownTitle, shareId) {
             if (this._folding) return false;
             this._folding = true;
             try {
@@ -155,35 +127,23 @@
                 }
                 ({ own, item } = find());
                 if (!own || !item) return false;
-                if (/"@img:/.test(own.data || '')) throw new Error('Some pictures in your copy could not be loaded, so nothing was changed. Try again when online.');
+                const asked = own.data;
+                const extra = this.onlyInOriginal(own, item).length;
+                const ok = await this.showConfirmDialog(
+                    `Replace the original "${ownTitle}" with the shared version?\n\n`
+                    + (extra ? `The original has ${extra} thing${extra === 1 ? '' : 's'} the shared version doesn't; they go. ` : '')
+                    + 'Nothing in the shared version changes. Both are backed up and downloaded as a file first.', 'Replace');
+                if (!ok) return false;
+                ({ own, item } = find());
+                if (!own || !item || this.onlyInOriginal(own, { data: asked }).length) throw new Error('The original changed meanwhile - try again.');
 
-                const plan = this.planShareFold(own, item);
-                if (plan.lostFromShared.length) throw new Error(`Combining would lose something from the shared copy ("${plan.lostFromShared[0].slice(0, 60)}"), so nothing was changed.`);
-                if (plan.lostNodes.length) throw new Error('Combining would lose some nodes, so nothing was changed.');
-                const different = plan.onlyInOwn.length || plan.lostFromOwn.length;
-                if (different && !ask) return 'ask';
-                if (different) {
-                    const ok = await this.showConfirmDialog(
-                        `"${ownTitle}" is here twice: your own and the shared one. Combine them into one "${ownTitle}" that stays shared?\n\n`
-                        + `Everything in the shared one is kept. Your own copy has ${plan.onlyInOwn.length} thing${plan.onlyInOwn.length === 1 ? '' : 's'} the shared one doesn't; `
-                        + (plan.lostFromOwn.length ? `${plan.lostFromOwn.length} of them differ from the shared copy's version, which is kept instead.` : 'they are added.')
-                        + ' Both copies are backed up on this device first. People you shared it with will see the combined one.', 'Combine');
-                    if (!ok) return false;
-                    const now = find();
-                    if (!now.own || !now.item || now.own.data !== own.data || now.item.data !== item.data) throw new Error('One of them changed meanwhile - try again.');
-                }
-
-                await saveBackup({ at: Date.now(), title: ownTitle, original: own.data, shared: item.data });
+                const backup = { at: Date.now(), title: item.share.title, original: own.data, shared: item.data };
+                await saveBackup(backup);
+                download([backup], `${item.share.title} - backup ${new Date(backup.at).toISOString().slice(0, 16).replace(/:/g, '.')}.json`);
 
                 const ownData = own.data;
                 const wasOpen = this.flowchartList[this.currentSlotIndex];
                 const openIsOneOfThem = wasOpen === own || wasOpen === item;
-                item.data = plan.data;
-                this.saveFlowchartList();
-                if (wasOpen === item) {
-                    this._applyingRemote = true;
-                    try { this.loadFlowchartFromList(this.flowchartList.indexOf(item)); } finally { this._applyingRemote = false; }
-                }
                 // On the server before anything is taken away.
                 const want = () => { const it = this.findSharedItem(shareId); return it ? this.stripImagesFromDataString(it.data || '').stripped : null; };
                 let saved = false;
@@ -193,14 +153,19 @@
                     saved = want() !== null && st.base === want();
                     if (!saved) await new Promise(r => setTimeout(r, 700));
                 }
-                if (!saved) throw new Error('The combined flowchart could not be saved to the server yet, so your own copy was kept.');
+                // Not from this device's memory of it: what Supabase holds right now.
+                if (saved) {
+                    const got = await this.sbRest(conn, `${this.CLOUD_TABLE}?id=eq.${encodeURIComponent('share::' + shareId)}&select=updated_at,data`);
+                    saved = !!(got && got[0] && got[0].data && got[0].data.data === want());
+                }
+                if (!saved) throw new Error('This device does not have the same shared version as the server yet, so the original was kept - try again in a moment.');
 
                 if (typeof this.autosaveNow === 'function') this.autosaveNow();
                 if (this.flowchartList[this.currentSlotIndex] === find().own) this.saveCurrentFlowchart();
                 ({ own, item } = find());
                 if (!item) return false;
                 if (own) {
-                    if (own.data !== ownData && this.planShareFold(own, item).onlyInOwn.length) throw new Error('Your own copy changed meanwhile, so it was kept - combine again.');
+                    if (this.onlyInOriginal(own, { data: ownData }).length) throw new Error('The original changed meanwhile, so it was kept - try again.');
                     const open = this.flowchartList[this.currentSlotIndex];
                     this.flowchartList.splice(this.flowchartList.indexOf(own), 1);
                     item.title = this.uniqueTitle(item.share.title, item);
@@ -221,7 +186,7 @@
             }
         },
 
-        // After each look for shared changes: put any pair back together.
+        // After each look for shared changes: offer to make a pair one.
         async foldSharedTwins() {
             if (this._folding || this._cloudSyncInFlight || this._shareBusy) return;
             if (!this._foldAsked) this._foldAsked = new Set();
@@ -230,14 +195,10 @@
                 if (!own || this._foldAsked.has(item.share.id)) continue;
                 const id = item.share.id;
                 try {
-                    let r = await this.foldShare(own.title, id, { ask: false });
-                    if (r === 'ask') {
-                        this._foldAsked.add(id); // once per visit; Manage access offers it again
-                        r = await this.foldShare(own.title, id);
-                    }
+                    this._foldAsked.add(id); // once per visit; Manage access offers it again
+                    await this.foldShare(own.title, id);
                 } catch (err) {
-                    this._foldAsked.add(id);
-                    console.error('Combining the shared flowchart failed:', err);
+                    console.error('Replacing the original with the shared flowchart failed:', err);
                     this.showNotification(`"${item.share.title}": ${err.message}`, 7000);
                 }
                 return;
@@ -254,8 +215,8 @@
         return r;
     };
 
-    // Manage access: combine with any of your own flowcharts (for a copy that
-    // was renamed), and download the backups.
+    // Manage access: replace any older copy in your own list (one that
+    // was renamed), and the backups.
     const origPanel = proto.renderOwnerPanel;
     proto.renderOwnerPanel = function (pop, item, status, setStatus, closeRow) {
         const r = origPanel.call(this, pop, item, status, setStatus, closeRow);
@@ -264,7 +225,7 @@
         if (own.length) {
             const label = document.createElement('label');
             label.className = 'cs-label';
-            label.textContent = 'Is there another copy of this in your list?';
+            label.textContent = 'Is there an older copy of this in your list?';
             const row = document.createElement('div');
             row.className = 'cs-row';
             const pick = document.createElement('select');
@@ -275,7 +236,7 @@
             const go = document.createElement('button');
             go.type = 'button';
             go.className = 'cs-btn';
-            go.textContent = 'Combine into this one';
+            go.textContent = 'Replace it with this one';
             go.addEventListener('click', async () => {
                 go.disabled = true;
                 try {
@@ -294,15 +255,42 @@
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'cs-btn';
-            b.textContent = 'Download the copies from before combining';
+            b.textContent = 'Download the copies from before replacing';
             b.addEventListener('click', () => {
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(new Blob([JSON.stringify(mine, null, 1)], { type: 'application/json' }));
-                a.download = `${item.share.title} - before combining.json`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+                download(mine, `${item.share.title} - before replacing.json`);
             });
             backups.append(b);
+            // If the two were combined (an earlier version did that): the shared
+            // version exactly as it was before.
+            const newest = mine.filter(x => x.shared).pop();
+            if (!newest || missing(contentOf(JSON.parse(this.stripImagesFromDataString(item.data || '{}').stripped)),
+                contentOf(JSON.parse(this.stripImagesFromDataString(newest.shared).stripped))).length === 0) return;
+            const put = document.createElement('button');
+            put.type = 'button';
+            put.className = 'cs-btn';
+            put.textContent = `Go back to the shared version of ${new Date(newest.at).toLocaleString()}`;
+            put.addEventListener('click', async () => {
+                try {
+                    if (!await this.showConfirmDialog('Go back to that version? Anything changed since goes, for everyone it is shared with. The version now is downloaded as a backup first.', 'Go back')) return;
+                    if (typeof this.autosaveNow === 'function') this.autosaveNow();
+                    const it = this.findSharedItem(item.share.id);
+                    if (!it) return;
+                    const i = this.flowchartList.indexOf(it);
+                    if (i === this.currentSlotIndex) this.saveCurrentFlowchart();
+                    const now = { at: Date.now(), title: item.share.title, original: it.data };
+                    await saveBackup(now);
+                    download([now], `${item.share.title} - backup.json`);
+                    it.data = newest.shared;
+                    if (i === this.currentSlotIndex) {
+                        this._applyingRemote = true;
+                        try { this.loadFlowchartFromList(i); } finally { this._applyingRemote = false; }
+                    }
+                    this.saveFlowchartList();
+                    this.pushShares();
+                    this.renderSharePanel();
+                } catch (err) { setStatus(err.message, true); }
+            });
+            backups.append(put);
         }).catch(() => { /* none */ });
         box.append(backups);
         pop.insertBefore(box, closeRow && closeRow.parentNode === pop ? closeRow : null);
