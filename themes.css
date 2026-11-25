@@ -89,10 +89,10 @@ html.theme-paper .reset-view-btn:hover { filter: brightness(0.96); }
 html.theme-paper :is(#top-share-btn, #share-btn, #hamburger-share) { filter: none; }
 
 /* Icon column */
-html.theme-paper .zoom-btn { background: #242421 !important; border-color: #3a3a35 !important; color: #f7f3e8; border-radius: 5px; box-shadow: 0 1px 2px rgba(60, 50, 30, 0.3); }
-html.theme-paper .zoom-btn:hover { filter: brightness(1.18); }
-html.theme-paper :is(#top-toggle-placeholders-btn, #top-share-btn) { background: #9d4d30 !important; border-color: #84401f !important; }
-html.theme-paper :is(#top-gantt-btn, #top-kanban-btn, #top-notes-btn, #top-pugh-matrix-btn, #top-themes-btn) { background: #73865f !important; border-color: #5f714d !important; }
+html.theme-paper .zoom-btn { background: #ddd6c6 !important; border-color: #c8bfab !important; color: #33332e; border-radius: 5px; box-shadow: 0 1px 2px rgba(60, 50, 30, 0.3); }
+html.theme-paper .zoom-btn:hover { filter: brightness(0.95); }
+html.theme-paper :is(#top-toggle-placeholders-btn, #top-share-btn) { background: #dfbfab !important; border-color: #cba68f !important; }
+html.theme-paper :is(#top-gantt-btn, #top-kanban-btn, #top-notes-btn, #top-pugh-matrix-btn, #top-themes-btn) { background: #c8d1b8 !important; border-color: #b0bb9d !important; }
 
 /* Sync status */
 html.theme-paper #cloud-sync-status { color: #262622 !important; }
