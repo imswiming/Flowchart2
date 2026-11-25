@@ -2230,7 +2230,10 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: zoom-out;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #notes-image-lightbox img {
@@ -2240,6 +2243,25 @@ body {
     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
     border-radius: 4px;
 }
+
+#notes-image-lightbox img { cursor: grab; transform-origin: center; }
+#notes-image-lightbox.dragging, #notes-image-lightbox.dragging img { cursor: grabbing; }
+#notes-image-lightbox .nil-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+#notes-image-lightbox .nil-close:hover { background: rgba(255, 255, 255, 0.2); }
 
 /* ===== Morph Matrix ===== */
 .morph-row-name {

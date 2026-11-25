@@ -10052,15 +10052,96 @@ class FlowchartViewer {
 
     // A simple full-screen lightbox for viewing a pasted photo at full size - same
     // idea as opening an embedded image in a Word doc.
+    // Wheel (or pinch) zooms at the pointer, dragging moves the picture, a double
+    // click puts it back; the X, Esc or a click beside it closes.
     openNotesImageLightbox(src) {
-        let overlay = document.getElementById('notes-image-lightbox');
-        if (overlay) overlay.remove();
-        overlay = document.createElement('div');
+        const old = document.getElementById('notes-image-lightbox');
+        if (old) { if (old._close) old._close(); else old.remove(); }
+        const overlay = document.createElement('div');
         overlay.id = 'notes-image-lightbox';
-        overlay.addEventListener('click', () => overlay.remove());
         const img = document.createElement('img');
         img.src = src;
-        overlay.appendChild(img);
+        img.draggable = false;
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'nil-close';
+        x.title = 'Close (Esc)';
+        x.setAttribute('aria-label', 'Close');
+        x.textContent = '\u2715';
+        overlay.append(img, x);
+
+        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+        const close = () => {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+        };
+        overlay._close = close;
+        document.addEventListener('keydown', onKey, true);
+        x.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+
+        let k = 1, tx = 0, ty = 0;
+        const draw = () => {
+            img.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+            overlay.classList.toggle('zoomed', k > 1.001);
+        };
+        // Zooms keeping the point under (cx, cy) where it is.
+        const zoomAt = (cx, cy, next) => {
+            next = Math.min(20, Math.max(0.2, next));
+            const px = cx - overlay.clientWidth / 2;
+            const py = cy - overlay.clientHeight / 2;
+            tx = px - (px - tx) * (next / k);
+            ty = py - (py - ty) * (next / k);
+            k = next;
+            draw();
+        };
+        const reset = () => { k = 1; tx = 0; ty = 0; draw(); };
+        overlay.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+            zoomAt(e.clientX, e.clientY, k * Math.exp(-Math.max(-300, Math.min(300, step)) * 0.0016));
+        }, { passive: false });
+
+        // One pointer drags, two pinch. A press that didn't move and wasn't on the
+        // picture closes.
+        const pts = new Map();
+        let moved = false;
+        let onImg = false;
+        let many = false;
+        overlay.addEventListener('pointerdown', (e) => {
+            if (e.target === x || e.button > 1) return;
+            e.preventDefault();
+            if (!pts.size) { moved = false; many = false; onImg = e.target === img; }
+            pts.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
+            if (pts.size > 1) many = true;
+            try { overlay.setPointerCapture(e.pointerId); } catch (err) { /* gone already */ }
+        });
+        overlay.addEventListener('pointermove', (e) => {
+            const p = pts.get(e.pointerId);
+            if (!p) return;
+            const before = [...pts.values()].map(q => ({ x: q.x, y: q.y }));
+            const dx = e.clientX - p.x, dy = e.clientY - p.y;
+            p.x = e.clientX;
+            p.y = e.clientY;
+            if (Math.hypot(p.x - p.sx, p.y - p.sy) > 4) { moved = true; overlay.classList.add('dragging'); }
+            if (pts.size === 1) { if (moved) { tx += dx; ty += dy; draw(); } return; }
+            const after = [...pts.values()];
+            const mid = a => ({ x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) });
+            const m0 = mid(before), m1 = mid(after);
+            tx += m1.x - m0.x;
+            ty += m1.y - m0.y;
+            if (m0.d > 0) zoomAt(m1.x, m1.y, k * (m1.d / m0.d)); else draw();
+        });
+        const up = (e) => {
+            if (!pts.delete(e.pointerId) || pts.size) return;
+            overlay.classList.remove('dragging');
+            if (e.type === 'pointerup' && !moved && !many && !onImg && e.button === 0) setTimeout(close, 30); // after the click, so it lands on nothing behind
+        };
+        overlay.addEventListener('pointerup', up);
+        overlay.addEventListener('pointercancel', up);
+        // The clicks stay here (nothing behind is clicked).
+        ['click', 'mousedown'].forEach(t => overlay.addEventListener(t, e => e.stopPropagation()));
+        overlay.addEventListener('dblclick', (e) => { e.stopPropagation(); if (k !== 1 || tx || ty) reset(); else zoomAt(e.clientX, e.clientY, 2.5); });
         document.body.appendChild(overlay);
     }
 
