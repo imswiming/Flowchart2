@@ -73,7 +73,8 @@
     const WEB_HEAD = '🌐\u2060 Web links';
     const FOLDER_HEAD = '📂\u2060 Folders';
     const FILE_HEAD = '📑\u2060 Files';
-    const isLinkHead = t => ['🌐', '📂', '📑', '🏷'].some(i => t.startsWith(`${i}\u2060`));
+    const LINKS_TOP = '\u2060\u2060Links'; // the header above them all
+    const isLinkHead = t => t === LINKS_TOP || ['🌐', '📂', '📑', '🏷'].some(i => t.startsWith(`${i}\u2060`));
     const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK) || t.startsWith(FILE_MARK) || isLinkHead(t);
     const kbNoteLinkLines = (links, labels) => {
         const all = links || [];
@@ -84,7 +85,8 @@
             };
             return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'));
         };
-        return groups(all).concat(...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(groups(lb.links))));
+        const lines = groups(all).concat(...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(groups(lb.links))));
+        return lines.length ? [LINKS_TOP].concat(lines) : [];
     };
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
@@ -2408,7 +2410,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead', 'kb-nc-linktop'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2499,7 +2501,7 @@
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
-                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, isLinkHead(textOf(el)) ? ['kb-nc-linkhead'].concat(textOf(el).startsWith('🏷') ? ['kb-nc-labhead'] : []) : ['kb-nc-link']); return; }
+                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, textOf(el) === LINKS_TOP ? ['kb-nc-linktop'] : isLinkHead(textOf(el)) ? ['kb-nc-linkhead'].concat(textOf(el).startsWith('🏷') ? ['kb-nc-labhead'] : []) : ['kb-nc-link']); return; }
                     if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
