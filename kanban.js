@@ -3277,6 +3277,15 @@
                         n._kbCol = card.column;
                     }
                     reconcile(n, card.checklist.filter(it => it.text.trim()).map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
+                    // Whatever is built under a card takes the card node's colour. The
+                    // checklist items were coloured above (green once ticked), so this is
+                    // for the hand-made nodes in between and below them.
+                    const paintUnder = (parent) => realKids(parent).forEach((c) => {
+                        if (!c || typeof c !== 'object' || c._critId) return;
+                        if (!c._kanban && !this.isPlaceholderNodeData(c)) c.color = kbNodeColor(c.name, n.color);
+                        paintUnder(c);
+                    });
+                    paintUnder(n);
                 });
                 if (typeof this.ensureRightmostPlaceholderNodes === 'function' && !colNodes[i]._critOn) this.ensureRightmostPlaceholderNodes(colNodes[i]);
             });
