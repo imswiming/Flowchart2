@@ -28,7 +28,7 @@ html.theme-paper {
     --scrollbar-thumb-hover: #b9af9a;
     --paper-serif: "Fraunces Paper", "Sitka Heading", "Sitka Text", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
     /* Faint fibres and grain, as of handmade paper. */
-    --paper-tex: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .4 0 0 0 0 .3 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='420' height='420' filter='url(%23n)' opacity='.75'/%3E%3Cg fill='none' stroke='%23a89c80' stroke-opacity='.3' stroke-width='.8' stroke-linecap='round'%3E%3Cpath d='M40 60q5-4 11-3M180 30q3 5 1 10M330 88q7 1 12-4M88 190q4 4 9 2M250 160q2-6 8-7M380 230q-5 3-6 9M30 300q6 1 10-3M160 340q5-1 7 4M290 300q7-2 11 2M220 400q3-5 9-5M392 372q-2 6-7 8'/%3E%3C/g%3E%3C/svg%3E");
+    --paper-tex: url("vendor/paper.png"); /* a plain picture: an SVG filter is slow to repaint */
     background: #fbfaf2;
     color-scheme: light;
 }
@@ -40,13 +40,14 @@ html.theme-paper input[type="range"]::-webkit-slider-thumb { background: #6f8f69
 html.theme-paper input[type="range"]::-moz-range-thumb, html.theme-paper input[type="range"]::-moz-range-progress { background: #6f8f69 !important; }
 
 /* ----- The flowchart ----- */
-html.theme-paper .flowchart-panel,
-html.theme-paper #flowchart { background: #fbfaf2 var(--paper-tex) !important; }
+html.theme-paper .flowchart-panel { background: #f6f1e5 var(--paper-tex) !important; }
+html.theme-paper #flowchart { background: transparent !important; }
 html.theme-paper #flowchart svg { background: transparent !important; }
-html.theme-paper .link { stroke: #45453f; stroke-width: 1.3px; }
+html.theme-paper .link { stroke: #5c6270; stroke-width: 1.4px; }
 html.theme-paper .link.selected, html.theme-paper .custom-link.selected { stroke: #c5812f; }
-html.theme-paper #flowchart .node > rect { rx: 5; ry: 5; filter: drop-shadow(0 1px 1px rgba(70, 60, 40, 0.28)); }
-html.theme-paper #flowchart .node > rect[fill="#323a4a"] { fill: #fdfcf5; stroke: #b3b09f; stroke-width: 1.2px; stroke-dasharray: 5 3.5; filter: none; }
+html.theme-paper #flowchart .node > rect { rx: 5; ry: 5; } /* (no shadow: a filter on every node makes panning slow) */
+html.theme-paper #flowchart .node > text { font-weight: 600; }
+html.theme-paper #flowchart .node > rect[fill="#323a4a"] { fill: #f6f1e5; stroke-width: 1.2px; stroke-dasharray: 5 3.5; }
 html.theme-paper #flowchart .node > text[fill="#323a4a"] { fill: transparent; }
 html.theme-paper .fold-badge { fill: #f3ecdc; stroke: #a9a48f; }
 html.theme-paper .fold-arrow-btn > path { stroke: #4a4a42; }
@@ -65,9 +66,9 @@ html.theme-paper .nb-btn > path[stroke="#f87168"] { stroke: #a4452b; }
 html.theme-paper .nb-btn > path[stroke="#5aa7ff"] { stroke: #4f6a80; }
 html.theme-paper .nb-btn > path[stroke="#ff8c1a"] { stroke: #b56a1c; }
 /* The node menu's colours, as the nodes are drawn. */
-html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #6a7b4b !important; color: #fff !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #a55b3e !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #64788a !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #7df0b8 !important; color: #20302a !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #f2607c !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #1d9fe0 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #ffcc00 !important; color: #262622 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(50, 58, 74)"] { background: #fdfcf5 !important; color: #262622 !important; box-shadow: inset 0 0 0 1px #b3b09f; }
 html.theme-paper #node-edit-input { background: #fffdf6 !important; color: #262622 !important; }

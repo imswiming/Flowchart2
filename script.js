@@ -3275,6 +3275,8 @@ class FlowchartViewer {
                 .scaleExtent([this.minZoom, this.maxZoom])
                 .clickDistance(10)
                 .on('start', (event) => {
+                    // The edge nodes dock at doesn't move during a drag: measured once.
+                    if (event.sourceEvent) this._panBound = this.orientation === 'LR' ? this.getStickyTopBound() : this.getStickyLeftBound();
                     // Real user gesture starting to pan/zoom while a node's text is being
                     // edited: save that edit instead of discarding it. Only fires once per
                     // gesture, before any 'zoom' ticks. The render is deferred (see below)
@@ -3298,7 +3300,8 @@ class FlowchartViewer {
                     if (flowGroup) {
                         d3.select(flowGroup).attr('transform', this.transform);
                     }
-                    this.updateStickyAncestors();
+                    // Once a frame however often the mouse moves.
+                    if (!this._stickyRaf) this._stickyRaf = requestAnimationFrame(() => { this._stickyRaf = 0; this.updateStickyAncestors(); });
                     this.hideContextMenu();
                     // Dragging/zooming the background hides the radial add-buttons too;
                     // they only come back if the node is clicked again. Gated to real user
@@ -3313,6 +3316,7 @@ class FlowchartViewer {
                     }
                 })
                 .on('end', (event) => {
+                    this._panBound = null;
                     // Only persist on a real user gesture (sourceEvent set) - our own
                     // programmatic transform calls (initial setup, mobile centering,
                     // restoring a saved view) also fire 'end' but shouldn't trigger a save.
@@ -3800,7 +3804,7 @@ class FlowchartViewer {
         // t is the pan offset along the sibling-spread axis; bound is the edge sticky
         // nodes dock against on that same axis.
         const t = isLR ? this.transform.y : this.transform.x;
-        const bound = isLR ? this.getStickyTopBound() : this.getStickyLeftBound();
+        const bound = typeof this._panBound === 'number' ? this._panBound : (isLR ? this.getStickyTopBound() : this.getStickyLeftBound());
         // Nodes are drawn centered on their position along this axis - docking a node
         // exactly at bound would put its center right on the boundary and hide half of
         // it, so a docked node's normal resting spot is one full node-width/height
@@ -3897,21 +3901,25 @@ class FlowchartViewer {
 
         const snap10 = v => Math.round(v / 10) * 10;
 
-        g.selectAll('.node')
-            .attr('transform', d => isLR
+        // Only what really moved is touched: setting an attribute, even to what it
+        // already is, makes the browser redo that element's work.
+        const set = (el, name, v) => { if (el.getAttribute(name) !== v) el.setAttribute(name, v); };
+        g.selectAll('.node').each(function (d) {
+            set(this, 'transform', isLR
                 ? `translate(${d.x},${snap10(d._stickyRenderPos)})`
                 : `translate(${snap10(d._stickyRenderPos)},${d.y})`);
+        });
 
-        g.selectAll('path.link:not(.custom-link)')
-            .attr('d', d => isLR
-                ? this.computeLinkPathD(
+        const self = this;
+        g.selectAll('path.link:not(.custom-link)').each(function (d) {
+            set(this, 'd', isLR
+                ? self.computeLinkPathD(
                     snap10(d.source.x), snap10(d.source._stickyRenderPos),
-                    snap10(d.target.x), snap10(d.target._stickyRenderPos)
-                  )
-                : this.computeLinkPathD(
+                    snap10(d.target.x), snap10(d.target._stickyRenderPos))
+                : self.computeLinkPathD(
                     snap10(d.source._stickyRenderPos), snap10(d.source.y),
-                    snap10(d.target._stickyRenderPos), snap10(d.target.y)
-                  ));
+                    snap10(d.target._stickyRenderPos), snap10(d.target.y)));
+        });
     }
 
     applyIndentedLayout(root, secondarySpacing, primarySpacing) {
@@ -13841,7 +13849,7 @@ class FlowchartViewer {
         .attr('stroke', d => {
             // An empty "+" placeholder is the background colour, so its outline
             // is what shows it.
-            if (this.isPlaceholderNodeData(d.data)) return '#8a93a3';
+            if (this.isPlaceholderNodeData(d.data)) return (typeof window.flowThemePlaceholderStroke === 'function' && window.flowThemePlaceholderStroke(d.parent)) || '#8a93a3';
             // Highlighted (node menu): a bright orange outline.
             if (d.data._hl) return NODE_HIGHLIGHT;
             return mixWithWhite(nodeDisplayColor(d.data.color, d.data), 0.32);

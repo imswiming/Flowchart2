@@ -14,13 +14,14 @@
 // Only this site's own files are touched - cloud sync calls and anything else
 // go straight to the network.
 
-const CACHE_NAME = 'flowchart-v35';
+const CACHE_NAME = 'flowchart-v36';
 
 const IMMUTABLE = [
     'd3.v7.min.js',
     'vendor/ckeditor5/ckeditor5.css',
     'vendor/ckeditor5/ckeditor5.umd.js',
     'vendor/fonts/fraunces.ttf',
+    'vendor/paper.png',
 ];
 const REFRESHED = [
     './',
