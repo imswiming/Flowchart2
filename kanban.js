@@ -1607,7 +1607,7 @@
                 };
                 show();
                 const box = el('div', { class: 'kb-links-group', 'data-kind': kind, 'data-group': g.id }, head);
-                if (!folded) box.append(...items.map(rowOf), items.length ? '' : el('div', { class: 'kb-links-none', text: 'Drag links here, or add one below.' }), adder(kind, hint, g.id));
+                if (!folded) box.append(...items.map(rowOf), items.length ? '' : el('div', { class: 'kb-links-none', text: 'Drag links here, or add one.' }), adder(kind, hint, g.id));
                 return box;
             };
             const section = (name, kind, hint) => {
