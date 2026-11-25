@@ -68,7 +68,7 @@ html.theme-paper .nb-btn > path[stroke="#ff8c1a"] { stroke: #b56a1c; }
 html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #a9b98c !important; color: #262622 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #a9593a !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #64788a !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #d29a42 !important; color: #262622 !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #ffcc00 !important; color: #262622 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(50, 58, 74)"] { background: #fdfcf5 !important; color: #262622 !important; box-shadow: inset 0 0 0 1px #b3b09f; }
 html.theme-paper #node-edit-input { background: #fffdf6 !important; color: #262622 !important; }
 html.theme-paper .nb-btn:hover .nb-tile { filter: brightness(0.94); }

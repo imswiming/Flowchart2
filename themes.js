@@ -21,7 +21,7 @@
         '#00a67e': '#a9b98c', '#2f8f6e': '#a9b98c', // green
         '#e75480': '#a9593a', // pink
         '#0074d9': '#64788a', '#0c66e4': '#64788a', '#3d7fd9': '#64788a', '#4c9aff': '#7f98a8', // blue
-        '#ffcc00': '#d29a42', // yellow
+        '#ffcc00': '#ffcc00', // yellow (requirements), as the criteria bar's button
         '#5e6c84': '#64788a', // row
         '#6e5dc6': '#e6dac2', // card
         '#2e9e5b': '#56794f', // done
