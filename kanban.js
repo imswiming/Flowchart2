@@ -1079,7 +1079,22 @@
                 class: 'kb-card' + (card.id === this._kbSelected ? ' selected' : '') + (card.blocked ? ' blocked' : '') + (done ? ' done' : ''),
                 'data-id': card.id, tabindex: '0'
             },
-                el('div', { class: 'kb-card-title', text: card.title }),
+                // The title, with the card's buttons and bubbles at the top right.
+                el('div', { class: 'kb-card-head' },
+                    el('div', { class: 'kb-card-title', text: card.title }),
+                    el('div', { class: 'kb-card-tools' },
+                    // Opens the card's details.
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
+                        onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '🗄', title: 'Archive: off the board, everything kept',
+                        onclick: (e) => { e.stopPropagation(); this.archiveKanbanCard(card.id); } }),
+                    // Opens the flowchart on this card's node.
+                    el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
+                        onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
+                    // On a shared board: the bubble of whoever last changed it, too.
+                    this.kbIsShared() && (card.editedBy || card.createdBy) && (card.editedBy || card.createdBy) !== card.assignee
+                        ? (() => { const a = avatar(card.editedBy || card.createdBy, 'sm kb-editor'); a.title = `${card.editedBy ? 'Last changed' : 'Added'} by ${card.editedBy || card.createdBy}`; return a; })() : null,
+                    card.assignee ? avatar(card.assignee) : null)),
                 card.category ? el('div', { class: 'kb-card-cat', text: card.category }) : null,
                 // Who issued it and what it's for show on the selected card.
                 card.id === this._kbSelected && (card.issuer || card.purpose)
@@ -1101,19 +1116,7 @@
                     card.links && card.links.length ? el('span', { class: 'kb-meta', text: `🔗 ${card.links.length}`, title: card.links.map(l => l.label || l.url).join('\n') }) : null,
                 el('span', { class: 'kb-card-stamp', text: card.editedAt
                     ? `Edited ${(window.__stampText || (() => ''))(card.editedAt, card.editedBy)}`
-                    : `Added ${(window.__stampText || (() => ''))(card.created, card.createdBy)}` }),
-                    // Opens the card's details (along the bottom of the screen).
-                    el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
-                        onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
-                    el('button', { class: 'kb-card-flow', type: 'button', text: '🗄', title: 'Archive: off the board, everything kept',
-                        onclick: (e) => { e.stopPropagation(); this.archiveKanbanCard(card.id); } }),
-                    // Opens the flowchart on this card's node.
-                    el('button', { class: 'kb-card-flow', type: 'button', text: '🌳', title: 'Show this card in the flowchart',
-                        onclick: (e) => { e.stopPropagation(); this.showKanbanCardInFlowchart(card.id); } }),
-                    // On a shared board: the bubble of whoever last changed it, too.
-                    this.kbIsShared() && (card.editedBy || card.createdBy) && (card.editedBy || card.createdBy) !== card.assignee
-                        ? (() => { const a = avatar(card.editedBy || card.createdBy, 'sm kb-editor'); a.title = `${card.editedBy ? 'Last changed' : 'Added'} by ${card.editedBy || card.createdBy}`; return a; })() : null,
-                    card.assignee ? avatar(card.assignee) : null));
+                    : `Added ${(window.__stampText || (() => ''))(card.created, card.createdBy)}` })));
             this.wireKanbanDrag(node, card);
             return node;
         },
