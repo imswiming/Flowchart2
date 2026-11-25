@@ -609,6 +609,8 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link { margin-left: 6px !important; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link + h5.kb-nc-row, :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link + h4 { margin-top: 20px !important; }
 
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-labhead { margin-top: 16px !important; font-size: 13px !important; color: inherit; }
+
 /* A highlighted card, and its button. */
 .kb-card.highlighted { background: #fff7d6; box-shadow: 0 0 0 2px #e2b203; }
 .kb-card.highlighted.selected { box-shadow: 0 0 0 2px #e2b203, 0 0 0 4px var(--kb-blue); }
@@ -636,6 +638,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 .kb-lab-part { margin: 4px 0; padding: 2px 4px; border-radius: 4px; }
 .kb-lab-links.in-card { border-top: 1px solid var(--kb-line); padding-top: 2px; }
 .kb-lab-head { margin: 2px 0; }
+.kb-lab-kind { margin: 4px 0 1px; font-size: 10.5px; font-weight: 600; color: var(--kb-sub); }
 .kb-lab-add { width: 100%; box-sizing: border-box; color: var(--kb-sub); }
 .kb-lab-links.in-panel .kb-lab-add { border-color: var(--kb-line); }
 .kb-lab-part.kb-link-drop { outline: 2px dashed #1f845a; outline-offset: -1px; }

@@ -77,12 +77,14 @@
     const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK) || t.startsWith(FILE_MARK) || isLinkHead(t);
     const kbNoteLinkLines = (links, labels) => {
         const all = links || [];
-        const group = (head, icon) => {
-            const of = all.filter(l => kbLinkIcon(l.url) === icon);
-            return of.length ? [head].concat(of.map(kbNoteLinkText)) : [];
+        const groups = (list) => {
+            const group = (head, icon) => {
+                const of = list.filter(l => kbLinkIcon(l.url) === icon);
+                return of.length ? [head].concat(of.map(kbNoteLinkText)) : [];
+            };
+            return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'));
         };
-        return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'),
-            ...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(lb.links.map(kbNoteLinkText))));
+        return groups(all).concat(...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(groups(lb.links))));
     };
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
@@ -910,7 +912,10 @@
             labels.forEach((lb) => {
                 const part = el('div', { class: 'kb-lab-part', 'data-label-links': lb.id },
                     el('div', { class: 'kb-lab-head' }, el('span', { class: 'kb-chip', style: this.kbChipStyle(lb), text: lb.name, title: 'Links of this label: the same on every card that has it' })));
-                (lb.links || []).forEach((l) => {
+                const byKind = [['🔗', '🌐 Web links'], ['📁', '📁 Folders'], ['📄', '📄 Files']]
+                    .map(([icon, name]) => [name, (lb.links || []).filter(l => kbLinkIcon(l.url) === icon)]).filter(([, of]) => of.length);
+                byKind.forEach(([name, of]) => of.forEach((l, nth) => {
+                    if (!nth) part.append(el('div', { class: 'kb-lab-kind', text: name }));
                     const row = el('div', { class: 'kb-link-row' });
                     const rename = () => {
                         const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
@@ -939,7 +944,7 @@
                     show();
                     this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, { id: '', labelId: lb.id });
                     part.append(row);
-                });
+                }));
                 // The address, Enter, then a name (or none), Enter.
                 const hint = `+ Add link to ${lb.name}`;
                 const inp = el('input', { class: 'kb-cl-text kb-lab-add', type: 'text', placeholder: hint });
@@ -2310,7 +2315,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2401,7 +2406,7 @@
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
-                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, [isLinkHead(textOf(el)) ? 'kb-nc-linkhead' : 'kb-nc-link']); return; }
+                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, isLinkHead(textOf(el)) ? ['kb-nc-linkhead'].concat(textOf(el).startsWith('🏷') ? ['kb-nc-labhead'] : []) : ['kb-nc-link']); return; }
                     if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
