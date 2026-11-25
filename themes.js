@@ -35,9 +35,9 @@
     const kanbanColor = (id, col) => {
         const k = app && app.kanban;
         if (id === 'root') return '#10d98f';
-        // Every row has the one colour, and every column the other.
+        // Rows and columns all have the one colour.
         if (id.startsWith('row:')) return '#4db8f0';
-        if (id.startsWith('col:')) return '#f0900c';
+        if (id.startsWith('col:')) return '#4db8f0';
         if (col === '#2e9e5b' || col === '#c9372c') return null;
         if (id.startsWith('ck:')) return ['#a77bea', '#ef9126', '#2fb5a0', '#3fa8dd', '#63b53a'][hash(id) % 5];
         return ['#a77bea', '#1fb955'][hash(id) % 2];
