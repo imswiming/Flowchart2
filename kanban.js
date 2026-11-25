@@ -73,15 +73,16 @@
     const WEB_HEAD = '🌐\u2060 Web links';
     const FOLDER_HEAD = '📂\u2060 Folders';
     const FILE_HEAD = '📑\u2060 Files';
-    const isLinkHead = t => ['🌐', '📂', '📑'].some(i => t.startsWith(`${i}\u2060`));
+    const isLinkHead = t => ['🌐', '📂', '📑', '🏷'].some(i => t.startsWith(`${i}\u2060`));
     const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK) || t.startsWith(FILE_MARK) || isLinkHead(t);
-    const kbNoteLinkLines = (links) => {
+    const kbNoteLinkLines = (links, labels) => {
         const all = links || [];
         const group = (head, icon) => {
             const of = all.filter(l => kbLinkIcon(l.url) === icon);
             return of.length ? [head].concat(of.map(kbNoteLinkText)) : [];
         };
-        return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'));
+        return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'),
+            ...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(lb.links.map(kbNoteLinkText))));
     };
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
@@ -244,7 +245,9 @@
             const colIds = new Set(columns.map(c => c.id));
             const labels = (Array.isArray(raw.labels) ? raw.labels : []).filter(l => l && typeof l.id === 'string').map(l => ({
                 id: l.id, name: typeof l.name === 'string' ? l.name : 'Label',
-                color: typeof l.color === 'string' ? l.color : LABEL_COLORS[0]
+                color: typeof l.color === 'string' ? l.color : LABEL_COLORS[0],
+                // Links of the label: shown on every card that has it.
+                links: Array.isArray(l.links) ? l.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined })) : []
             }));
             const labelIds = new Set(labels.map(l => l.id));
             const ts = v => (Number.isFinite(v) ? v : null);
@@ -486,7 +489,7 @@
             if (!n) return null;
             let l = k.labels.find(x => x.name.toLowerCase() === n.toLowerCase());
             if (!l && create) {
-                l = { id: uid('kl'), name: n, color: LABEL_COLORS[k.labels.length % LABEL_COLORS.length] };
+                l = { id: uid('kl'), name: n, color: LABEL_COLORS[k.labels.length % LABEL_COLORS.length], links: [] };
                 k.labels.push(l);
             }
             return l;
@@ -888,6 +891,85 @@
             return box;
         },
 
+        // ----- Links on labels -----
+        // A label's links show on every card that has the label; changing them on
+        // one card (or in the Links panel) changes them for all.
+        kbCardLabels(card) { return ((card && card.labels) || []).map(id => this.kbLabel(id)).filter(Boolean); },
+        kbAddLabelLink(label, link) {
+            const url = kbPlainUrl(link.url);
+            if (!url) return false;
+            if ((label.links || []).some(l => linkKey(l.url) === linkKey(url))) { this.showNotification(`"${label.name}" already has that link.`); return false; }
+            label.links = (label.links || []).concat({ label: link.label || '', url, added: now() });
+            this.kanbanChanged();
+            return true;
+        },
+        buildKbLabelLinks(card, where) {
+            const labels = this.kbCardLabels(card);
+            if (!labels.length) return null;
+            const box = el('div', { class: `kb-lab-links in-${where}` });
+            labels.forEach((lb) => {
+                const part = el('div', { class: 'kb-lab-part', 'data-label-links': lb.id },
+                    el('div', { class: 'kb-lab-head' }, el('span', { class: 'kb-chip', style: this.kbChipStyle(lb), text: lb.name, title: 'Links of this label: the same on every card that has it' })));
+                (lb.links || []).forEach((l) => {
+                    const row = el('div', { class: 'kb-link-row' });
+                    const rename = () => {
+                        const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
+                        let over = false;
+                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); afterClick(() => this.kanbanChanged()); } else show(); };
+                        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+                        inp.addEventListener('blur', () => finish(true));
+                        row.innerHTML = '';
+                        row.append(inp);
+                        inp.focus();
+                        inp.select();
+                    };
+                    const show = () => {
+                        row.innerHTML = '';
+                        row.append(
+                            el('a', { class: 'kb-lk-a', draggable: 'false', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link (on every card with the label)', onclick: (e) => { e.stopPropagation(); rename(); } }),
+                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Take it off the label', onclick: async (e) => {
+                                e.stopPropagation();
+                                const n = this.kbCards().filter(x => (x.labels || []).includes(lb.id)).length;
+                                if (!await this.showConfirmDialog(`Take "${kbLinkText(l)}" off the label "${lb.name}"? It goes from ${n === 1 ? 'the 1 card' : `all ${n} cards`} with that label.`, 'Remove')) return;
+                                lb.links = (lb.links || []).filter(x => x !== l);
+                                this.kanbanChanged();
+                            } }));
+                    };
+                    show();
+                    this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, { id: '', labelId: lb.id });
+                    part.append(row);
+                });
+                // The address, Enter, then a name (or none), Enter.
+                const hint = `+ Add link to ${lb.name}`;
+                const inp = el('input', { class: 'kb-cl-text kb-lab-add', type: 'text', placeholder: hint });
+                let url = '';
+                const reset = () => { url = ''; inp.value = ''; inp.placeholder = hint; };
+                inp.addEventListener('click', e => e.stopPropagation());
+                inp.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Escape') { reset(); inp.blur(); return; }
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const v = inp.value.trim();
+                    if (url) { const u = url; reset(); this.kbAddLabelLink(lb, { url: u, label: v }); return; }
+                    if (!v) return;
+                    url = v;
+                    inp.value = '';
+                    inp.placeholder = 'Name for it (Enter to skip)';
+                });
+                inp.addEventListener('blur', () => {
+                    const u = url || inp.value.trim();
+                    const name = url ? inp.value.trim() : '';
+                    reset();
+                    if (u) afterClick(() => this.kbAddLabelLink(lb, { url: u, label: name }));
+                });
+                part.append(inp);
+                box.append(part);
+            });
+            return box;
+        },
+
         // ----- Mode -----
         setupKanban() {
             this._kanbanMode = false;
@@ -1254,6 +1336,14 @@
                 if (!e.cards.includes(c)) e.cards.push(c);
                 first(e, l.added || c.created);
             }));
+            ((this.kanban && this.kanban.labels) || []).forEach(lb => (lb.links || []).forEach((l) => {
+                const key = String(l.url).trim().toLowerCase();
+                if (!map.has(key)) map.set(key, { key, url: l.url, label: '', cards: [] });
+                const e = map.get(key);
+                if (!e.label && l.label) e.label = l.label;
+                (e.labels || (e.labels = [])).push(lb);
+                first(e, l.added);
+            }));
             const byName = (a, b) => (a.label || a.url).localeCompare(b.label || b.url, undefined, { sensitivity: 'base', numeric: true });
             const how = this.kbLinksSort();
             const all = [...map.values()].sort((a, b) => {
@@ -1289,6 +1379,7 @@
             const keep = l => !gone.has(linkKey(l.url));
             this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(keep);
             this.kbCards().forEach((c) => { if ((c.links || []).some(l => !keep(l))) c.links = c.links.filter(keep); });
+            (this.kanban.labels || []).forEach((lb) => { if ((lb.links || []).some(l => !keep(l))) lb.links = lb.links.filter(keep); });
             gone.forEach((k) => { if (this.kanban.linkGroupOf) delete this.kanban.linkGroupOf[k]; });
         },
         // Deleting a group: on its own (its links stay, ungrouped) or with its links.
@@ -1325,7 +1416,7 @@
             };
             const rowOf = (e) => {
                 const kind = LINK_KINDS[['🔗', '📁', '📄'].indexOf(kbLinkIcon(e.url))];
-                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there, or into a group` });
+                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${(e.labels || []).length ? `Label: ${e.labels.map(lb => lb.name).join(', ')}\n` : ''}${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there, or into a group` });
                 const show = () => {
                     row.innerHTML = '';
                     row.append(
@@ -1338,7 +1429,8 @@
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete this link', onclick: async () => {
                             const on = e.cards.map(c => `"${c.title}"`);
                             const from = on.length ? ` It also goes from ${on.length === 1 ? 'the card' : `${on.length} cards:`} ${on.slice(0, 5).join(', ')}${on.length > 5 ? '...' : ''}.` : '';
-                            if (!await this.showConfirmDialog(`Delete the link "${kbLinkText(e)}"?${from}`)) return;
+                            const tags = (e.labels || []).map(lb => `"${lb.name}"`).join(', ');
+                            if (!await this.showConfirmDialog(`Delete the link "${kbLinkText(e)}"?${from}${tags ? ` And from the label ${tags}.` : ''}`)) return;
                             this.kbDeleteLinks([e.url]);
                             this.kanbanChanged();
                         } }));
@@ -1352,7 +1444,7 @@
                         const v = inp.value.trim();
                         if (!save || v === e.label) { show(); return; }
                         this.kbCards().forEach(c => (c.links || []).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; }));
-                        (this.kanban.panelLinks || []).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; });
+                        (this.kanban.panelLinks || []).concat(...(this.kanban.labels || []).map(lb => lb.links || [])).forEach((l) => { if (String(l.url).trim().toLowerCase() === e.key) l.label = v; });
                         afterClick(() => this.kanbanChanged());
                     };
                     inp.addEventListener('keydown', (ke) => { ke.stopPropagation(); if (ke.key === 'Enter') { ke.preventDefault(); finish(true); } if (ke.key === 'Escape') finish(false); });
@@ -1459,6 +1551,10 @@
             section('🌐 Web links', 'url', urls, '+ Add web link');
             section('📁 Folders', 'folder', folders, '+ Add folder path');
             section('📄 Files', 'file', files, '+ Add file path');
+            // Below them: the selected card's labels and their links.
+            const active = this._kbSelected && this.kbCard(this._kbSelected);
+            const ofLabels = active && this.buildKbLabelLinks(active, 'panel');
+            if (ofLabels) list.append(el('div', { class: 'kb-links-head kb-lab-title' }, el('span', { text: `🏷 Labels of "${active.title}"` })), ofLabels);
             const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
                 ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
             sort.addEventListener('change', () => {
@@ -1495,7 +1591,10 @@
                     const under = document.elementFromPoint(ev.clientX, ev.clientY);
                     let card = under && under.closest('#kanban-view .kb-card');
                     // Or one of its own category's groups (or out of them).
-                    if (card && fromCard && card.dataset.id === fromCard.id) card = null;
+                    // A label's links (on the card, or in the panel).
+                    const part = under && under.closest('[data-label-links]');
+                    if (part && !(fromCard && fromCard.labelId === part.dataset.labelLinks)) card = part;
+                    else if (card && fromCard && card.dataset.id === fromCard.id) card = null;
                     if (!card && under && !fromCard) {
                         const g = under.closest('.kb-links-group, .kb-links-sec');
                         if (g && g.dataset.kind === kind) card = g;
@@ -1515,6 +1614,11 @@
                     window.addEventListener('click', eat, { capture: true, once: true });
                     setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
                     if (over) over.classList.remove('kb-link-drop');
+                    if (over && ev.type === 'pointerup' && over.dataset.labelLinks) {
+                        const lb = this.kbLabel(over.dataset.labelLinks);
+                        if (lb) this.kbAddLabelLink(lb, { url: entry.url, label: entry.label });
+                        return;
+                    }
                     if (over && ev.type === 'pointerup' && over.dataset.group !== undefined) {
                         if (this.kbLinkGroupOf(entry.url, kind) !== over.dataset.group) { this.kbSetLinkGroup(entry.url, over.dataset.group); this.kanbanChanged(); }
                         return;
@@ -1570,6 +1674,7 @@
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
                 this.buildKanbanCardChecklist(card),
                 this.buildKanbanCardLinks(card),
+                card.id === this._kbSelected ? this.buildKbLabelLinks(card, 'card') : null,
                 // Labels: click one to change it, "+ label" to add one.
                 el('div', { class: 'kb-chips' + (card.labels.length ? '' : ' none') }, ...card.labels.map((id) => {
                     const l = this.kbLabel(id);
@@ -2001,7 +2106,7 @@
             const top = end < 0 ? kids : kids.slice(0, end);
             if (!top.length || top[0].tagName !== 'H5') return;
             const old = top.filter(n => n.tagName === 'P' && isLinkLine(n.textContent.trim()));
-            const want = kbNoteLinkLines(card.links);
+            const want = kbNoteLinkLines(card.links, this.kbCardLabels(card));
             if (old.length === want.length && old.every((n, i) => kbNorm(n.textContent) === kbNorm(want[i]))) return;
             let at = top[top.length - 1];
             while (old.includes(at)) at = at.previousElementSibling;
@@ -2021,7 +2126,7 @@
             // description and its links - above the columns, not part of any of them.
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
-            kbNoteLinkLines(card.links).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
+            kbNoteLinkLines(card.links, this.kbCardLabels(card)).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -2344,7 +2449,7 @@
                 e.stopPropagation();
                 this.kbFindCardTabCard();
                 const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
-                const links = (card && card.links) || [];
+                const links = ((card && card.links) || []).concat(...this.kbCardLabels(card).map(lb => lb.links || []));
                 const text = kbNorm(p.textContent).replace(/^(?:🔗|📁\u2060|📄\u2060)\s*/u, '');
                 const l = links.find(x => [kbLinkText(x), kbNorm(x.label), kbNorm(x.url)].includes(text))
                     || links[Array.from(dom.querySelectorAll('p.kb-nc-link')).indexOf(p)];
