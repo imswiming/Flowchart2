@@ -607,6 +607,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-linkhead { margin-top: 10px !important; font-size: 11px !important; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link { margin-left: 6px !important; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link + p.kb-nc-linkhead { margin-top: 24px !important; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link + h5.kb-nc-row, :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link + h4 { margin-top: 20px !important; }
 
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-labhead { margin-top: 16px !important; font-size: 13px !important; color: inherit; }
