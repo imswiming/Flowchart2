@@ -52,6 +52,18 @@
         if (/^[a-z]:[\\/]/i.test(s) || s.startsWith('\\\\') || s.startsWith('/')) return 'file:///' + s.replace(/\\/g, '/').replace(/^\/+/, '');
         return 'https://' + s.replace(/^[a-z][a-z0-9+.-]*:(\/\/)?/i, '');
     };
+    // A folder's icon, or a link's. (In the notes the folder's is followed by an
+    // invisible mark, so a line of your own starting with one isn't taken for a link.)
+    const kbIsFolder = (u) => {
+        const t = String(u || '').trim();
+        if (!kbHref(t).startsWith('file:')) return false;
+        // Ends in a slash, or in a name without a file ending ("v1.2" is no ending).
+        return /[\\/]$/.test(t) || !/\.(?=[a-z0-9]*[a-z])[a-z0-9]{1,8}$/i.test(t);
+    };
+    const kbLinkIcon = u => (kbIsFolder(u) ? '📁' : '🔗');
+    const FOLDER_MARK = '📁\u2060';
+    const kbNoteLinkText = l => `${kbIsFolder(l.url) ? FOLDER_MARK : '🔗'} ${kbLinkText(l)}`;
+    const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK);
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
     const kbLinkText = (l) => {
@@ -395,6 +407,8 @@
             this.renderKanban();
             this.syncKanbanNotes();
             this.syncKanbanFlow();
+            const shown = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+            if (shown) this.kbRefreshCardTabLinks(shown);
             this.autosave();
             this.updateUndoRedoButtons();
         },
@@ -784,7 +798,7 @@
                     const show = () => {
                         row.innerHTML = '';
                         row.append(
-                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `🔗 ${l.label || l.url}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${l.label || l.url}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
                     };
@@ -1238,13 +1252,19 @@
                     row.innerHTML = '';
                     row.append(
                         el('span', { class: 'kb-links-grip', text: '⠿' }),
+                        el('span', { class: 'kb-links-icon', text: kbLinkIcon(e.url) }),
                         el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || e.url, onclick: (ev) => kbOpenLink(ev, e.url, this) }),
                         e.cards.length ? el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }) : '',
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it (here and on every card)', onclick: rename }),
-                        e.panel ? el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: e.cards.length ? 'Remove from the panel (its cards keep it)' : 'Remove from the panel', onclick: () => {
-                            this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(l => String(l.url).trim().toLowerCase() !== e.key);
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete this link', onclick: async () => {
+                            const on = e.cards.map(c => `"${c.title}"`);
+                            const from = on.length ? ` It also goes from ${on.length === 1 ? 'the card' : `${on.length} cards:`} ${on.slice(0, 5).join(', ')}${on.length > 5 ? '...' : ''}.` : '';
+                            if (!await this.showConfirmDialog(`Delete the link "${kbLinkText(e)}"?${from}`)) return;
+                            const keep = l => String(l.url).trim().toLowerCase() !== e.key;
+                            this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(keep);
+                            this.kbCards().forEach((c) => { if ((c.links || []).some(l => !keep(l))) c.links = c.links.filter(keep); });
                             this.kanbanChanged();
-                        } }) : '');
+                        } }));
                 };
                 const rename = () => {
                     const inp = el('input', { class: 'kb-links-in', type: 'text', value: e.label, placeholder: 'Name for it' });
@@ -1334,7 +1354,7 @@
                     if (ev.pointerId !== e.pointerId) return;
                     if (!ghost) {
                         if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
-                        ghost = el('div', { class: 'kb-links-ghost', text: `🔗 ${entry.label || entry.url}` });
+                        ghost = el('div', { class: 'kb-links-ghost', text: `${kbLinkIcon(entry.url)} ${entry.label || entry.url}` });
                         document.body.append(ghost);
                         document.body.classList.add('kb-dragging-body');
                     }
@@ -1838,8 +1858,8 @@
             const end = kids.findIndex((n, i) => n.tagName === 'H4' || (i > 0 && n.tagName === 'H5'));
             const top = end < 0 ? kids : kids.slice(0, end);
             if (!top.length || top[0].tagName !== 'H5') return;
-            const old = top.filter(n => n.tagName === 'P' && n.textContent.trim().startsWith('🔗'));
-            const want = (card.links || []).map(l => `🔗 ${kbLinkText(l)}`);
+            const old = top.filter(n => n.tagName === 'P' && isLinkLine(n.textContent.trim()));
+            const want = (card.links || []).map(kbNoteLinkText);
             if (old.length === want.length && old.every((n, i) => kbNorm(n.textContent) === kbNorm(want[i]))) return;
             let at = top[top.length - 1];
             while (old.includes(at)) at = at.previousElementSibling;
@@ -1859,7 +1879,7 @@
             // description and its links - above the columns, not part of any of them.
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
-            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(kbLinkText(l))}</p>`); });
+            (card.links || []).forEach((l) => { parts.push(`<p>${escHtml(kbNoteLinkText(l))}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -1914,7 +1934,7 @@
                 }
                 if (i === -1 && desc && !inRows && n.nodeType === 1) {
                     n.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
-                    n.textContent.replace(/[\u2063\u200b]/g, '').replace(/\u00a0/g, ' ').split('\n').map(x => x.trim()).forEach((line) => { if (line && !line.startsWith('🔗')) desc.push(line); });
+                    n.textContent.replace(/[\u2063\u200b]/g, '').replace(/\u00a0/g, ' ').split('\n').map(x => x.trim()).forEach((line) => { if (line && !isLinkLine(line)) desc.push(line); });
                     return;
                 }
                 if ((n.textContent || '').trim().startsWith(ROW_DIVIDER.slice(0, 1))) return;
@@ -2134,7 +2154,7 @@
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
-                    if (top && el.name === 'p' && textOf(el).startsWith('🔗')) { plan.set(el, ['kb-nc-link']); return; }
+                    if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, ['kb-nc-link']); return; }
                     if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
@@ -2183,7 +2203,7 @@
                 this.kbFindCardTabCard();
                 const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
                 const links = (card && card.links) || [];
-                const text = kbNorm(p.textContent).replace(/^🔗\s*/, '');
+                const text = kbNorm(p.textContent).replace(/^(?:🔗|📁\u2060)\s*/u, '');
                 const l = links.find(x => [kbLinkText(x), kbNorm(x.label), kbNorm(x.url)].includes(text))
                     || links[Array.from(dom.querySelectorAll('p.kb-nc-link')).indexOf(p)];
                 if (!l) return;

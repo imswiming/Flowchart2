@@ -625,6 +625,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 .kb-links-n { font-size: 11px; color: var(--kb-sub); background: #e9ebee; border-radius: 8px; padding: 0 6px; }
 .kb-links-in { flex: 1 1 auto; min-width: 0; padding: 4px 6px; font: inherit; color: var(--kb-text); background: #fff; border: 1px solid var(--kb-blue); border-radius: 4px; outline: none; }
 .kb-links-sort { padding: 2px 4px; margin-right: 6px; font-size: 12px; }
+.kb-links-icon { font-size: 12px; flex: 0 0 auto; }
 .kb-links-add { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 2px; border-color: var(--kb-line); background: transparent; font-size: 12.5px; }
 .kb-links-add:focus { border-color: var(--kb-blue); background: #fff; }
 .kb-links-ghost { position: fixed; left: 0; top: 0; z-index: 5000; pointer-events: none; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 10px; border-radius: 6px; background: #0c66e4; color: #fff; font: 13px "Segoe UI", system-ui, sans-serif; box-shadow: 0 6px 16px rgba(9, 30, 66, 0.35); }
