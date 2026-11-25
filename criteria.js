@@ -96,6 +96,7 @@
         if (n._isPlaceholder) o._isPlaceholder = true;
         if (n._collapsed) o._collapsed = true;
         if (n._hl) o._hl = true;
+        if (Array.isArray(n._links) && n._links.length) o._links = n._links;
         if (n._nodePhotoUrl) o._nodePhotoUrl = n._nodePhotoUrl;
         if (n._nodePhotoUrl && n._nodePhotoIsDrawing) o._nodePhotoIsDrawing = true;
         if (kids.length) o.children = kids;

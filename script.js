@@ -255,6 +255,7 @@ const NODE_BTN_ICONS = {
     '✕': { title: 'Delete with everything under it', tone: 'red', d: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6' },
     P: { title: 'Delete, keeping its children', tone: 'red', d: 'M3 14h6v6H3zM13 3h5v5h-5zM4 4l16 16M17 13l4 4M21 13l-4 4' },
     H: { title: 'Highlight the node (yellow outline) - again to take it off', tone: 'yellow', d: 'M9 11l7.5-7.5 4 4L13 15zM9 11l-5 5v4h4l5-5M14.5 5.5l4 4' },
+    '🔗': { title: 'Links and files', d: 'M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' },
     '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
     '🎨': { title: 'Drawing', text: '🎨' },
     '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
@@ -12682,6 +12683,8 @@ class FlowchartViewer {
             // A Kanban card node: the column it was drawn for, and what was built
             // under it in the other columns (kanban.js) - kept whole, ids and all.
             if (_kbCol) out._kbCol = _kbCol;
+            // Links (kanban.js node links).
+            if (Array.isArray(node._links) && node._links.length) out._links = node._links.map(l => ({ label: String(l.label || ''), url: String(l.url || '') })).filter(l => l.url);
             // A node holding Kanban cards (a group), and where a card sat in each
             // column's structure.
             if (_kbGroup) out._kbGroup = true;
@@ -14272,6 +14275,11 @@ class FlowchartViewer {
         // Criteria view (criteria.js): its button, and only the buttons that make
         // sense on the view's own nodes (the criteria and the nodes they belong to).
         const critLock = typeof self.criteriaNodeLock === 'function' ? self.criteriaNodeLock(targetDatum) : null;
+        // Links (web addresses / file paths) - kanban.js; a card's node shares the card's.
+        if (typeof self.nodeLinkButton === 'function') {
+            const lb = self.nodeLinkButton(targetDatum);
+            if (lb) deleteRowBtns.push(lb);
+        }
         if (typeof self.criteriaRowButton === 'function') {
             const b = self.criteriaRowButton(targetDatum);
             if (b) deleteRowBtns.push(...(Array.isArray(b) ? b : [b]));

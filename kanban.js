@@ -2682,6 +2682,79 @@
             return out;
         },
 
+        // ----- Links on nodes -----
+        // Any node can carry links (web addresses or file paths). A Kanban card's
+        // node shows and edits the card's own links, so the two stay the same.
+        nodeLinksOf(data) {
+            const card = data && data._kanban && this.kbCard(data._kanban);
+            if (card) return card.links || [];
+            return Array.isArray(data && data._links) ? data._links : [];
+        },
+
+        setNodeLinks(data, links) {
+            const card = data && data._kanban && this.kbCard(data._kanban);
+            if (card) { card.links = links; this.kanbanChanged(); return; }
+            this.pushUndo();
+            if (links.length) data._links = links; else delete data._links;
+            this.renderFlowchart(this.rootData);
+            this.autosave();
+        },
+
+        nodeLinkButton(d) {
+            if (!d || !d.data || this.isPlaceholderNodeData(d.data) || d.data._critId || d.data._colViewId) return null;
+            const n = this.nodeLinksOf(d.data).length;
+            return { label: '🔗', title: n ? `Links and files (${n})` : 'Links and files', activate: () => this.openNodeLinks(d.data) };
+        },
+
+        openNodeLinks(data) {
+            const links = this.nodeLinksOf(data).map(l => Object.assign({}, l));
+            const p = this.kbPopup(`🔗 ${String(data.name || '').replace(/(\s*\(Simplify\?\))+\s*$/, '') || 'Links'}`);
+            const box = el('div', { class: 'kb-links' });
+            const draw = () => {
+                box.innerHTML = '';
+                if (!links.length) box.append(el('p', { class: 'cs-muted cs-small', text: 'No links yet - add a web address or a file path.' }));
+                links.forEach((l, i) => {
+                    box.append(el('div', { class: 'kb-ck-item' },
+                        el('a', { class: 'kb-link-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: l.label || l.url, title: l.url, onclick: (e) => kbOpenLink(e, l.url, this) }),
+                        el('button', { class: 'cs-btn kb-ck-del', type: 'button', text: '✕', title: 'Remove', onclick: () => { links.splice(i, 1); draw(); } })));
+                });
+                const url = el('input', { class: 'cs-input', type: 'text', placeholder: 'https://... or C:\\folder\\file.pdf' });
+                const label = el('input', { class: 'cs-input', type: 'text', placeholder: 'Name (optional)' });
+                const add = () => { if (!url.value.trim()) return; links.push({ label: label.value.trim(), url: url.value.trim() }); draw(); };
+                [url, label].forEach(x => x.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }));
+                box.append(el('div', { class: 'cs-row' }, url, label, el('button', { class: 'cs-btn', type: 'button', text: '+ Link', onclick: add })));
+                setTimeout(() => url.focus(), 0);
+            };
+            draw();
+            const card = data._kanban && this.kbCard(data._kanban);
+            p.body.append(box, card ? el('p', { class: 'cs-muted cs-small', text: `These are the card's links - the same on the board.` }) : null);
+            p.footer.append(
+                el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }),
+                el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Save', onclick: () => { p.close(); this.setNodeLinks(data, links); } }));
+        },
+
+        // A small 🔗 on nodes with links (click it to see them).
+        paintNodeLinkBadges() {
+            if (typeof d3 === 'undefined') return;
+            const app = this;
+            d3.selectAll('#flowchart g.node').each(function (d) {
+                const old = this.querySelector('.node-link-badge');
+                if (old) old.remove();
+                if (!d || !d.data) return;
+                const n = app.nodeLinksOf(d.data).length;
+                if (!n) return;
+                const rect = this.querySelector('rect');
+                if (!rect) return;
+                const x = +rect.getAttribute('x') + (+rect.getAttribute('width')) - 4;
+                const y = +rect.getAttribute('y') + 4;
+                const g = d3.select(this).append('g').attr('class', 'node-link-badge').style('cursor', 'pointer');
+                g.append('title').text(app.nodeLinksOf(d.data).map(l => l.label || l.url).join('\n'));
+                g.append('circle').attr('cx', x).attr('cy', y).attr('r', 8).attr('fill', '#2b3343').attr('stroke', 'rgba(255,255,255,0.3)');
+                g.append('text').attr('x', x).attr('y', y + 3.5).attr('text-anchor', 'middle').style('font-size', '9px').text('🔗');
+                g.on('mousedown', ev => ev.stopPropagation()).on('click', (ev) => { ev.stopPropagation(); app.openNodeLinks(d.data); });
+            });
+        },
+
         kbFlowRender() {
             if (this._kanbanMode || this._ganttMode || this._kbFlowRenderPending) return;
             this._kbFlowRenderPending = true;
@@ -3250,6 +3323,7 @@
                 d3.selectAll('#flowchart .link').style('opacity', d => (d && d.target && !inside(d.source) ? 0.22 : null));
             }
         } catch (e) { /* drawn next time */ }
+        try { this.paintNodeLinkBadges(); } catch (e) { /* drawn next time */ }
         if (!this._kanbanMode && !this._critView && this.kanban) {
             try { this.pullKanbanFlowEdits(); } catch (e) { console.error('Kanban branch edits:', e); }
         }
