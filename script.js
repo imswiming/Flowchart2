@@ -7312,7 +7312,8 @@ class FlowchartViewer {
             if (typeof this.isHiddenNotesTab === 'function' && this.isHiddenNotesTab(tab)) return;
             const isActive = `${scope}:${tab.id}` === activeKey;
             const tabEl = document.createElement('div');
-            tabEl.className = 'matrix-tab' + (isActive ? ' active' : '') + (pinned ? '' : ' notes-tab-temp');
+            tabEl.className = 'matrix-tab' + (isActive ? ' active' : '') + (pinned ? '' : ' notes-tab-temp')
+                + (scope === 'global' ? ' nt-type-global' : (this.gantt && this.gantt.notesTabId === tab.id ? ' nt-type-gantt' : ' nt-type-local')); // coloured by type (themes.css)
             tabEl.title = scope === 'global' ? 'Global note' : 'Note in this flowchart';
             // Tap opens the note; a quick second tap on the same tab opens the
             // notes list to choose which note this tab shows instead. (Counted by

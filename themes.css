@@ -99,13 +99,11 @@ html.theme-paper #reminder-pop button:not(.primary) { background: #ece6d8; borde
 html.theme-paper .reset-view-btn { background: #ece6d8 !important; border-color: #d0c7b2 !important; color: #262622 !important; box-shadow: 0 1px 2px rgba(90, 75, 45, 0.25); }
 html.theme-paper .reset-view-btn:hover { filter: brightness(0.96); }
 
-html.theme-paper :is(#top-share-btn, #share-btn, #hamburger-share) { filter: none; }
+html.theme-paper :is(#share-btn, #hamburger-share) { filter: none; }
 
-/* Icon column */
-html.theme-paper .zoom-btn { background: #ddd6c6 !important; border-color: #c8bfab !important; color: #33332e; border-radius: 5px; box-shadow: 0 1px 2px rgba(60, 50, 30, 0.3); }
-html.theme-paper .zoom-btn:hover { filter: brightness(0.95); }
-html.theme-paper :is(#top-toggle-placeholders-btn, #top-share-btn) { background: #dfbfab !important; border-color: #cba68f !important; }
-html.theme-paper :is(#top-gantt-btn, #top-kanban-btn, #top-notes-btn, #top-pugh-matrix-btn, #top-themes-btn) { background: #c8d1b8 !important; border-color: #b0bb9d !important; }
+/* Icon column: dark, as in the Original theme */
+html.theme-paper .zoom-btn { background: #111827 !important; border-color: #26313a !important; color: #e6eef8; }
+html.theme-paper .zoom-btn:hover { background: #1b2832 !important; }
 
 /* Sync status */
 html.theme-paper #cloud-sync-status { color: #262622 !important; }
@@ -130,15 +128,18 @@ html.theme-paper :is(.notes-toolbar-btn, .notes-icon-btn) { background: transpar
 html.theme-paper .notes-toolbar-btn:hover { background: #e2dac8; }
 html.theme-paper .notes-toolbar-btn.active { background: #6f8f6b !important; color: #fff !important; }
 html.theme-paper .matrix-tab { background: #e6d2ac; border: 1px solid #d3bb8d; border-radius: 15px; color: #33302a; box-shadow: 0 1px 2px rgba(90, 75, 45, 0.16); }
-html.theme-paper .matrix-tab:nth-child(10n + 8), html.theme-paper .matrix-tab:nth-child(10n + 9),
-html.theme-paper .matrix-tab:nth-child(10n + 10), html.theme-paper .matrix-tab:nth-child(10n + 11) { background: #c9d2ba; border-color: #b0bd9d; }
+/* Notes tabs by type: this flowchart's are tan (as above), global sage, the
+   Gantt's blue-grey, the card's rose. */
+html.theme-paper .matrix-tab.nt-type-global { background: #c9d2ba; border-color: #b0bd9d; }
+html.theme-paper .matrix-tab.nt-type-gantt { background: #c6d0d6; border-color: #aab8c0; }
+html.theme-paper .matrix-tab.kb-card-tab { background: #e2c8bd; border-color: #cdaa9b; }
 html.theme-paper .matrix-tab:hover { filter: brightness(0.97); }
 html.theme-paper .matrix-tab.active { background: #6f8f6b !important; border-color: #62815e !important; box-shadow: 0 0 0 2px rgba(111, 143, 107, 0.2); }
 html.theme-paper .matrix-tab-label { color: #33302a; filter: sepia(0.55) saturate(0.75); }
 html.theme-paper .matrix-tab.active .matrix-tab-label { color: #fff; filter: none; }
 html.theme-paper .matrix-tab-delete-btn { color: #7c7260; }
 html.theme-paper .matrix-tab.active .matrix-tab-delete-btn { color: #fff; }
-html.theme-paper .matrix-tab-add-btn { background: #c9d2ba; border-color: #b0bd9d; border-radius: 50%; color: #3d4a38; }
+html.theme-paper .matrix-tab-add-btn { background: #ece6d8; border-color: #d0c7b2; border-radius: 50%; color: #3d4a38; }
 html.theme-paper #notes-tab-bar { border-color: transparent; }
 html.theme-paper #notes-search-bar { background: #f1ece0; border-color: #ddd4c1; }
 html.theme-paper #notes-search-bar input { background: #fffdf6; border-color: #cfc6b4; color: #262622; }
