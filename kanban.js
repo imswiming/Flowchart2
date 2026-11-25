@@ -76,7 +76,7 @@
     const LINKS_TOP = '\u2060\u2060Links'; // the header above them all
     const isLinkHead = t => t === LINKS_TOP || ['🌐', '📂', '📑', '🏷'].some(i => t.startsWith(`${i}\u2060`));
     const isLinkLine = t => t.startsWith('🔗') || t.startsWith(FOLDER_MARK) || t.startsWith(FILE_MARK) || isLinkHead(t);
-    const kbNoteLinkLines = (links, labels) => {
+    const kbNoteLinkLines = (links) => {
         const all = links || [];
         const groups = (list) => {
             const group = (head, icon) => {
@@ -85,7 +85,7 @@
             };
             return [].concat(group(WEB_HEAD, '🔗'), group(FOLDER_HEAD, '📁'), group(FILE_HEAD, '📄'));
         };
-        const lines = groups(all).concat(...(labels || []).filter(lb => (lb.links || []).length).map(lb => [`🏷\u2060 ${kbNorm(lb.name)}`].concat(groups(lb.links))));
+        const lines = groups(all);
         return lines.length ? [LINKS_TOP].concat(lines) : [];
     };
     // A link's short text: its name, else the site (and what was searched for or
@@ -468,7 +468,7 @@
             this.syncKanbanNotes();
             this.syncKanbanFlow();
             const shown = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
-            if (shown) this.kbRefreshCardTabLinks(shown);
+            if (shown) this.writeKbCardTab(shown);
             this.autosave();
             this.updateUndoRedoButtons();
         },
@@ -924,7 +924,7 @@
         // one card (or in the Links panel) changes them for all.
         // With several labels, each one's links fold away under its name.
         kbLabelFold(lb, many, count, shut) {
-            if (!this._kbLinkFolds) this._kbLinkFolds = new Set();
+            this.kbLoadLinkFolds();
             // ("shut": folded unless opened; the set then holds the opened ones.)
             const key = `${shut ? 'open' : 'label'}:${lb.id}`;
             const folded = many && this._kbLinkFolds.has(key) !== !!shut;
@@ -937,6 +937,36 @@
             const head = many
                 ? el('button', { class: 'kb-lab-fold', type: 'button', title: folded ? 'Show its links' : 'Fold its links', onclick: toggle }, el('span', { text: folded ? '▸' : '▾' }), chip, el('span', { class: 'kb-lab-count', text: `(${count})` }))
                 : chip;
+            return { folded, head };
+        },
+        // What is folded (or, for labels folded to begin with, opened) in the Links
+        // panel: remembered on this device.
+        kbLoadLinkFolds() {
+            if (this._kbLinkFolds) return;
+            const KEY = 'flowchart-kb-link-folds';
+            let was = [];
+            try { was = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { /* none */ }
+            const set = new Set(Array.isArray(was) ? was : []);
+            const keep = (name) => {
+                const own = Set.prototype[name];
+                set[name] = (v) => {
+                    const r = own.call(set, v);
+                    try { localStorage.setItem(KEY, JSON.stringify([...set].slice(-400))); } catch (e) { /* not kept */ }
+                    return r;
+                };
+            };
+            keep('add');
+            keep('delete');
+            this._kbLinkFolds = set;
+        },
+        // A heading that folds the list under it.
+        kbFoldHead(key, text, count) {
+            this.kbLoadLinkFolds();
+            const folded = this._kbLinkFolds.has(key);
+            const head = el('button', { class: 'kb-lab-fold kb-list-fold', type: 'button', title: folded ? 'Show these links' : 'Fold these links', onclick: () => {
+                if (folded) this._kbLinkFolds.delete(key); else this._kbLinkFolds.add(key);
+                this.renderKanbanBoard(this.kbScrollState());
+            } }, el('span', { text: folded ? '▸' : '▾' }), el('span', { class: 'kb-list-name', text }), el('span', { class: 'kb-lab-count', text: `(${count})` }));
             return { folded, head };
         },
         // Labels shown with their links grouped by the card each came from (kept on
@@ -1439,8 +1469,11 @@
             };
             if (!active) {
                 const all = this.kbAllLinks();
-                list.append(this.buildKbLinkView({
-                    scope: '', items: [].concat(all.urls, all.folders, all.files),
+                const items = [].concat(all.urls, all.folders, all.files);
+                const main = this.kbFoldHead('all', 'All links', items.length);
+                list.append(el('div', { class: 'kb-links-of' }, main.head));
+                if (!main.folded) list.append(this.buildKbLinkView({
+                    scope: '', items,
                     add: (link) => {
                         const key = linkKey(link.url);
                         const list0 = this.kanban.panelLinks || (this.kanban.panelLinks = []);
@@ -1464,7 +1497,10 @@
                 // Below it, every label and its links, folded.
                 this.kanban.labels.forEach(lb => labelPart(lb, true));
             } else {
-                view(el('div', { class: 'kb-links-of' }, el('span', { text: active.title, title: 'Links of the selected card' })), {
+                const mine = this.kbFoldHead('card', active.title, (active.links || []).length);
+                const top = el('div', { class: 'kb-links-of', 'data-card-links': active.id }, mine.head);
+                if (mine.folded) list.append(top);
+                else view(top, {
                     scope: `card:${active.id}`, items: entriesOf(active.links), cardId: active.id,
                     add: (link) => {
                         const had = (active.links || []).find(l => linkKey(l.url) === linkKey(link.url));
@@ -1590,7 +1626,7 @@
                 setTimeout(() => { inp.focus(); inp.select(); }, 0);
                 return inp;
             };
-            if (!this._kbLinkFolds) this._kbLinkFolds = new Set();
+            this.kbLoadLinkFolds();
             const groupBox = (g, kind, items, hint) => {
                 const folded = this._kbLinkFolds.has(g.id);
                 const head = el('div', { class: 'kb-links-ghead' });
@@ -2206,7 +2242,7 @@
             const top = end < 0 ? kids : kids.slice(0, end);
             if (!top.length || top[0].tagName !== 'H5') return;
             const old = top.filter(n => n.tagName === 'P' && isLinkLine(n.textContent.trim()));
-            const want = kbNoteLinkLines(card.links, this.kbCardLabels(card));
+            const want = kbNoteLinkLines(card.links);
             if (old.length === want.length && old.every((n, i) => kbNorm(n.textContent) === kbNorm(want[i]))) return;
             let at = top[top.length - 1];
             while (old.includes(at)) at = at.previousElementSibling;
@@ -2226,7 +2262,7 @@
             // description and its links - above the columns, not part of any of them.
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
-            kbNoteLinkLines(card.links, this.kbCardLabels(card)).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
+            kbNoteLinkLines(card.links).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -2549,7 +2585,7 @@
                 e.stopPropagation();
                 this.kbFindCardTabCard();
                 const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
-                const links = ((card && card.links) || []).concat(...this.kbCardLabels(card).map(lb => lb.links || []));
+                const links = (card && card.links) || [];
                 const text = kbNorm(p.textContent).replace(/^(?:🔗|📁\u2060|📄\u2060)\s*/u, '');
                 const l = links.find(x => [kbLinkText(x), kbNorm(x.label), kbNorm(x.url)].includes(text))
                     || links[Array.from(dom.querySelectorAll('p.kb-nc-link')).indexOf(p)];
