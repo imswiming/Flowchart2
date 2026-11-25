@@ -1121,7 +1121,8 @@
                     btn('↪', 'Redo (Ctrl+Shift+Z)', () => this.redoKanban(), 'kb-redo' + (canRedo ? '' : ' disabled')),
                     this.kanban ? btn('📝', 'Card notes: the selected card\'s notes for each column', () => this.openKanbanNotes(null)) : null,
                     this.kanban ? btn(`🗄${(this.kanban.archived || []).length ? ' ' + this.kanban.archived.length : ''}`, 'Archived cards: bring them back', () => this.openKanbanArchive()) : null,
-                    this.kanban ? btn('🔗', 'Links: every link on the cards', () => { const on = this.kbLinksOpen(); localStorage.setItem('flowchart-kb-links', on ? '0' : '1'); this.renderKanbanBoard(this.kbScrollState()); }, 'kb-links-btn') : null,
+                    this.kanban ? btn('🔗', 'Links: every link on the cards', () => { const on = this.kbLinksOpen(); localStorage.setItem('flowchart-kb-links', on ? '0' : '1'); if (!on && window.innerWidth <= 900) localStorage.setItem('flowchart-kb-photos', '0'); this.renderKanbanBoard(this.kbScrollState()); }, 'kb-links-btn') : null,
+                    this.kanban ? btn('🖼', 'Photos: the selected card\'s, or every photo by label', () => this.kbTogglePhotos(), 'kb-photos-btn') : null,
                     this.kanban ? btn('🌳', 'Open the Kanban branch of the flowchart', () => this.showKanbanCardInFlowchart(null)) : null,
                     this.kanban ? btn('⋯', 'Board: templates, add cards from the Gantt chart or flowchart', () => this.openKanbanBoardMenu()) : null,
                     btn('🔀 Flowchart', 'Back to the flowchart', () => this.toggleKanbanMode(false))));
@@ -1242,7 +1243,7 @@
             // A click on an empty part of the board unselects the card.
             if (!wrap._kbUnselect) {
                 wrap._kbUnselect = true;
-                const empty = e => !e.target.closest('.kb-card, .kb-links, .kb-create, button, input, select, textarea, a');
+                const empty = e => !e.target.closest('.kb-card, .kb-links, .kb-photos, .kb-create, button, input, select, textarea, a');
                 let down = false;
                 wrap.addEventListener('pointerdown', (e) => { down = e.button === 0 && empty(e); });
                 wrap.addEventListener('click', (e) => {
@@ -1269,6 +1270,9 @@
                 scroller.append(el('button', { class: 'kb-add-row', type: 'button', text: '+ Add row', title: 'Add a row with columns of its own', onclick: () => this.addKanbanRow() }));
                 wrap.append(scroller);
             }
+            // Photos, then Links (the outer one, beside the notes panel).
+            wrap.append(this.buildKanbanPhotos());
+            if (this._kbPhotoTop) { const pl = wrap.querySelector('.kb-photos-list'); if (pl) pl.scrollTop = this._kbPhotoTop; }
             if (this.kbLinksOpen()) {
                 wrap.append(this.buildKanbanLinks());
                 wrap.querySelector('.kb-links-list').scrollTop = linksTop;
@@ -1397,6 +1401,125 @@
             let v = null;
             try { v = localStorage.getItem('flowchart-kb-links-sort'); } catch (e) { /* private mode */ }
             return ['az', 'za', 'new', 'old', 'opened'].includes(v) ? v : 'az';
+        },
+
+        // ----- Photos panel -----
+        kbPhotosOpen() {
+            const v = localStorage.getItem('flowchart-kb-photos');
+            return v === null ? window.innerWidth > 900 : v === '1';
+        },
+        kbTogglePhotos() {
+            const on = this.kbPhotosOpen();
+            localStorage.setItem('flowchart-kb-photos', on ? '0' : '1');
+            // (On a narrow screen the two panels would cover each other.)
+            if (!on && window.innerWidth <= 900) localStorage.setItem('flowchart-kb-links', '0');
+            this.renderKanbanBoard(this.kbScrollState());
+        },
+
+        // Every card's photos and drawings, once each per card: from its notes and
+        // checklists, from its node in the flowchart and those under it, and the
+        // pictures among its links. Map of card id -> [{ src, where }].
+        kbAllPhotos() {
+            const out = new Map();
+            const add = (id, src, where) => {
+                if (!src) return;
+                const list = out.get(id);
+                if (list && !list.some(p => p.src === src)) list.push({ src, where });
+            };
+            const fromHtml = (id, html, where) => {
+                const re = /\[\[(image|drawing):([a-zA-Z0-9_-]+)\]\]/g;
+                let m;
+                while ((m = re.exec(html || ''))) add(id, this.getNotesMediaSrc(m[1], m[2]), where);
+            };
+            this.kbCards().forEach((c) => {
+                out.set(c.id, []);
+                const colName = id => (this.kbColumn(id) || { name: '' }).name;
+                Object.entries(c.notes || {}).forEach(([col, html]) => fromHtml(c.id, html, `notes, ${colName(col)}`));
+                (c.checklist || []).forEach(i => fromHtml(c.id, i.note, `checklist, ${i.text}`));
+                Object.values(c.colChecklists || {}).forEach(l => l.forEach(i => fromHtml(c.id, i.note, `checklist, ${i.text}`)));
+            });
+            // The flowchart: a photo goes with the card whose node it is on or under.
+            const walk = (n, id) => {
+                if (!n) return;
+                const k = n._kanban;
+                if (k && !k.startsWith('ck:')) id = out.has(k) ? k : null;
+                if (id) add(id, n._nodePhotoUrl, `flowchart${(n.name || '').trim() ? `, ${n.name.trim()}` : ''}`);
+                // (A node showing something else keeps its real children aside.)
+                const kids = new Set();
+                ['children', '_children', '_critSaved', '_kbColSaved'].forEach((f) => { if (Array.isArray(n[f])) n[f].forEach(c => kids.add(c)); });
+                kids.forEach(c => walk(c, id));
+            };
+            walk(this.rootData, null);
+            const picture = u => /^https?:\/\/[^?#]+\.(png|jpe?g|gif|webp|bmp|svg|avif)([?#].*)?$/i.test(u);
+            this.kbCards().forEach(c => (c.links || []).forEach((l) => { if (picture(String(l.url).trim())) add(c.id, String(l.url).trim(), l.label ? `link, ${l.label}` : 'link'); }));
+            return out;
+        },
+
+        // With a card selected: its photos, then each of its labels'. Otherwise a
+        // gallery of every label's, and last those without one.
+        buildKanbanPhotos() {
+            if (!this.kbPhotosOpen()) {
+                return el('button', { class: 'kb-photos-strip', type: 'button', title: 'Show photos', onclick: () => this.kbTogglePhotos() }, el('span', { text: '🖼 Photos' }));
+            }
+            this.kbLoadLinkFolds();
+            const all = this.kbAllPhotos();
+            const active = this._kbSelected && this.kbCard(this._kbSelected);
+            const list = el('div', { class: 'kb-photos-list' });
+            list.addEventListener('scroll', () => { this._kbPhotoTop = list.scrollTop; });
+            // Pictures already drawn are used again, so a redraw doesn't flicker.
+            const had = this._kbPhotoTiles || new Map();
+            const tiles = new Map();
+            const of = (cards) => {
+                const seen = new Map();
+                cards.forEach(c => (all.get(c.id) || []).forEach((p) => {
+                    if (!seen.has(p.src)) seen.set(p.src, { src: p.src, at: [] });
+                    seen.get(p.src).at.push(`${c.title} (${p.where})`);
+                }));
+                return [...seen.values()];
+            };
+            const section = (key, name, photos, none) => {
+                const fold = `photos:${key}`;
+                const folded = this._kbLinkFolds.has(fold);
+                const sec = el('div', { class: 'kb-photos-sec', 'data-photos': key },
+                    el('button', { class: 'kb-lab-fold kb-list-fold', type: 'button', 'aria-expanded': String(!folded), title: folded ? 'Show these photos' : 'Fold these photos', onclick: () => {
+                        if (folded) this._kbLinkFolds.delete(fold); else this._kbLinkFolds.add(fold);
+                        this.renderKanbanBoard(this.kbScrollState());
+                    } }, el('span', { text: folded ? '▸' : '▾' }), name, el('span', { class: 'kb-lab-count', text: `(${photos.length})` })));
+                if (!folded) {
+                    const grid = el('div', { class: 'kb-photos-grid' });
+                    photos.forEach((p) => {
+                        const id = `${key}|${p.src}`;
+                        let img = had.get(id);
+                        if (!img) {
+                            img = el('img', { loading: 'lazy', decoding: 'async', draggable: 'false', referrerpolicy: 'no-referrer', alt: '' });
+                            img.addEventListener('error', () => { const t = img.closest('.kb-photo'); if (t) t.classList.add('broken'); });
+                            img.src = p.src;
+                        }
+                        tiles.set(id, img);
+                        grid.append(el('button', { class: 'kb-photo' + (img.complete && !img.naturalWidth && img.src && img.dataset.tried ? ' broken' : ''), type: 'button', title: p.at.join('\n'), 'aria-label': `Photo: ${p.at[0]}`, onclick: () => this.openNotesImageLightbox(p.src) }, img));
+                        img.dataset.tried = '1';
+                    });
+                    sec.append(photos.length ? grid : el('div', { class: 'kb-links-none', text: none }));
+                }
+                list.append(sec);
+            };
+            const chip = lb => el('span', { class: 'kb-chip', style: this.kbChipStyle(lb), text: lb.name });
+            const withLabel = lb => this.kbCards().filter(c => (c.labels || []).includes(lb.id));
+            if (active) {
+                section('card', el('span', { class: 'kb-list-name', text: active.title }), of([active]), 'None yet: paste one in its notes or on its node.');
+                this.kbCardLabels(active).forEach(lb => section(`label:${lb.id}`, chip(lb), of(withLabel(lb)), 'None yet.'));
+            } else {
+                const labels = this.kanban.labels.map(lb => [lb, of(withLabel(lb))]).filter(x => x[1].length);
+                labels.forEach(([lb, photos]) => section(`label:${lb.id}`, chip(lb), photos, ''));
+                const rest = of(this.kbCards().filter(c => !this.kbCardLabels(c).length));
+                if (rest.length) section('none', el('span', { class: 'kb-list-name', text: 'No label' }), rest, '');
+                if (!labels.length && !rest.length) list.append(el('div', { class: 'kb-links-none', text: 'No photos yet: paste one in a card\'s notes or on its node.' }));
+            }
+            this._kbPhotoTiles = tiles;
+            return el('div', { class: 'kb-photos' },
+                el('div', { class: 'kb-links-title' }, el('b', { text: '🖼 Photos' }), el('span', { class: 'kb-spacer' }),
+                    el('button', { class: 'kb-lk-btn', type: 'button', text: '»', title: 'Fold the panel', 'aria-label': 'Fold the panel', onclick: () => this.kbTogglePhotos() })),
+                list);
         },
 
         // ----- Groups in the Links panel -----

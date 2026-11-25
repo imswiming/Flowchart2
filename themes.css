@@ -241,6 +241,11 @@ html.theme-paper .kb-board-wrap > .kb-links { background: #fdfcf6; border-color:
 html.theme-paper #kanban-view :is(.kb-select, .kb-bar .kb-btn) { background: #fdfcf6; border-color: rgba(190, 175, 140, 0.55); }
 html.theme-paper #kanban-view .kb-bar .kb-btn:hover { background: #f4eee0; }
 html.theme-paper #kanban-view .kb-select:focus { outline: none; border-color: #bba97f; }
+html.theme-paper :is(.kb-photos, .kb-photos-strip) { background: #fdfcf6; border-color: transparent; box-shadow: 0 1px 4px rgba(90, 75, 45, 0.42), 0 0 0 1px rgba(190, 175, 140, 0.55); }
+html.theme-paper .kb-photos-strip:hover { background: #f4eee0; }
+html.theme-paper .kb-photos-sec + .kb-photos-sec { border-color: #e0d6bd; }
+html.theme-paper .kb-photo { background: #fffefa; border-color: #d8cdb2; }
+html.theme-paper .kb-photo:hover { border-color: #8aa084; }
 html.theme-paper .kb-links-title { background: #fdfcf6; border-color: #e0d6bd; }
 html.theme-paper :is(.kb-links-head, .kb-links-none) { color: #1f1f1c; }
 html.theme-paper .kb-links-head { font-weight: 500; }
