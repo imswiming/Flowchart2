@@ -630,6 +630,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 .kb-links-in { flex: 1 1 auto; min-width: 0; padding: 4px 6px; font: inherit; color: var(--kb-text); background: #fff; border: 1px solid var(--kb-blue); border-radius: 4px; outline: none; }
 .kb-links-sort { padding: 2px 4px; margin-right: 6px; font-size: 12px; }
 .kb-links-icon { font-size: 12px; flex: 0 0 auto; }
+.kb-card .kb-link-row { touch-action: none; cursor: grab; }
 /* Groups in the Links panel. */
 .kb-links-head { display: flex; align-items: center; gap: 4px; }
 .kb-links-newg { font-size: 11px; text-transform: none; letter-spacing: 0; white-space: nowrap; }

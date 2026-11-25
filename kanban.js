@@ -827,7 +827,7 @@
                     const show = () => {
                         row.innerHTML = '';
                         row.append(
-                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('a', { class: 'kb-lk-a', draggable: 'false', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
                     };
@@ -843,6 +843,7 @@
                         inp.select();
                     };
                     show();
+                    this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, card);
                     box.append(row);
                 });
             }
@@ -1471,10 +1472,12 @@
         },
 
         // Drag by the row (on a touch screen: by its ⠿).
-        wireKanbanLinkDrag(row, entry) {
+        // fromCard: a link on a card - dropped on another card, it is copied there.
+        wireKanbanLinkDrag(row, entry, fromCard) {
             row.addEventListener('pointerdown', (e) => {
+                if (fromCard) e.stopPropagation(); // the link, not the card
                 if (e.button !== 0 || e.target.closest('button, input, select')) return;
-                if (e.pointerType === 'touch' && !e.target.closest('.kb-links-grip')) return;
+                if (e.pointerType === 'touch' && !fromCard && !e.target.closest('.kb-links-grip')) return;
                 const kind = LINK_KINDS[['🔗', '📁', '📄'].indexOf(kbLinkIcon(entry.url))];
                 const sx = e.clientX, sy = e.clientY;
                 let ghost = null;
@@ -1492,7 +1495,8 @@
                     const under = document.elementFromPoint(ev.clientX, ev.clientY);
                     let card = under && under.closest('#kanban-view .kb-card');
                     // Or one of its own category's groups (or out of them).
-                    if (!card && under) {
+                    if (card && fromCard && card.dataset.id === fromCard.id) card = null;
+                    if (!card && under && !fromCard) {
                         const g = under.closest('.kb-links-group, .kb-links-sec');
                         if (g && g.dataset.kind === kind) card = g;
                     }
@@ -1520,7 +1524,7 @@
                     if ((card.links || []).some(l => String(l.url).trim().toLowerCase() === entry.key)) { this.showNotification(`"${card.title}" already has that link.`); return; }
                     card.links = (card.links || []).concat({ label: entry.label, url: entry.url, added: now() });
                     this.kanbanChanged();
-                    this.showNotification(`Added the link to "${card.title}".`);
+                    this.showNotification(`${fromCard ? 'Copied' : 'Added'} the link to "${card.title}".`);
                 };
                 window.addEventListener('pointermove', move, { passive: false });
                 window.addEventListener('pointerup', up);
