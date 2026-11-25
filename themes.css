@@ -129,11 +129,6 @@ html.theme-paper :is(.notes-toolbar-btn, .notes-icon-btn) { background: transpar
 html.theme-paper .notes-toolbar-btn:hover { background: #e2dac8; }
 html.theme-paper .notes-toolbar-btn.active { background: #6f8f6b !important; color: #fff !important; }
 html.theme-paper .matrix-tab { background: #e6d2ac; border: 1px solid #d3bb8d; border-radius: 15px; color: #33302a; box-shadow: 0 1px 2px rgba(90, 75, 45, 0.16); }
-/* Notes tabs by type: this flowchart's are tan (as above), global sage, the
-   Gantt's blue-grey, the card's rose. */
-html.theme-paper .matrix-tab.nt-type-global { background: #c9d2ba; border-color: #b0bd9d; }
-html.theme-paper .matrix-tab.nt-type-gantt { background: #c6d0d6; border-color: #aab8c0; }
-html.theme-paper .matrix-tab.kb-card-tab { background: #e2c8bd; border-color: #cdaa9b; }
 html.theme-paper .matrix-tab:hover { filter: brightness(0.97); }
 html.theme-paper .matrix-tab.active { background: #6f8f6b !important; border-color: #62815e !important; box-shadow: 0 0 0 2px rgba(111, 143, 107, 0.2); }
 html.theme-paper .matrix-tab-label { color: #33302a; filter: sepia(0.55) saturate(0.75); }
