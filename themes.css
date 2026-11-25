@@ -66,7 +66,7 @@ html.theme-paper .nb-btn > path[stroke="#f87168"] { stroke: #a4452b; }
 html.theme-paper .nb-btn > path[stroke="#5aa7ff"] { stroke: #4f6a80; }
 html.theme-paper .nb-btn > path[stroke="#ff8c1a"] { stroke: #b56a1c; }
 /* The node menu's colours, as the nodes are drawn. */
-html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #7df0b8 !important; color: #20302a !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #27b37b !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #f2607c !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #1d9fe0 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #ffcc00 !important; color: #262622 !important; }

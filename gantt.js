@@ -1654,7 +1654,7 @@
                     const n = existing.get(t.id) || { _gantt: t.id };
                     const v = nodeFor(t);
                     n.name = v.name;
-                    n.color = v.color;
+                    n.color = /^(?:[^\p{L}\p{N}]+\s*)?Assumption: /u.test(String(v.name || '')) ? '#e75480' : v.color; // an assumption is pink
                     delete n._isPlaceholder;
                     return n;
                 });

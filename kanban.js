@@ -75,6 +75,9 @@
         kids.flat().forEach(k => { if (k !== null && k !== undefined && k !== false) e.append(k); });
         return e;
     };
+    // A card, item or column made an assumption (Pink in the node menu) is pink
+    // like any other; the rest have the board's colours.
+    const kbNodeColor = (name, color) => (/^(?:[^\p{L}\p{N}]+\s*)?Assumption: /u.test(String(name || '')) ? '#e75480' : color);
     // A label's colour as the theme draws it (themes.js).
     const labelColor = (c) => (typeof window.flowThemeLabelColor === 'function' ? window.flowThemeLabelColor(c) : c);
     const darkText = (hex) => {
@@ -2439,7 +2442,7 @@
                 const nodes = wanted.map((w) => {
                     const n = existing.get(w.id) || { _kanban: w.id };
                     n.name = w.name;
-                    n.color = w.color;
+                    n.color = kbNodeColor(w.name, w.color);
                     delete n._isPlaceholder;
                     return n;
                 });
@@ -2562,7 +2565,7 @@
                     const n = nested.get(c.id).node;
                     const v = cardNode(c);
                     n.name = v.name;
-                    n.color = v.color;
+                    n.color = kbNodeColor(v.name, v.color);
                     nodeOf.set(c.id, n);
                 });
                 cards.forEach((card) => {
