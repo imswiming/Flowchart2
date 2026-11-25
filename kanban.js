@@ -847,37 +847,36 @@
         },
 
         // ----- Links and files on a card -----
-        // The selected card lists its links by name; "+ Add link" shows with the
+        // The selected card, or one under the pointer, lists its links by name; "+ Add link" shows with the
         // checklist's add box (address, Enter, then a name, Enter).
         buildKanbanCardLinks(card) {
             const box = el('div', { class: 'kb-lk' });
             if (!Array.isArray(card.links)) card.links = [];
-            if (card.id === this._kbSelected) {
-                card.links.forEach((l) => {
-                    const row = el('div', { class: 'kb-link-row' });
-                    const show = () => {
-                        row.innerHTML = '';
-                        row.append(
-                            el('a', { class: 'kb-lk-a', draggable: 'false', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
-                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
-                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
-                    };
-                    const rename = () => {
-                        const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
-                        let over = false;
-                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); this.kbRenameLabelCopies(card, l.url, l.label); this.kanbanChanged(); } else show(); };
-                        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
-                        inp.addEventListener('blur', () => finish(true));
-                        row.innerHTML = '';
-                        row.append(inp);
-                        inp.focus();
-                        inp.select();
-                    };
-                    show();
-                    this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, card);
-                    box.append(row);
-                });
-            }
+            // (Shown on the selected card, and on one under the pointer: kanban.css.)
+            card.links.forEach((l) => {
+                const row = el('div', { class: 'kb-link-row' });
+                const show = () => {
+                    row.innerHTML = '';
+                    row.append(
+                        el('a', { class: 'kb-lk-a', draggable: 'false', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
+                };
+                const rename = () => {
+                    const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
+                    let over = false;
+                    const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); this.kbRenameLabelCopies(card, l.url, l.label); this.kanbanChanged(); } else show(); };
+                    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+                    inp.addEventListener('blur', () => finish(true));
+                    row.innerHTML = '';
+                    row.append(inp);
+                    inp.focus();
+                    inp.select();
+                };
+                show();
+                this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, card);
+                box.append(row);
+            });
             const add = el('input', { class: 'kb-cl-add kb-lk-add', type: 'text', placeholder: '+ Add link or file' });
             let url = '';
             const commit = (label) => {
@@ -915,7 +914,7 @@
                 now0.links = (now0.links || []).concat({ label, url: u, added: now() });
                 afterClick(() => this.kanbanChanged());
             });
-            box.append(add);
+            box.prepend(add); // at the top, so it stays put
             return box;
         },
 
@@ -1645,7 +1644,7 @@
                 };
                 show();
                 const box = el('div', { class: 'kb-links-group', 'data-kind': kind, 'data-group': g.id }, head);
-                if (!folded) box.append(...items.map(rowOf), items.length ? '' : el('div', { class: 'kb-links-none', text: 'Drag links here, or add one.' }), adder(kind, hint, g.id));
+                if (!folded) box.append(adder(kind, hint, g.id), ...items.map(rowOf), items.length ? '' : el('div', { class: 'kb-links-none', text: 'Drag links here, or add one.' }));
                 return box;
             };
             const section = (name, kind, hint) => {
@@ -1654,6 +1653,7 @@
                 if (ctx.byCard) {
                     const cardOf = (e) => { const id = e.link && e.link.from; return id ? this.kbCard(id) || (this.kanban.archived || []).find(x => x.id === id) : null; };
                     const sec0 = el('div', { class: 'kb-links-sec' }, el('div', { class: 'kb-links-head' }, el('span', { text: `${name} (${items.length})` })));
+                    sec0.append(adder(kind, hint, ''));
                     const groups0 = new Map();
                     items.forEach((e) => { const cd = cardOf(e); const k = cd ? cd.id : ''; if (!groups0.has(k)) groups0.set(k, { card: cd, items: [] }); groups0.get(k).items.push(e); });
                     [...groups0.values()].filter(g => g.card).sort((a, b) => a.card.title.localeCompare(b.card.title, undefined, { sensitivity: 'base', numeric: true })).forEach((g) => {
@@ -1669,7 +1669,6 @@
                     });
                     if (groups0.has('')) sec0.append(...groups0.get('').items.map(rowOf));
                     if (!items.length) sec0.append(el('div', { class: 'kb-links-none', text: 'None yet.' }));
-                    sec0.append(adder(kind, hint, ''));
                     view.append(sec0);
                     return;
                 }
@@ -1686,11 +1685,10 @@
                     });
                     ev.target.closest('.kb-links-head').after(box);
                 } }));
-                sec.append(head);
+                sec.append(head, adder(kind, hint, ''));
                 groups.forEach(g => sec.append(groupBox(g, kind, by.get(g.id), hint)));
                 sec.append(...loose.map(rowOf));
                 if (!items.length && !groups.length) sec.append(el('div', { class: 'kb-links-none', text: 'None yet.' }));
-                sec.append(adder(kind, hint, ''));
                 view.append(sec);
             };
             section('🌐 Web links', 'url', '+ Add web link');
@@ -1885,7 +1883,7 @@
                 now0.checklist.push({ id: uid('ck'), text: typed, done: false });
                 afterClick(() => this.kanbanChanged());
             });
-            box.append(add);
+            box.prepend(add); // at the top, so it stays put
             if (this._kbCardEditing === card.id) {
                 box.classList.add('adding');
                 setTimeout(() => { if (add.isConnected) add.focus(); }, 0);
