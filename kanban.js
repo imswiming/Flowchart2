@@ -1967,14 +1967,15 @@
                 close();
             }
             if (isCard) {
-                // The card's title, the rows' names, and a box behind each
-                // column's checklist (its items and what's written under them).
+                // The card's title, the rows' names, and a panel for each
+                // checklist item with what's written under it.
                 let list = [];
                 const endList = () => { if (list.length) { plan.get(list[0]).push('kb-cl-first'); plan.get(list[list.length - 1]).push('kb-cl-last'); } list = []; };
                 kids.forEach((el) => {
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { endList(); return; }
+                    if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
                     else return;
