@@ -31,20 +31,14 @@
     };
     const hash = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
     let app = null;
-    // The Kanban branch by what each node is: rows, columns by their place, cards.
+    // The Kanban branch by what each node is: rows, columns, cards.
     const kanbanColor = (id, col) => {
         const k = app && app.kanban;
         if (id === 'root') return '#10d98f';
+        // Every row has the one colour, and every column the other.
+        if (id.startsWith('row:')) return '#4db8f0';
+        if (id.startsWith('col:')) return '#f0900c';
         if (col === '#2e9e5b' || col === '#c9372c') return null;
-        if (id.startsWith('row:')) {
-            const i = k ? k.rows.findIndex(r => `row:${r.id}` === id) : 0;
-            return ['#4db8f0', '#f9a03f', '#b48cf0', '#10c8b4'][Math.max(0, i) % 4];
-        }
-        if (id.startsWith('col:')) {
-            const c = k && k.columns.find(x => `col:${x.id}` === id);
-            const inRow = c ? k.columns.filter(x => x.row === c.row) : [];
-            return ['#f0900c', '#3fb92c', '#4db8f0', '#e8703a'][Math.max(0, inRow.indexOf(c)) % 4];
-        }
         if (id.startsWith('ck:')) return ['#a77bea', '#ef9126', '#2fb5a0', '#3fa8dd', '#63b53a'][hash(id) % 5];
         return ['#a77bea', '#1fb955'][hash(id) % 2];
     };
