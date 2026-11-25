@@ -200,16 +200,16 @@ html.theme-paper .morph-option-selected { background: #6f8f6b !important; color:
 /* ----- Kanban board ----- */
 html.theme-paper #kanban-view { --kb-bg: #fbfaf2; --kb-col: #e3e7dc; --kb-card: #fdfcf6; --kb-text: #1f1f1c; --kb-sub: #4f4d44; --kb-line: #d6c9ae; --kb-blue: #6f8f69; background: #fbfaf2 var(--paper-tex); }
 html.theme-paper .kb-crumb { color: #1f1f1c; }
-html.theme-paper .kb-btn { background: #e3d7bf; border: 1px solid #cdbd9c; }
-html.theme-paper .kb-btn:hover { background: #d8c9ab; }
+html.theme-paper .kb-btn { background: #f1ecde; border: 1px solid #e0d8c3; }
+html.theme-paper .kb-btn:hover { background: #e8e0cc; }
 html.theme-paper .kb-search { background: #ece4d4; border-color: #d6c9ae; }
-html.theme-paper .kb-select { background: #e3d7bf; border: 1px solid #cdbd9c; }
+html.theme-paper .kb-select { background: #f1ecde; border: 1px solid #e0d8c3; }
 html.theme-paper .kb-col-name { color: #1f1f1c; font-weight: 500; }
 html.theme-paper .kb-col-done { color: #5d8a55; }
 html.theme-paper .kb-col-head.over { background: var(--kb-col); }
 html.theme-paper :is(.kb-col-head.over .kb-col-count, .kb-col-warn, .kb-blocked) { color: #98432a; }
-html.theme-paper .kb-add-col { background: #e3d7bf; border: 1px solid #cdbd9c; color: #4f4d44; }
-html.theme-paper .kb-add-col:hover { background: #d8c9ab; }
+html.theme-paper .kb-add-col { background: #f1ecde; border: 1px solid #e0d8c3; color: #4f4d44; }
+html.theme-paper .kb-add-col:hover { background: #e8e0cc; }
 html.theme-paper :is(.kb-col-menu, .kb-card-flow, .kb-create-btn, .kb-lk-btn):hover { background: #d3d7c2; }
 html.theme-paper .kb-row-head { color: #1f1f1c; border-bottom: 1px solid #b5bfa8; width: 100%; box-sizing: border-box; margin-bottom: 6px; border-image: linear-gradient(90deg, #9fac92 70%, transparent) 1; }
 html.theme-paper .kb-row:nth-child(even) .kb-row-head { color: #8a2f22; }
@@ -232,7 +232,7 @@ html.theme-paper .kb-card-about { background: #f1ebdd; }
 html.theme-paper .kb-card-cat { background: #dfe6d3; color: #4b6b46; }
 html.theme-paper .kb-people .kb-avatar { border-color: #fbfaf2; }
 html.theme-paper .kb-label-box { background: #fdfcf6; color: #262622; }
-html.theme-paper .kb-label-foot .kb-btn { background: #e3d7bf; color: #262622; }
+html.theme-paper .kb-label-foot .kb-btn { background: #f1ecde; color: #262622; }
 html.theme-paper .kb-board-wrap > .kb-links { background: #fdfcf6; border-color: transparent; box-shadow: 0 1px 4px rgba(90, 75, 45, 0.42), 0 0 0 1px rgba(190, 175, 140, 0.55); }
 html.theme-paper .kb-links-title { background: #fdfcf6; border-color: #e0d6bd; }
 html.theme-paper :is(.kb-links-head, .kb-links-none) { color: #1f1f1c; }
