@@ -337,6 +337,7 @@
         },
 
         kanbanChanged(fromNotes) {
+            try { this.kbFindCardTabCard(); } catch (e) { /* no card notes */ }
             this._kbInChange = true;
             try { this.pullKbCardTabEdits(); } finally { this._kbInChange = false; }
             this.kbStampCards();
@@ -347,6 +348,7 @@
             if (shownCard && !fromNotes) this.writeKbCardTab(shownCard);
             this.syncKanbanFlow();
             this.kbShowCardTab();
+            if (shownCard) this.kbRefreshCardTabLinks(shownCard);
             this.autosave();
         },
 
@@ -1746,7 +1748,32 @@
             const card = same.length === 1 ? same[0] : (full.length === 1 ? full[0] : null);
             if (!card) return;
             if (allIn.includes(card)) { this._kbCardTabFor = card.id; this._kbCardTabSeen = tab.content; }
-            else this.writeKbCardTab(card); // the card has newer items
+            else { this.writeKbCardTab(card); return; } // the card has newer items
+            this.kbRefreshCardTabLinks(card);
+        },
+
+        // The links at the top of the card notes, by the names they have now
+        // (they may have been renamed while the note wasn't looked at).
+        kbRefreshCardTabLinks(card) {
+            const tab = this.kbCardTab(false);
+            if (!tab || !card || this._kbCardTabFor !== card.id) return;
+            const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
+            const kids = Array.from(doc.body.children);
+            const end = kids.findIndex((n, i) => n.tagName === 'H4' || (i > 0 && n.tagName === 'H5'));
+            const top = end < 0 ? kids : kids.slice(0, end);
+            if (!top.length || top[0].tagName !== 'H5') return;
+            const old = top.filter(n => n.tagName === 'P' && n.textContent.trim().startsWith('🔗'));
+            const want = (card.links || []).map(l => `🔗 ${kbLinkText(l)}`);
+            if (old.length === want.length && old.every((n, i) => kbNorm(n.textContent) === kbNorm(want[i]))) return;
+            let at = top[top.length - 1];
+            while (old.includes(at)) at = at.previousElementSibling;
+            old.forEach(n => n.remove());
+            want.forEach((t) => { const p = doc.createElement('p'); p.textContent = t; at.after(p); at = p; });
+            const same = tab.content === this._kbCardTabSeen;
+            tab.content = doc.body.innerHTML;
+            if (same) this._kbCardTabSeen = tab.content;
+            if (typeof this.refreshEmbeddedEditors === 'function') this.refreshEmbeddedEditors();
+            if (typeof this.syncNotesPanesShowingTab === 'function') this.syncNotesPanesShowingTab('chart', tab.id, tab.content);
         },
 
         writeKbCardTab(card) {
