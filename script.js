@@ -13858,6 +13858,8 @@ class FlowchartViewer {
                 return this.getPlaceholderColor();
             }
             const fill = nodeDisplayColor(d.data.color, d.data);
+            const themedText = typeof window.flowThemeTextColor === 'function' ? window.flowThemeTextColor(fill) : null; // themes.js
+            if (themedText) return themedText;
             function hexToRgb(hex) {
                 if (!hex) return { r: 0, g: 0, b: 0 };
                 if (hex[0] === '#') hex = hex.slice(1);

@@ -47,13 +47,39 @@
         if (id.startsWith('ck:')) return ['#e6dac2', '#e6dac2', '#cdb28a'][hash(id) % 3];
         return ['#e6dac2', '#a7b795'][hash(id) % 2];
     };
+    // Light, warm nodes (beige, yellow) keep their colour and take dark text;
+    // every other one is muted and deepened until white text reads well on it.
+    const rgbOf = (hex) => { const m = /^#([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const lum = (rgb) => { const f = rgb.map((v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]; };
+    const toHsl = ([r, g, b]) => {
+        r /= 255; g /= 255; b /= 255;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+        if (!d) return [0, 0, l];
+        const h = mx === r ? ((g - b) / d + 6) % 6 : (mx === g ? (b - r) / d + 2 : (r - g) / d + 4);
+        return [h * 60, d / (1 - Math.abs(2 * l - 1)), l];
+    };
+    const fromHsl = (h, s, l) => {
+        const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+        return [0, 8, 4].map(n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))));
+    };
+    const isLight = (rgb) => { const [h] = toHsl(rgb); const L = lum(rgb); return L > 0.72 || (h >= 30 && h <= 60 && L > 0.5); };
+    const readable = (hex) => {
+        const rgb = rgbOf(hex);
+        if (!rgb || isLight(rgb)) return hex;
+        let [h, s, l] = toHsl(rgb);
+        if (s > 0.45) s = 0.45 + (s - 0.45) * 0.15;
+        let out = fromHsl(h, s, l);
+        while (l > 0.1 && 1.05 / (lum(out) + 0.05) < 4.5) { l -= 0.01; out = fromHsl(h, s, l); }
+        return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
+    };
+    window.flowThemeTextColor = (fill) => { const rgb = isPaper() && rgbOf(fill); return rgb ? (isLight(rgb) ? '#2f3d49' : '#ffffff') : null; };
     window.flowThemeNodeColor = (col, data) => {
         if (!isPaper()) return null;
         const c = (col || '#00a67e').toLowerCase();
         // A colour picked by hand on a Kanban node stays that colour.
         const auto = ['#0c66e4', '#5e6c84', '#6e5dc6', '#2e9e5b', '#c9372c'].includes(c);
-        if (data && data._kanban && auto) { const k = kanbanColor(data._kanban, c); if (k) return k; }
-        return MAP[c] || c;
+        if (data && data._kanban && auto) { const k = kanbanColor(data._kanban, c); if (k) return readable(k); }
+        return readable(MAP[c] || c);
     };
 
     // Kanban labels (and their tags and event dots).
