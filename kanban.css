@@ -683,8 +683,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 .kb-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .kb-photo:hover, .kb-photo:focus-visible { border-color: var(--kb-blue); }
 .kb-photo.broken { display: none; }
-.kb-photos-strip { flex: 0 0 30px; margin: 0 4px 12px 4px; padding: 10px 0; display: flex; justify-content: center; align-items: flex-start; border: 1px solid var(--kb-line); border-radius: 8px; background: #fafbfc; color: var(--kb-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.kb-photos-strip span { writing-mode: vertical-rl; }
+.kb-photos-strip { flex: 0 0 28px; align-self: flex-start; height: 34px; margin: 0 4px; padding: 0; display: flex; justify-content: center; align-items: center; border: 1px solid var(--kb-line); border-radius: 8px; background: #fafbfc; color: var(--kb-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .kb-photos-strip:hover { background: #e9ebee; }
 @media (max-width: 900px) {
     .kb-photos { position: absolute; right: 0; top: 0; bottom: 0; width: 230px; margin: 0; z-index: 5; box-shadow: -4px 0 16px rgba(9, 30, 66, 0.2); }

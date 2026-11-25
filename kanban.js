@@ -1459,7 +1459,7 @@
         // gallery of every label's, and last those without one.
         buildKanbanPhotos() {
             if (!this.kbPhotosOpen()) {
-                return el('button', { class: 'kb-photos-strip', type: 'button', title: 'Show photos', onclick: () => this.kbTogglePhotos() }, el('span', { text: '🖼 Photos' }));
+                return el('button', { class: 'kb-photos-strip', type: 'button', text: '«', title: 'Show photos', 'aria-label': 'Show photos', onclick: () => this.kbTogglePhotos() });
             }
             this.kbLoadLinkFolds();
             const all = this.kbAllPhotos();
