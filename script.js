@@ -219,8 +219,10 @@ const NotesMerge = (() => {
 // ----- Node look (renderFlowchart / refreshRadialButtons) -----
 const NODE_FONT_FAMILY = '"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif';
 // The default green is drawn a little softer than the stored colour.
-const nodeDisplayColor = (c) => {
+const nodeDisplayColor = (c, data) => {
     const col = c || '#00a67e';
+    const themed = typeof window.flowThemeNodeColor === 'function' ? window.flowThemeNodeColor(col, data) : null; // themes.js
+    if (themed) return themed;
     return col.toLowerCase() === '#00a67e' ? '#2f8f6e' : col;
 };
 const mixWithWhite = (hex, amt) => {
@@ -13829,9 +13831,9 @@ class FlowchartViewer {
             const hasCustomConnections = sourceNodes.has(d.data);
             const isParentNode = hasHierarchicalChildren || hasCustomConnections;
             if (isParentNode) {
-                return nodeDisplayColor(d.data.color);
+                return nodeDisplayColor(d.data.color, d.data);
             }
-            return nodeDisplayColor(d.data.color);
+            return nodeDisplayColor(d.data.color, d.data);
         })
         // A rim a little lighter than the node itself (folding is shown by the
         // round chevron under the node, not the outline).
@@ -13841,7 +13843,7 @@ class FlowchartViewer {
             if (this.isPlaceholderNodeData(d.data)) return '#8a93a3';
             // Highlighted (node menu): a bright orange outline.
             if (d.data._hl) return NODE_HIGHLIGHT;
-            return mixWithWhite(nodeDisplayColor(d.data.color), 0.32);
+            return mixWithWhite(nodeDisplayColor(d.data.color, d.data), 0.32);
         })
         .attr('stroke-width', d => (d.data._hl && !this.isPlaceholderNodeData(d.data) ? '3.5px' : '1.5px'))
         .classed('node-hl', d => !!d.data._hl);
@@ -13854,7 +13856,7 @@ class FlowchartViewer {
             if (this.isPlaceholderNodeData(d.data)) {
                 return this.getPlaceholderColor();
             }
-            const fill = nodeDisplayColor(d.data.color);
+            const fill = nodeDisplayColor(d.data.color, d.data);
             function hexToRgb(hex) {
                 if (!hex) return { r: 0, g: 0, b: 0 };
                 if (hex[0] === '#') hex = hex.slice(1);

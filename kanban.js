@@ -1101,6 +1101,7 @@
                     col.policy ? el('div', { class: 'kb-col-policy', text: col.policy }) : null,
                     col.sort === 'oldest' ? el('div', { class: 'kb-col-policy', text: '⇅ Oldest first' }) : null,
                     over ? el('div', { class: 'kb-col-warn', text: `Over the WIP limit by ${all.length - col.wip}` }) : null);
+                head.classList.add(last ? 'kb-cdone' : `kb-c${i % 3}`);
                 head.style.gridColumn = String(i + 1);
                 head.style.gridRow = '1';
                 board.append(head);
@@ -1130,6 +1131,7 @@
                 cols.forEach((col, i) => {
                     const cell = el('div', { class: 'kb-cell' + (grouped ? '' : ' joined'), 'data-col': col.id, 'data-lane': lane.key === null ? '' : lane.key });
                     cell.dataset.grouped = grouped ? '1' : '';
+                    cell.classList.add(this.kbColIsDone(col) ? 'kb-cdone' : `kb-c${i % 3}`);
                     cell.style.gridColumn = String(i + 1);
                     cell.style.gridRow = String(row);
                     let inCell = laneCards.filter(c => c.column === col.id);
