@@ -1267,12 +1267,26 @@
                 const v = add.value.trim();
                 if (!v) return;
                 t.checklist.push({ id: uid('ck'), text: v, done: false });
+                add.value = '';
                 add.blur();
                 this.ganttChanged(true);
                 const again = document.querySelector('#gantt-checklist-dock input[placeholder="Add an item..."]');
                 if (again) again.focus();
             };
             add.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAdd(); });
+            // Clicking elsewhere accepts what was typed.
+            add.addEventListener('blur', () => {
+                const v = add.value.trim();
+                add.value = '';
+                const task = v && this.ganttTask(t.id);
+                if (!task) return;
+                task.checklist.push({ id: uid('ck'), text: v, done: false });
+                let ran = false;
+                const go = () => { if (ran) return; ran = true; window.removeEventListener('pointerup', go, true); setTimeout(() => this.ganttChanged(true), 30); };
+                // After the click under way (if it's one), so it isn't swallowed.
+                window.addEventListener('pointerup', go, true);
+                setTimeout(go, 600);
+            });
             d.append(el('div', { class: 'cs-row gantt-dock-add' }, add,
                 el('button', { class: 'cs-btn cs-primary cs-small-btn', type: 'button', text: 'Add', onclick: doAdd })));
         },

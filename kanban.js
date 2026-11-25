@@ -138,6 +138,23 @@
         }
     };
 
+    // Runs `fn` once the mouse button / finger is up, so redrawing the board
+    // doesn't swallow the click that's under way.
+    let pressed = false;
+    document.addEventListener('pointerdown', () => { pressed = true; }, true);
+    ['pointerup', 'pointercancel'].forEach(t => window.addEventListener(t, () => { pressed = false; }, true));
+    const afterClick = (fn) => {
+        if (!pressed) { setTimeout(fn, 0); return; }
+        let ran = false;
+        const go = () => {
+            if (ran) return;
+            ran = true;
+            ['pointerup', 'pointercancel'].forEach(t => window.removeEventListener(t, go, true));
+            setTimeout(fn, 30);
+        };
+        ['pointerup', 'pointercancel'].forEach(t => window.addEventListener(t, go, true));
+    };
+
     const methods = {
         sanitizeKanban(raw) {
             if (!raw || typeof raw !== 'object') return null;
@@ -619,6 +636,18 @@
             return true;
         },
 
+        // Renames a label on every card that has it. False if it can't be.
+        kbRenameLabel(id, name) {
+            const l = this.kbLabel(id);
+            const n = kbNorm(name);
+            if (!l || !n || n === l.name) return false;
+            const other = this.kbLabelByName(n, false);
+            if (other && other !== l) { this.showNotification(`There is already a label called "${other.name}".`); return false; }
+            l.name = n;
+            this.kanbanChanged();
+            return true;
+        },
+
         // A small box beside the card: pick labels, add a new one, delete saved ones.
         openKbLabelPicker(cardId, anchor, done) {
             const old = document.getElementById('kb-label-box');
@@ -656,6 +685,27 @@
                     const on = card && card.labels.includes(l.id);
                     listEl.append(el('div', { class: 'kb-label-row' },
                         el('button', { class: 'kb-chip kb-label-chip' + (on ? ' on' : ''), type: 'button', style: this.kbChipStyle(l), text: (on ? '✓ ' : '') + l.name, onclick: () => toggle(l.id) }),
+                        el('button', { class: 'kb-label-del kb-label-ren', type: 'button', text: '✎', title: `Rename the label "${l.name}"`, onclick: (e) => {
+                            const rowEl = e.currentTarget.parentNode;
+                            const nm = el('input', { class: 'kb-label-new kb-label-name', type: 'text', value: l.name, maxlength: '40' });
+                            let over = false;
+                            const finish = (keep) => {
+                                if (over) return;
+                                over = true;
+                                if (keep) this.kbRenameLabel(l.id, nm.value);
+                                if (box.isConnected) draw();
+                            };
+                            nm.addEventListener('keydown', (ke) => {
+                                ke.stopPropagation();
+                                if (ke.key === 'Enter') { ke.preventDefault(); finish(true); input.focus(); }
+                                if (ke.key === 'Escape') { ke.preventDefault(); finish(false); input.focus(); }
+                            });
+                            nm.addEventListener('blur', () => finish(true));
+                            rowEl.innerHTML = '';
+                            rowEl.append(nm);
+                            nm.focus();
+                            nm.select();
+                        } }),
                         el('button', { class: 'kb-label-del', type: 'button', text: '✕', title: `Delete the label "${l.name}" from the board`, onclick: async () => { busy = true; try { await this.kbDeleteLabel(l.id); } finally { busy = false; } if (box.isConnected) draw(); } })));
                 });
                 if (!this.kanban.labels.length) listEl.append(el('div', { class: 'kb-create-hint', text: 'No labels yet - type one.' }));
@@ -718,6 +768,7 @@
             const commit = (label) => {
                 const u = url;
                 url = '';
+                add.value = '';
                 if (!u) return;
                 card.links.push({ label, url: u });
                 this._kbSelected = card.id;
@@ -735,7 +786,20 @@
                     add.placeholder = 'Name for it (optional), Enter';
                 } else commit(add.value.trim());
             });
-            add.addEventListener('blur', () => { if (url) commit(add.value.trim()); });
+            // Clicking elsewhere accepts the link as typed so far.
+            add.addEventListener('blur', () => {
+                // The row stays until the click is done, so nothing moves under it.
+                box.classList.add('adding');
+                afterClick(() => box.classList.remove('adding'));
+                const u = url || add.value.trim();
+                const label = url ? add.value.trim() : '';
+                url = '';
+                add.value = '';
+                const now0 = u && this.kbCard(card.id);
+                if (!now0) return;
+                now0.links = (now0.links || []).concat({ label, url: u });
+                afterClick(() => this.kanbanChanged());
+            });
             box.append(add);
             return box;
         },
@@ -1146,18 +1210,36 @@
                 box.append(el('label', { class: 'kb-cl-item' }, cb, tx));
             });
             const add = el('input', { class: 'kb-cl-add', type: 'text', placeholder: '+ Add checklist item' });
+            let entered = false;
             add.addEventListener('keydown', (e) => {
                 e.stopPropagation();
                 if (e.key === 'Escape') { add.value = ''; add.blur(); return; }
                 if (e.key !== 'Enter' || !add.value.trim()) return;
                 e.preventDefault();
-                card.checklist.push({ id: uid('ck'), text: add.value.trim(), done: false });
+                const typed = add.value.trim();
+                add.value = '';
+                entered = true; // the redraw takes this box away: not a click elsewhere
+                card.checklist.push({ id: uid('ck'), text: typed, done: false });
                 // Ready for the next item: the redrawn card's add box gets the
                 // cursor straight away, so fast typing isn't lost in between.
                 this._kbCardEditing = card.id;
                 this.kanbanChanged();
                 const next = document.querySelector(`#kanban-view .kb-card[data-id="${card.id}"] .kb-cl-add`);
                 if (next) next.focus();
+            });
+            // Clicking elsewhere accepts what was typed.
+            add.addEventListener('blur', () => {
+                if (entered) return;
+                // The row stays until the click is done, so nothing moves under it.
+                box.classList.add('adding');
+                afterClick(() => box.classList.remove('adding'));
+                const typed = add.value.trim();
+                add.value = '';
+                if (this._kbCardEditing === card.id) this._kbCardEditing = null;
+                const now0 = typed && this.kbCard(card.id);
+                if (!now0) return;
+                now0.checklist.push({ id: uid('ck'), text: typed, done: false });
+                afterClick(() => this.kanbanChanged());
             });
             box.append(add);
             if (this._kbCardEditing === card.id) {
@@ -2560,6 +2642,11 @@
                 k.labels.forEach((l) => {
                     chips.append(el('button', { type: 'button', class: 'kb-chip kb-chip-btn' + (chosen.has(l.id) ? ' on' : ''), style: this.kbChipStyle(l), text: (chosen.has(l.id) ? '✓ ' : '') + l.name,
                         onclick: () => { if (chosen.has(l.id)) chosen.delete(l.id); else chosen.add(l.id); drawChips(); } }),
+                        el('button', { type: 'button', class: 'kb-chip-x', text: '✎', title: `Rename the label "${l.name}"`,
+                            onclick: async () => {
+                                const v = await this.showNameDialog('Rename label', l.name, { plain: true });
+                                if (v && this.kbRenameLabel(l.id, v)) drawChips();
+                            } }),
                         el('button', { type: 'button', class: 'kb-chip-x', text: '✕', title: `Delete the label "${l.name}" from the board`,
                             onclick: async () => { if (await this.kbDeleteLabel(l.id)) { chosen.delete(l.id); drawChips(); } } }));
                 });
@@ -2590,10 +2677,19 @@
                 add.addEventListener('keydown', (e) => {
                     if (e.key !== 'Enter' || !add.value.trim()) return;
                     e.preventDefault();
-                    list.push({ id: uid('ck'), text: add.value.trim(), done: false });
+                    const typed = add.value.trim();
+                    add.value = '';
+                    list.push({ id: uid('ck'), text: typed, done: false });
                     drawList();
                     const again = ckBox.querySelector('input[placeholder^="+ Add"]');
                     if (again) again.focus();
+                });
+                add.addEventListener('blur', () => {
+                    const typed = add.value.trim();
+                    add.value = '';
+                    if (!typed) return;
+                    list.push({ id: uid('ck'), text: typed, done: false });
+                    afterClick(drawList);
                 });
                 ckBox.append(add);
             };
