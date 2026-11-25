@@ -460,12 +460,17 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
 .kb-link-a { flex: 1 1 auto; color: #85b8ff; word-break: break-all; }
 /* Kanban notes: a checklist item's tick box (click it to tick the item). */
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item { position: relative; padding-left: 44px !important; }
+/* The same box as the notes' ordinary checklists; the text keeps its heading
+   style (dimmed once done, without dimming the box). */
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item::before {
-    content: ''; position: absolute; left: 24px; top: 0.25em; width: 13px; height: 13px;
-    border: 1.6px solid #85b8ff; border-radius: 3px; cursor: pointer; box-sizing: border-box;
+    content: ''; position: absolute; left: 20px; top: 0.7em; width: 16px; height: 16px; transform: translateY(-50%);
+    border: 2px solid #fff; border-radius: 2px; cursor: pointer; box-sizing: border-box;
 }
-:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item[data-done="true"]::before {
-    background: #2e9e5b; border-color: #2e9e5b;
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item[data-done="true"] { opacity: 1; color: color-mix(in srgb, var(--muted, #9aa6b2) 65%, transparent); }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item[data-done="true"]::before { background: #26ab33; border: 1px solid #26ab33; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-item[data-done="true"]::after {
+    content: ''; position: absolute; left: 25.3px; top: calc(0.7em - 5px); width: 3px; height: 6px; box-sizing: content-box;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none;
 }
 
 /* When / who on a card: on hover, or when it's selected. */
