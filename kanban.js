@@ -62,6 +62,8 @@
         // Ends in a slash, or in a name without a file ending ("v1.2" is no ending).
         return /[\\/]$/.test(t) || !/\.(?=[a-z0-9]*[a-z])[a-z0-9]{1,8}$/i.test(t);
     };
+    const LINK_KINDS = ['url', 'folder', 'file'];
+    const linkKey = u => kbPlainUrl(u).toLowerCase();
     const kbLinkIcon = u => (kbIsFolder(u) ? '📁' : kbHref(u).startsWith('file:') ? '📄' : '🔗');
     const FOLDER_MARK = '📁\u2060';
     const FILE_MARK = '📄\u2060';
@@ -294,6 +296,10 @@
                 rows, columns, cards, archived, labels,
                 // Links and folders added in the Links panel itself (on no card).
                 panelLinks: Array.isArray(raw.panelLinks) ? raw.panelLinks.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ id: typeof x.id === 'string' ? x.id : uid('pl'), label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined })) : [],
+                // The Links panel's groups (each inside one category), and which group
+                // a link is in, by its address.
+                linkGroups: (Array.isArray(raw.linkGroups) ? raw.linkGroups : []).filter(g => g && typeof g.id === 'string' && LINK_KINDS.includes(g.kind)).map(g => ({ id: g.id, name: String(g.name || 'Group'), kind: g.kind })),
+                linkGroupOf: Object.fromEntries(Object.entries(raw.linkGroupOf && typeof raw.linkGroupOf === 'object' ? raw.linkGroupOf : {}).filter(([, v]) => typeof v === 'string' && Array.isArray(raw.linkGroups) && raw.linkGroups.some(g => g && g.id === v))),
                 // The old Kanban notes tab has been put away (kbRetireNotes).
                 notesRetired: !!raw.notesRetired,
                 prefix: typeof raw.prefix === 'string' && raw.prefix.trim() ? raw.prefix.trim().slice(0, 8) : 'KB',
@@ -400,7 +406,7 @@
 
         kanbanSnapshot() {
             const k = this.kanban;
-            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, archived: k.archived || [], labels: k.labels, panelLinks: k.panelLinks || [], prefix: k.prefix, nextNum: k.nextNum } : null);
+            return JSON.stringify(k ? { rows: k.rows, columns: k.columns, cards: k.cards, archived: k.archived || [], labels: k.labels, panelLinks: k.panelLinks || [], linkGroups: k.linkGroups || [], linkGroupOf: k.linkGroupOf || {}, prefix: k.prefix, nextNum: k.nextNum } : null);
         },
         resetKanbanHistory() {
             this._kbUndo = [];
@@ -452,7 +458,7 @@
             this.kanban = {
                 rows: [{ id: 'r0', name: '' }],
                 columns: columns.map(([name, wip, policy]) => ({ id: uid('kc'), row: 'r0', name, wip: wip || 0, policy: policy || '' })),
-                cards: [], archived: old.archived || [], labels: [], panelLinks: old.panelLinks || [], prefix: 'KB', nextNum: 1, groupBy: 'none', notesRetired: true,
+                cards: [], archived: old.archived || [], labels: [], panelLinks: old.panelLinks || [], linkGroups: old.linkGroups || [], linkGroupOf: old.linkGroupOf || {}, prefix: 'KB', nextNum: 1, groupBy: 'none', notesRetired: true,
                 // The notes tab stays; what was written under old cards goes under "Removed".
                 notesTabId: old.notesTabId || null, noteTitles: old.noteTitles || {},
                 noteCols: {}, cardTabId: old.cardTabId || null
@@ -1266,11 +1272,59 @@
             return ['az', 'za', 'new', 'old'].includes(v) ? v : 'az';
         },
 
+        // ----- Groups in the Links panel -----
+        kbLinkGroups(kind) { return ((this.kanban && this.kanban.linkGroups) || []).filter(g => g.kind === kind); },
+        kbLinkGroupOf(url, kind) {
+            const id = ((this.kanban && this.kanban.linkGroupOf) || {})[linkKey(url)];
+            return id && this.kbLinkGroups(kind).some(g => g.id === id) ? id : '';
+        },
+        kbSetLinkGroup(url, gid) {
+            const map = this.kanban.linkGroupOf || (this.kanban.linkGroupOf = {});
+            if (gid) map[linkKey(url)] = gid; else delete map[linkKey(url)];
+        },
+        // Takes links (by their keys) off the panel and off every card.
+        kbDeleteLinks(urls) {
+            const gone = new Set(urls.map(linkKey));
+            const keep = l => !gone.has(linkKey(l.url));
+            this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(keep);
+            this.kbCards().forEach((c) => { if ((c.links || []).some(l => !keep(l))) c.links = c.links.filter(keep); });
+            gone.forEach((k) => { if (this.kanban.linkGroupOf) delete this.kanban.linkGroupOf[k]; });
+        },
+        // Deleting a group: on its own (its links stay, ungrouped) or with its links.
+        kbDeleteLinkGroup(group, items) {
+            const n = items.length;
+            const drop = () => {
+                this.kanban.linkGroups = (this.kanban.linkGroups || []).filter(g => g.id !== group.id);
+                const map = this.kanban.linkGroupOf || {};
+                Object.keys(map).forEach((k) => { if (map[k] === group.id) delete map[k]; });
+                this.kanbanChanged();
+            };
+            const p = this.kbPopup(`Delete the group "${group.name}"?`);
+            const cards = new Set([].concat(...items.map(e => e.cards.map(c => c.title))));
+            p.body.append(el('p', { class: 'cs-text', text: n ? `It has ${n} link${n === 1 ? '' : 's'}. Keep ${n === 1 ? 'it' : 'them'} (no longer in a group), or delete ${n === 1 ? 'it' : 'them'} too?` : 'It is empty.' }));
+            if (n && cards.size) p.body.append(el('p', { class: 'cs-muted cs-small', text: `Deleting the links also takes them off: ${[...cards].slice(0, 6).map(t => `"${t}"`).join(', ')}${cards.size > 6 ? '...' : ''}.` }));
+            p.footer.append(el('button', { class: 'cs-btn', type: 'button', text: 'Cancel', onclick: p.close }));
+            if (n) p.footer.append(el('button', { class: 'cs-btn kb-danger', type: 'button', text: 'Group and links', onclick: () => { p.close(); this.kbDeleteLinks(items.map(e => e.url)); drop(); } }));
+            p.footer.append(el('button', { class: 'cs-btn cs-primary', type: 'button', text: n ? 'Group only' : 'Delete', onclick: () => { p.close(); drop(); } }));
+        },
+
         buildKanbanLinks() {
             const { urls, folders, files } = this.kbAllLinks();
             const list = el('div', { class: 'kb-links-list' });
+            // Which group a link is in (shown once its category has groups).
+            const mover = (e, kind) => {
+                const groups = this.kbLinkGroups(kind);
+                if (!groups.length) return null;
+                const in0 = this.kbLinkGroupOf(e.url, kind);
+                const sel = el('select', { class: 'kb-links-move', title: 'Move to a group' },
+                    el('option', { value: '', text: 'No group' }), ...groups.map(g => el('option', { value: g.id, text: g.name })));
+                sel.value = in0;
+                sel.addEventListener('change', () => { this.kbSetLinkGroup(e.url, sel.value); this.kanbanChanged(); });
+                return sel;
+            };
             const rowOf = (e) => {
-                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there` });
+                const kind = LINK_KINDS[['🔗', '📁', '📄'].indexOf(kbLinkIcon(e.url))];
+                const row = el('div', { class: 'kb-links-row', title: `${e.url}\n${e.cards.length ? `On: ${e.cards.map(c => c.title).join(', ')}\n` : ''}${e.added ? `Added ${new Date(e.added).toLocaleString()}\n` : ''}Drag onto a card to add it there, or into a group` });
                 const show = () => {
                     row.innerHTML = '';
                     row.append(
@@ -1278,14 +1332,13 @@
                         el('span', { class: 'kb-links-icon', text: kbLinkIcon(e.url) }),
                         el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: withType(e.label || kbPlainUrl(e.url), e.url), onclick: (ev) => kbOpenLink(ev, e.url, this) }),
                         e.cards.length ? el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }) : '',
+                        mover(e, kind) || '',
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it (here and on every card)', onclick: rename }),
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete this link', onclick: async () => {
                             const on = e.cards.map(c => `"${c.title}"`);
                             const from = on.length ? ` It also goes from ${on.length === 1 ? 'the card' : `${on.length} cards:`} ${on.slice(0, 5).join(', ')}${on.length > 5 ? '...' : ''}.` : '';
                             if (!await this.showConfirmDialog(`Delete the link "${kbLinkText(e)}"?${from}`)) return;
-                            const keep = l => String(l.url).trim().toLowerCase() !== e.key;
-                            this.kanban.panelLinks = (this.kanban.panelLinks || []).filter(keep);
-                            this.kbCards().forEach((c) => { if ((c.links || []).some(l => !keep(l))) c.links = c.links.filter(keep); });
+                            this.kbDeleteLinks([e.url]);
                             this.kanbanChanged();
                         } }));
                 };
@@ -1312,10 +1365,9 @@
                 this.wireKanbanLinkDrag(row, e);
                 return row;
             };
-            const group = (name, items, none) => list.append(el('div', { class: 'kb-links-head', text: `${name} (${items.length})` }), ...(items.length ? items.map(rowOf) : [el('div', { class: 'kb-links-none', text: none })]));
             // Adding one here: the address or path, Enter, then a name (or none), Enter.
-            const adder = (kind, hint) => {
-                const inp = el('input', { class: 'kb-links-in kb-links-add', type: 'text', placeholder: hint, 'data-kind': kind });
+            const adder = (kind, hint, gid) => {
+                const inp = el('input', { class: 'kb-links-in kb-links-add', type: 'text', placeholder: hint, 'data-kind': kind, 'data-in': gid || 'none' });
                 let url = '';
                 const reset = () => { url = ''; inp.value = ''; inp.placeholder = hint; };
                 const save = (label) => {
@@ -1325,7 +1377,8 @@
                     const key = u.toLowerCase();
                     const list0 = this.kanban.panelLinks || (this.kanban.panelLinks = []);
                     const had = list0.find(l => String(l.url).trim().toLowerCase() === key);
-                    if (had) { if (label) had.label = label; } else list0.push({ id: uid('pl'), label, url: u, added: now() });
+                    if (had) { if (label) had.label = label; } else if (!this.kbCards().some(c => (c.links || []).some(l => linkKey(l.url) === key))) list0.push({ id: uid('pl'), label, url: u, added: now() });
+                    if (gid) this.kbSetLinkGroup(u, gid);
                     this.kanbanChanged();
                 };
                 inp.addEventListener('keydown', (ke) => {
@@ -1336,7 +1389,7 @@
                     const v = inp.value.trim().replace(/^["']+|["']+$/g, '').trim();
                     if (url) {
                         save(v);
-                        const again = document.querySelector(`#kanban-view .kb-links-add[data-kind="${kind}"]`);
+                        const again = document.querySelector(`#kanban-view .kb-links-add[data-kind="${kind}"][data-in="${gid || 'none'}"]`);
                         if (again) again.focus();
                         return;
                     }
@@ -1347,14 +1400,64 @@
                     inp.placeholder = 'Name for it (Enter to skip)';
                 });
                 inp.addEventListener('blur', () => { if (url) afterClick(() => save(inp.value.trim())); });
-                list.append(inp);
+                return inp;
             };
-            group('🌐 Web links', urls, 'None yet.');
-            adder('url', '+ Add web link');
-            group('📁 Folders', folders, 'None yet.');
-            adder('folder', '+ Add folder path');
-            group('📄 Files', files, 'None yet.');
-            adder('file', '+ Add file path');
+            // A name typed in place: Enter or leaving keeps it, Esc doesn't.
+            const nameBox = (value, done) => {
+                const inp = el('input', { class: 'kb-links-in', type: 'text', value, placeholder: 'Group name' });
+                let over = false;
+                const finish = (keep) => { if (over) return; over = true; done(keep ? inp.value.trim() : ''); };
+                inp.addEventListener('keydown', (ke) => { ke.stopPropagation(); if (ke.key === 'Enter') { ke.preventDefault(); finish(true); } if (ke.key === 'Escape') finish(false); });
+                inp.addEventListener('blur', () => finish(true));
+                setTimeout(() => { inp.focus(); inp.select(); }, 0);
+                return inp;
+            };
+            if (!this._kbLinkFolds) this._kbLinkFolds = new Set();
+            const groupBox = (g, kind, items, hint) => {
+                const folded = this._kbLinkFolds.has(g.id);
+                const head = el('div', { class: 'kb-links-ghead' });
+                const show = () => {
+                    head.innerHTML = '';
+                    head.append(
+                        el('button', { class: 'kb-links-gname', type: 'button', title: folded ? 'Open the group' : 'Fold the group', text: `${folded ? '▸' : '▾'} ${g.name} (${items.length})`, onclick: () => {
+                            if (folded) this._kbLinkFolds.delete(g.id); else this._kbLinkFolds.add(g.id);
+                            this.renderKanbanBoard(this.kbScrollState());
+                        } }),
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename the group', onclick: () => {
+                            head.innerHTML = '';
+                            head.append(nameBox(g.name, (v) => { if (v && v !== g.name) { g.name = v; afterClick(() => this.kanbanChanged()); } else show(); }));
+                        } }),
+                        el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete the group (its links can stay)', onclick: () => this.kbDeleteLinkGroup(g, items) }));
+                };
+                show();
+                const box = el('div', { class: 'kb-links-group', 'data-kind': kind, 'data-group': g.id }, head);
+                if (!folded) box.append(...items.map(rowOf), items.length ? '' : el('div', { class: 'kb-links-none', text: 'Drag links here, or add one below.' }), adder(kind, hint, g.id));
+                return box;
+            };
+            const section = (name, kind, items, hint) => {
+                const groups = this.kbLinkGroups(kind);
+                const by = new Map(groups.map(g => [g.id, []]));
+                const loose = items.filter((e) => { const id = this.kbLinkGroupOf(e.url, kind); if (id) by.get(id).push(e); return !id; });
+                const sec = el('div', { class: 'kb-links-sec', 'data-kind': kind, 'data-group': '' });
+                const head = el('div', { class: 'kb-links-head' }, el('span', { text: `${name} (${items.length})` }), el('span', { class: 'kb-spacer' }));
+                head.append(el('button', { class: 'kb-lk-btn kb-links-newg', type: 'button', text: '+ Group', title: `New group in ${name}`, onclick: (ev) => {
+                    const box = nameBox('', (v) => {
+                        if (!v) { box.remove(); return; }
+                        (this.kanban.linkGroups || (this.kanban.linkGroups = [])).push({ id: uid('lg'), name: v, kind });
+                        afterClick(() => this.kanbanChanged());
+                    });
+                    ev.target.closest('.kb-links-head').after(box);
+                } }));
+                sec.append(head);
+                groups.forEach(g => sec.append(groupBox(g, kind, by.get(g.id), hint)));
+                sec.append(...loose.map(rowOf));
+                if (!items.length && !groups.length) sec.append(el('div', { class: 'kb-links-none', text: 'None yet.' }));
+                sec.append(adder(kind, hint, ''));
+                list.append(sec);
+            };
+            section('🌐 Web links', 'url', urls, '+ Add web link');
+            section('📁 Folders', 'folder', folders, '+ Add folder path');
+            section('📄 Files', 'file', files, '+ Add file path');
             const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
                 ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
             sort.addEventListener('change', () => {
@@ -1370,8 +1473,9 @@
         // Drag by the row (on a touch screen: by its ⠿).
         wireKanbanLinkDrag(row, entry) {
             row.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0 || e.target.closest('button, input')) return;
+                if (e.button !== 0 || e.target.closest('button, input, select')) return;
                 if (e.pointerType === 'touch' && !e.target.closest('.kb-links-grip')) return;
+                const kind = LINK_KINDS[['🔗', '📁', '📄'].indexOf(kbLinkIcon(entry.url))];
                 const sx = e.clientX, sy = e.clientY;
                 let ghost = null;
                 let over = null;
@@ -1386,7 +1490,12 @@
                     ev.preventDefault();
                     ghost.style.transform = `translate(${ev.clientX + 10}px, ${ev.clientY + 10}px)`;
                     const under = document.elementFromPoint(ev.clientX, ev.clientY);
-                    const card = under && under.closest('#kanban-view .kb-card');
+                    let card = under && under.closest('#kanban-view .kb-card');
+                    // Or one of its own category's groups (or out of them).
+                    if (!card && under) {
+                        const g = under.closest('.kb-links-group, .kb-links-sec');
+                        if (g && g.dataset.kind === kind) card = g;
+                    }
                     if (over && over !== card) over.classList.remove('kb-link-drop');
                     over = card;
                     if (over) over.classList.add('kb-link-drop');
@@ -1402,6 +1511,10 @@
                     window.addEventListener('click', eat, { capture: true, once: true });
                     setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
                     if (over) over.classList.remove('kb-link-drop');
+                    if (over && ev.type === 'pointerup' && over.dataset.group !== undefined) {
+                        if (this.kbLinkGroupOf(entry.url, kind) !== over.dataset.group) { this.kbSetLinkGroup(entry.url, over.dataset.group); this.kanbanChanged(); }
+                        return;
+                    }
                     const card = over && ev.type === 'pointerup' && this.kbCard(over.dataset.id);
                     if (!card) return;
                     if ((card.links || []).some(l => String(l.url).trim().toLowerCase() === entry.key)) { this.showNotification(`"${card.title}" already has that link.`); return; }

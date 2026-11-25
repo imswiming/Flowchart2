@@ -243,6 +243,7 @@ html.theme-paper :is(.kb-links-head, .kb-links-none) { color: #1f1f1c; }
 html.theme-paper .kb-links-head { font-weight: 500; }
 html.theme-paper .kb-links-row:hover { background: #d3dac6; }
 html.theme-paper .kb-links-n { background: #cdd6bf; color: #33302a; }
+html.theme-paper .kb-links-group { border-left-color: #a9b99a; background: rgba(255, 255, 255, 0.28); }
 html.theme-paper .kb-links-ghost { background: #6f8f69; }
 html.theme-paper .kb-board.grouped .kb-lane-head { border-top-color: #cfc6b4; }
 html.theme-paper body.kanban-mode #cloud-sync-status { background: #e4dfce; color: #262622 !important; }
