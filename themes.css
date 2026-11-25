@@ -234,6 +234,8 @@ html.theme-paper .kb-people .kb-avatar { border-color: #fbfaf2; }
 html.theme-paper .kb-label-box { background: #fdfcf6; color: #262622; }
 html.theme-paper .kb-label-foot .kb-btn { background: #f1ecde; color: #262622; }
 html.theme-paper .kb-board-wrap > .kb-links { background: #fdfcf6; border-color: transparent; box-shadow: 0 1px 4px rgba(90, 75, 45, 0.42), 0 0 0 1px rgba(190, 175, 140, 0.55); }
+html.theme-paper .kb-select.kb-links-sort { background: #fdfcf6; border-color: rgba(190, 175, 140, 0.55); }
+html.theme-paper .kb-select.kb-links-sort:focus { outline: none; border-color: #bba97f; }
 html.theme-paper .kb-links-title { background: #fdfcf6; border-color: #e0d6bd; }
 html.theme-paper :is(.kb-links-head, .kb-links-none) { color: #1f1f1c; }
 html.theme-paper .kb-links-head { font-weight: 500; }
