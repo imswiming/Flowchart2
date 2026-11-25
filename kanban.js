@@ -330,7 +330,17 @@
             const shownCard = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
             if (shownCard && !fromNotes) this.writeKbCardTab(shownCard);
             this.syncKanbanFlow();
+            this.kbShowCardTab();
             this.autosave();
+        },
+
+        // The card notes' tab is in the notes' tab row as soon as there is a card
+        // (and goes with the last one).
+        kbShowCardTab() {
+            const bar = document.getElementById('notes-tab-bar');
+            if (!bar) return;
+            const want = !!(this.kanban && this.kbCards().length);
+            if (want !== !!bar.querySelector('.kb-card-tab')) this.renderNotesTabBar();
         },
 
         kanbanSnapshot() {
@@ -3404,6 +3414,7 @@
         if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }
         this._kbCardSigs = null;
         if (this.kanban) this.kbStampCards(true);
+        try { this.kbShowCardTab(); } catch (e) { /* drawn with the notes */ }
         if (this._kanbanMode) this.renderKanban();
         return r;
     };

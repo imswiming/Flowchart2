@@ -57,8 +57,15 @@
         const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
         return [0, 8, 4].map(n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))));
     };
-    const isLight = rgb => rgb[0] === 255 && rgb[1] === 204 && rgb[2] === 0;
-    const readable = (hex) => {
+    const isLight = rgb => rgb[0] > 240 && rgb[1] > 200 && rgb[2] < 110;
+    const toHex = rgb => '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
+    // A little of the paper in every colour.
+    const pastel = (hex) => {
+        const rgb = rgbOf(hex);
+        return rgb ? toHex(rgb.map((v, i) => Math.round(v + ([246, 241, 229][i] - v) * 0.2))) : hex;
+    };
+    const readable = hex => pastel(deepen(hex));
+    const deepen = (hex) => {
         const rgb = rgbOf(hex);
         if (!rgb || isLight(rgb) || hex === '#4db8f0') return hex; // (baby blue stays as it is)
         let [h, s, l] = toHsl(rgb);
@@ -67,7 +74,6 @@
         return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('');
     };
     window.flowThemeTextColor = (fill) => { const rgb = isPaper() && rgbOf(fill); return rgb ? (isLight(rgb) ? '#20302a' : '#ffffff') : null; };
-    const toHex = rgb => '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
     // The Gantt's red phases are drawn orange (a red picked by hand stays red).
     const notRed = (hex, data) => {
         const rgb = data && data._gantt && rgbOf(hex);

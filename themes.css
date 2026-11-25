@@ -66,10 +66,10 @@ html.theme-paper .nb-btn > path[stroke="#f87168"] { stroke: #a4452b; }
 html.theme-paper .nb-btn > path[stroke="#5aa7ff"] { stroke: #4f6a80; }
 html.theme-paper .nb-btn > path[stroke="#ff8c1a"] { stroke: #b56a1c; }
 /* The node menu's colours, as the nodes are drawn. */
-html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #27b37b !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #f2607c !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #4db8f0 !important; }
-html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #ffcc00 !important; color: #262622 !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(0, 166, 126)"] { background: #50ba8c !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(231, 84, 128)"] { background: #f37d91 !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(0, 116, 217)"] { background: #6fc3ee !important; }
+html.theme-paper #node-edit-popup button[style*="rgb(255, 204, 0)"] { background: #fdd32e !important; color: #262622 !important; }
 html.theme-paper #node-edit-popup button[style*="rgb(50, 58, 74)"] { background: #fdfcf5 !important; color: #262622 !important; box-shadow: inset 0 0 0 1px #b3b09f; }
 html.theme-paper #node-edit-input { background: #fffdf6 !important; color: #262622 !important; }
 html.theme-paper .nb-btn:hover .nb-tile { filter: brightness(0.94); }
