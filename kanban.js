@@ -1694,6 +1694,28 @@
             return colId === card.column ? card.checklist : ((card.colChecklists && card.colChecklists[colId]) || []);
         },
 
+        // Which card the card notes show is not saved: after loading, the card
+        // is found again by the note's title (and, if several have that name,
+        // its checklist). Without this its tick boxes and edits go nowhere.
+        kbFindCardTabCard() {
+            const tab = this.kbCardTab(false);
+            if (!tab || (this._kbCardTabFor && this.kbCard(this._kbCardTabFor))) return;
+            this._kbCardTabFor = null;
+            const doc = new DOMParser().parseFromString(`<body>${tab.content || ''}</body>`, 'text/html');
+            const head = Array.from(doc.querySelectorAll('h5')).find(h => h.textContent.startsWith(TITLE_MARK));
+            if (!head) return;
+            const title = kbNorm(head.textContent.replace(/⁣/g, ''));
+            const lines = new Set(Array.from(doc.querySelectorAll('h6')).map(h => kbNorm(h.textContent).replace(/^✓\s*/, '')));
+            const itemsOf = c => this.kanban.columns.reduce((a, col) => a.concat(this.kbColItems(c, col.id).map(x => kbNorm(x.text)).filter(Boolean)), []);
+            const same = this.kbCards().filter(c => kbNorm(c.title) === title);
+            const allIn = same.filter(c => itemsOf(c).every(t => lines.has(t)));
+            const full = allIn.filter(c => new Set(itemsOf(c)).size === lines.size);
+            const card = same.length === 1 ? same[0] : (full.length === 1 ? full[0] : null);
+            if (!card) return;
+            if (allIn.includes(card)) { this._kbCardTabFor = card.id; this._kbCardTabSeen = tab.content; }
+            else this.writeKbCardTab(card); // the card has newer items
+        },
+
         writeKbCardTab(card) {
             const tab = this.kbCardTab(true);
             if (!tab || !card) return null;
@@ -2023,6 +2045,7 @@
                 }
                 e.preventDefault();
                 e.stopPropagation();
+                this.kbFindCardTabCard();
                 this.pullKbCardTabEdits();
                 const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
                 const col = this.kanban.columns[colAt];
@@ -2031,31 +2054,55 @@
                 it.done = !it.done;
                 this.kanbanChanged();
             }, true);
-            let from = null;
-            const enter = editor.commands.get('enter');
+            // A new line on an item is a line under it, in the same panel.
             editor.editing.view.document.on('enter', (evt, data) => {
-                from = null;
                 if (!isCardNote()) return;
                 const sel = editor.model.document.selection;
-                const block = sel.getFirstPosition().parent;
+                const pos = sel.getFirstPosition();
+                const block = pos.parent;
                 if (!sel.isCollapsed || !block.is('element', 'heading6')) return;
+                data.preventDefault();
+                evt.stop();
                 if (block.isEmpty) {
                     // Enter on an empty item: the list ends, back to normal text.
                     editor.execute('paragraph');
-                    data.preventDefault();
-                    evt.stop();
                     return;
                 }
-                if (sel.getFirstPosition().isAtEnd) from = block;
+                editor.model.change((writer) => {
+                    const next = block.nextSibling;
+                    const blank = next && next.is('element', 'paragraph') && (next.isEmpty || !Array.from(next.getChildren()).some(x => !x.is('$text') || x.data.replace(/ /g, ' ').trim()));
+                    if (pos.isAtEnd && blank) {
+                        // Its blank line is free: typing starts there.
+                        writer.setSelection(next, 0);
+                        return;
+                    }
+                    const line = writer.createElement('paragraph');
+                    writer.insert(line, block, 'after');
+                    if (!pos.isAtEnd) writer.move(writer.createRange(pos, writer.createPositionAt(block, 'end')), line, 0);
+                    writer.setSelection(line, 0);
+                });
+                editor.editing.view.scrollToTheSelection();
             }, { priority: 'highest' });
-            if (enter) enter.on('afterExecute', (evt, data) => {
-                if (!from) return;
-                from = null;
-                const block = editor.model.document.selection.getFirstPosition().parent;
-                if (!block.isEmpty) return;
-                if (block.is('element', 'paragraph')) data.writer.rename(block, 'heading6');
-                data.writer.removeAttribute('ganttDone', block);
-            }, { priority: 'lowest' });
+            // Ctrl + Enter anywhere in an item's panel: a new item after it.
+            editor.editing.view.document.on('keydown', (evt, data) => {
+                if (data.keyCode !== 13 || !(data.ctrlKey || data.metaKey) || !isCardNote()) return;
+                let b = editor.model.document.selection.getFirstPosition().parent;
+                while (b && b.parent && !b.parent.is('rootElement')) b = b.parent;
+                let item = b;
+                while (item && !/^heading[456]$/.test(item.name)) item = item.previousSibling;
+                if (!item || item.name !== 'heading6') return;
+                data.preventDefault();
+                evt.stop();
+                let last = b;
+                while (last.nextSibling && !/^heading[456]$/.test(last.nextSibling.name)) last = last.nextSibling;
+                editor.model.change((writer) => {
+                    const it = writer.createElement('heading6');
+                    writer.insert(it, last, 'after');
+                    writer.insertElement('paragraph', it, 'after');
+                    writer.setSelection(it, 0);
+                });
+                editor.editing.view.scrollToTheSelection();
+            }, { priority: 'highest' });
         },
 
         // Is the note being edited a card's?
@@ -3343,6 +3390,8 @@
             this._kbLastSnap = this.kanbanSnapshot();
         }
         try { this.kbRetireNotes(); } catch (e) { console.error('Kanban notes:', e); }
+        if (before !== this.currentSlotIndex) this._kbCardTabFor = null;
+        try { if (this.kanban) this.kbFindCardTabCard(); } catch (e) { console.error('Card notes:', e); }
         // The flowchart branch is brought up to date (names and layout as this
         // version draws them).
         if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }

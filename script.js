@@ -9175,18 +9175,17 @@ class FlowchartViewer {
                         try { app.decorateNotesEditor(editor); } catch (e) { /* drawn next change */ }
                     }
                 };
-                // A line added or removed (Enter, Backspace): straight away, so the new
-                // line is never shown outside its box. Plain typing: in a moment.
+                // A line added, removed or of another kind (Enter, Backspace): straight
+                // away, so it is never shown outside its box. Plain typing: in a moment.
                 let decorateTimer = null;
-                let lineCount = -1;
                 editor.model.document.on('change:data', () => {
                     clearTimeout(decorateTimer);
-                    const docRoot = editor.model.document.getRoot();
-                    const n = docRoot ? docRoot.childCount : 0;
-                    if (n !== lineCount) { lineCount = n; decorate(); }
+                    const lines = editor.model.document.differ.getChanges().some(c => c.type === 'attribute'
+                        ? !(c.range.start.nodeAfter && c.range.start.nodeAfter.is('$text')) : c.name !== '$text');
+                    if (lines) decorate();
                     decorateTimer = setTimeout(decorate, 150);
                 }, { priority: 'lowest' });
-                editor.once('ready', () => { const r0 = editor.model.document.getRoot(); lineCount = r0 ? r0.childCount : 0; decorate(); });
+                editor.once('ready', () => decorate());
                 editor._noteDecorate = decorate;
 
                 // Enter at the end of a folded title: open it, so the new line
