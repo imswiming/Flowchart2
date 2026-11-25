@@ -43,7 +43,7 @@ html.theme-paper input[type="range"]::-moz-range-thumb, html.theme-paper input[t
 html.theme-paper .flowchart-panel { background: #f6f1e5 var(--paper-tex) !important; }
 html.theme-paper #flowchart { background: transparent !important; }
 html.theme-paper #flowchart svg { background: transparent !important; }
-html.theme-paper .link { stroke: #5c6270; stroke-width: 1.4px; }
+html.theme-paper .link { stroke: #868a91; stroke-width: 1.4px; }
 html.theme-paper .link.selected, html.theme-paper .custom-link.selected { stroke: #c5812f; }
 html.theme-paper #flowchart .node > rect { rx: 5; ry: 5; } /* (no shadow: a filter on every node makes panning slow) */
 html.theme-paper #flowchart .node > text { font-weight: 600; }
