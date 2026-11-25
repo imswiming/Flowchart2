@@ -634,15 +634,6 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 .kb-links-icon { font-size: 12px; flex: 0 0 auto; }
 .kb-card .kb-link-row { touch-action: none; cursor: grab; }
 /* A label's links, on the selected card and in the Links panel. */
-.kb-lab-links { margin: 4px 0 8px; }
-.kb-lab-part { margin: 4px 0; padding: 2px 4px; border-radius: 4px; }
-.kb-lab-links.in-card { border-top: 1px solid var(--kb-line); padding-top: 2px; }
-.kb-lab-head { margin: 2px 0; }
-.kb-lab-kind { margin: 4px 0 1px; font-size: 10.5px; font-weight: 600; color: var(--kb-sub); }
-.kb-lab-add { width: 100%; box-sizing: border-box; color: var(--kb-sub); }
-.kb-lab-links.in-panel .kb-lab-add { border-color: var(--kb-line); }
-.kb-lab-part.kb-link-drop { outline: 2px dashed #1f845a; outline-offset: -1px; }
-.kb-lab-title { margin-top: 18px; border-top: 1px solid var(--kb-line); padding-top: 10px; }
 .kb-lab-fold { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 4px 2px 0; font: inherit; font-size: 12px; color: var(--kb-text); background: none; border: none; cursor: pointer; }
 .kb-lab-count { color: var(--kb-sub); font-weight: 400; }
 .kb-links-of + .kb-links-of { margin-top: 8px; }

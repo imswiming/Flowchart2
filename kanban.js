@@ -921,77 +921,6 @@
             this.kanbanChanged();
             return true;
         },
-        buildKbLabelLinks(card, where) {
-            const labels = this.kbCardLabels(card);
-            if (!labels.length) return null;
-            const box = el('div', { class: `kb-lab-links in-${where}` });
-            labels.forEach((lb) => {
-                const fold = this.kbLabelFold(lb, labels.length > 1, (lb.links || []).length);
-                const part = el('div', { class: 'kb-lab-part', 'data-label-links': lb.id }, el('div', { class: 'kb-lab-head' }, fold.head));
-                if (fold.folded) { box.append(part); return; }
-                const byKind = [['🔗', '🌐 Web links'], ['📁', '📁 Folders'], ['📄', '📄 Files']]
-                    .map(([icon, name]) => [name, (lb.links || []).filter(l => kbLinkIcon(l.url) === icon)]).filter(([, of]) => of.length);
-                byKind.forEach(([name, of]) => of.forEach((l, nth) => {
-                    if (!nth) part.append(el('div', { class: 'kb-lab-kind', text: name }));
-                    const row = el('div', { class: 'kb-link-row' });
-                    const rename = () => {
-                        const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
-                        let over = false;
-                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); afterClick(() => this.kanbanChanged()); } else show(); };
-                        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
-                        inp.addEventListener('blur', () => finish(true));
-                        row.innerHTML = '';
-                        row.append(inp);
-                        inp.focus();
-                        inp.select();
-                    };
-                    const show = () => {
-                        row.innerHTML = '';
-                        row.append(
-                            el('a', { class: 'kb-lk-a', draggable: 'false', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
-                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link (on every card with the label)', onclick: (e) => { e.stopPropagation(); rename(); } }),
-                            el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Take it off the label', onclick: async (e) => {
-                                e.stopPropagation();
-                                const n = this.kbCards().filter(x => (x.labels || []).includes(lb.id)).length;
-                                if (!await this.showConfirmDialog(`Take "${kbLinkText(l)}" off the label "${lb.name}"? It goes from ${n === 1 ? 'the 1 card' : `all ${n} cards`} with that label.`, 'Remove')) return;
-                                lb.links = (lb.links || []).filter(x => x !== l);
-                                this.kanbanChanged();
-                            } }));
-                    };
-                    show();
-                    this.wireKanbanLinkDrag(row, { key: String(l.url).trim().toLowerCase(), url: l.url, get label() { return l.label; } }, { id: '', labelId: lb.id });
-                    part.append(row);
-                }));
-                // The address, Enter, then a name (or none), Enter.
-                const hint = `+ Add link to ${lb.name}`;
-                const inp = el('input', { class: 'kb-cl-text kb-lab-add', type: 'text', placeholder: hint });
-                let url = '';
-                const reset = () => { url = ''; inp.value = ''; inp.placeholder = hint; };
-                inp.addEventListener('click', e => e.stopPropagation());
-                inp.addEventListener('keydown', (e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Escape') { reset(); inp.blur(); return; }
-                    if (e.key !== 'Enter') return;
-                    e.preventDefault();
-                    const v = inp.value.trim();
-                    if (url) { const u = url; reset(); this.kbAddLabelLink(lb, { url: u, label: v }); return; }
-                    if (!v) return;
-                    url = v;
-                    inp.value = '';
-                    inp.placeholder = 'Name for it (Enter to skip)';
-                });
-                inp.addEventListener('blur', () => {
-                    const u = url || inp.value.trim();
-                    const name = url ? inp.value.trim() : '';
-                    reset();
-                    if (u) afterClick(() => this.kbAddLabelLink(lb, { url: u, label: name }));
-                });
-                part.append(inp);
-                box.append(part);
-            });
-            return box;
-        },
-
         // ----- Mode -----
         setupKanban() {
             this._kanbanMode = false;
@@ -1778,7 +1707,6 @@
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
                 this.buildKanbanCardChecklist(card),
                 this.buildKanbanCardLinks(card),
-                card.id === this._kbSelected ? this.buildKbLabelLinks(card, 'card') : null,
                 // Labels: click one to change it, "+ label" to add one.
                 el('div', { class: 'kb-chips' + (card.labels.length ? '' : ' none') }, ...card.labels.map((id) => {
                     const l = this.kbLabel(id);
