@@ -248,8 +248,8 @@
             const labels = (Array.isArray(raw.labels) ? raw.labels : []).filter(l => l && typeof l.id === 'string').map(l => ({
                 id: l.id, name: typeof l.name === 'string' ? l.name : 'Label',
                 color: typeof l.color === 'string' ? l.color : LABEL_COLORS[0],
-                // Links of the label: shown on every card that has it.
-                links: Array.isArray(l.links) ? l.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined })) : []
+                // Links of the label, and the card each came from: shared by every card that has it.
+                links: Array.isArray(l.links) ? l.links.filter(x => x && typeof x.url === 'string' && x.url.trim()).map(x => ({ label: String(x.label || ''), url: kbPlainUrl(x.url), added: Number.isFinite(x.added) ? x.added : undefined, from: typeof x.from === 'string' && x.from ? x.from : undefined })) : []
             }));
             const labelIds = new Set(labels.map(l => l.id));
             const ts = v => (Number.isFinite(v) ? v : null);
@@ -366,6 +366,28 @@
         // ----- Changes, undo / redo -----
         // `fromNotes`: the change came from editing the notes, which are not
         // rewritten while you type in them.
+        // A link just added to a card (on it, in the panel, by dragging...) is added
+        // to all the card's labels. "remember": only notes what each card has now.
+        kbShareNewLinks(remember) {
+            const was = this._kbLinkKeys;
+            const is = new Map(this.kbCards().map(c => [c.id, new Set((c.links || []).map(l => linkKey(l.url)))]));
+            this._kbLinkKeys = is;
+            if (remember || !was) return;
+            this.kbCards().forEach((card) => {
+                const had = was.get(card.id);
+                (card.links || []).filter(l => !had || !had.has(linkKey(l.url))).forEach((l) => {
+                    this.kbCardLabels(card).forEach((lb) => {
+                        if ((lb.links || []).some(x => linkKey(x.url) === linkKey(l.url))) return;
+                        lb.links = (lb.links || []).concat({ label: l.label || '', url: kbPlainUrl(l.url), added: l.added || now(), from: card.id });
+                    });
+                });
+            });
+        },
+        // A card's link renamed: the labels' links that came from it, too.
+        kbRenameLabelCopies(card, url, name) {
+            this.kbCardLabels(card).forEach(lb => (lb.links || []).forEach((x) => { if (x.from === card.id && linkKey(x.url) === linkKey(url)) x.label = name; }));
+        },
+
         // Cards that changed since last time get the time and your name.
         kbStampCards(initOnly) {
             const sig = c => JSON.stringify([c.title, c.desc, c.column, c.labels, c.assignee, c.due, c.blocked, c.blockReason, c.checklist, c.category, c.issuer, c.purpose, c.links, !!c.highlight]);
@@ -388,6 +410,7 @@
             try { this.kbFindCardTabCard(); } catch (e) { /* no card notes */ }
             this._kbInChange = true;
             try { this.pullKbCardTabEdits(); } finally { this._kbInChange = false; }
+            this.kbShareNewLinks();
             this.kbStampCards();
             this.recordKanbanHistory();
             this.renderKanban();
@@ -436,6 +459,7 @@
             this.kbReturnArchivedNodes(old.archived);
             if (this._kbSelected && !this.kbCard(this._kbSelected)) this._kbSelected = null;
             this._kbLastSnap = snap;
+            this.kbShareNewLinks(true);
             const pop = document.getElementById('kanban-popup');
             if (pop) pop.remove();
             this.renderKanban();
@@ -839,7 +863,7 @@
                     const rename = () => {
                         const inp = el('input', { class: 'kb-cl-text', type: 'text', value: l.label, placeholder: 'Name for it' });
                         let over = false;
-                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); this.kanbanChanged(); } else show(); };
+                        const finish = (keep) => { if (over) return; over = true; if (keep && inp.value.trim() !== l.label) { l.label = inp.value.trim(); this.kbRenameLabelCopies(card, l.url, l.label); this.kanbanChanged(); } else show(); };
                         inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
                         inp.addEventListener('blur', () => finish(true));
                         row.innerHTML = '';
@@ -897,13 +921,14 @@
         // A label's links show on every card that has the label; changing them on
         // one card (or in the Links panel) changes them for all.
         // With several labels, each one's links fold away under its name.
-        kbLabelFold(lb, many, count) {
+        kbLabelFold(lb, many, count, shut) {
             if (!this._kbLinkFolds) this._kbLinkFolds = new Set();
-            const key = `label:${lb.id}`;
-            const folded = many && this._kbLinkFolds.has(key);
+            // ("shut": folded unless opened; the set then holds the opened ones.)
+            const key = `${shut ? 'open' : 'label'}:${lb.id}`;
+            const folded = many && this._kbLinkFolds.has(key) !== !!shut;
             const toggle = (e) => {
                 e.stopPropagation();
-                if (folded) this._kbLinkFolds.delete(key); else this._kbLinkFolds.add(key);
+                if (this._kbLinkFolds.has(key)) this._kbLinkFolds.delete(key); else this._kbLinkFolds.add(key);
                 this.renderKanbanBoard(this.kbScrollState());
             };
             const chip = el('span', { class: 'kb-chip', style: this.kbChipStyle(lb), text: lb.name, title: 'Links of this label: the same on every card that has it' });
@@ -912,12 +937,24 @@
                 : chip;
             return { folded, head };
         },
+        // Labels shown with their links grouped by the card each came from (kept on
+        // this device).
+        kbByCard(id, flip) {
+            let set = [];
+            try { set = JSON.parse(localStorage.getItem('flowchart-kb-label-bycard') || '[]'); } catch (e) { /* none */ }
+            if (!Array.isArray(set)) set = [];
+            if (flip) {
+                set = set.includes(id) ? set.filter(x => x !== id) : set.concat(id);
+                try { localStorage.setItem('flowchart-kb-label-bycard', JSON.stringify(set)); } catch (e) { /* not kept */ }
+            }
+            return set.includes(id);
+        },
         kbCardLabels(card) { return ((card && card.labels) || []).map(id => this.kbLabel(id)).filter(Boolean); },
-        kbAddLabelLink(label, link) {
+        kbAddLabelLink(label, link, from) {
             const url = kbPlainUrl(link.url);
             if (!url) return false;
             if ((label.links || []).some(l => linkKey(l.url) === linkKey(url))) { this.showNotification(`"${label.name}" already has that link.`); return false; }
-            label.links = (label.links || []).concat({ label: link.label || '', url, added: now() });
+            label.links = (label.links || []).concat({ label: link.label || '', url, added: now(), from: from || this._kbSelected || undefined });
             this.kanbanChanged();
             return true;
         },
@@ -1378,6 +1415,26 @@
             const list = el('div', { class: 'kb-links-list' });
             const active = this._kbSelected && this.kbCard(this._kbSelected);
             const entriesOf = links => this.kbSortLinks((links || []).map(l => ({ key: String(l.url).trim().toLowerCase(), url: l.url, label: l.label, added: l.added, link: l, cards: [] })));
+            const view = (head, ctx) => list.append(head, this.buildKbLinkView(ctx));
+            const labelPart = (lb, many) => {
+                const fold = this.kbLabelFold(lb, many, (lb.links || []).length, !active);
+                if (fold.folded) { list.append(el('div', { class: 'kb-links-of', 'data-label-links': lb.id }, fold.head)); return; }
+                const n = this.kbCards().filter(c => (c.labels || []).includes(lb.id)).length;
+                const byCard = this.kbByCard(lb.id);
+                view(el('div', { class: 'kb-links-of' }, fold.head, el('span', { class: 'kb-spacer' }),
+                    el('button', { class: 'kb-lk-btn kb-bycard' + (byCard ? ' on' : ''), type: 'button', text: '🃏 By card', title: byCard ? 'Back to its own groups' : 'Group its links by the card each came from', onclick: () => { this.kbByCard(lb.id, true); this.renderKanbanBoard(this.kbScrollState()); } })), {
+                    byCard,
+                    scope: `label:${lb.id}`, items: entriesOf(lb.links), labelId: lb.id,
+                    add: (link) => {
+                        const had = (lb.links || []).find(l => linkKey(l.url) === linkKey(link.url));
+                        if (had) { if (link.label) had.label = link.label; } else lb.links = (lb.links || []).concat(Object.assign(active ? { from: active.id } : {}, link));
+                    },
+                    rename: (e, v) => { e.link.label = v; },
+                    ask: e => `Take "${kbLinkText(e)}" off the label "${lb.name}"? It goes from ${n === 1 ? 'the 1 card' : `all ${n} cards`} with that label.`,
+                    remove: (es) => { lb.links = (lb.links || []).filter(l => !es.some(e => e.link === l)); },
+                    from: { id: '', labelId: lb.id, panel: true }
+                });
+            };
             if (!active) {
                 const all = this.kbAllLinks();
                 list.append(this.buildKbLinkView({
@@ -1402,36 +1459,22 @@
                     remove: es => this.kbDeleteLinks(es.map(e => e.url)),
                     from: null
                 }));
+                // Below it, every label and its links, folded.
+                this.kanban.labels.forEach(lb => labelPart(lb, true));
             } else {
-                const view = (head, ctx) => list.append(head, this.buildKbLinkView(ctx));
                 view(el('div', { class: 'kb-links-of' }, el('span', { text: active.title, title: 'Links of the selected card' })), {
                     scope: `card:${active.id}`, items: entriesOf(active.links), cardId: active.id,
                     add: (link) => {
                         const had = (active.links || []).find(l => linkKey(l.url) === linkKey(link.url));
                         if (had) { if (link.label) had.label = link.label; } else active.links = (active.links || []).concat(link);
                     },
-                    rename: (e, v) => { e.link.label = v; },
+                    rename: (e, v) => { e.link.label = v; this.kbRenameLabelCopies(active, e.url, v); },
                     ask: e => `Remove the link "${kbLinkText(e)}" from this card?`,
                     remove: (es) => { active.links = (active.links || []).filter(l => !es.some(e => e.link === l)); },
                     from: { id: active.id, panel: true }
                 });
                 const labels = this.kbCardLabels(active);
-                labels.forEach((lb) => {
-                    const fold = this.kbLabelFold(lb, labels.length > 1, (lb.links || []).length);
-                    if (fold.folded) { list.append(el('div', { class: 'kb-links-of', 'data-label-links': lb.id }, fold.head)); return; }
-                    const n = this.kbCards().filter(c => (c.labels || []).includes(lb.id)).length;
-                    view(el('div', { class: 'kb-links-of' }, fold.head), {
-                        scope: `label:${lb.id}`, items: entriesOf(lb.links), labelId: lb.id,
-                        add: (link) => {
-                            const had = (lb.links || []).find(l => linkKey(l.url) === linkKey(link.url));
-                            if (had) { if (link.label) had.label = link.label; } else lb.links = (lb.links || []).concat(link);
-                        },
-                        rename: (e, v) => { e.link.label = v; },
-                        ask: e => `Take "${kbLinkText(e)}" off the label "${lb.name}"? It goes from ${n === 1 ? 'the 1 card' : `all ${n} cards`} with that label.`,
-                        remove: (es) => { lb.links = (lb.links || []).filter(l => !es.some(e => e.link === l)); },
-                        from: { id: '', labelId: lb.id, panel: true }
-                    });
-                });
+                labels.forEach(lb => labelPart(lb, labels.length > 1));
             }
             const sort = el('select', { class: 'kb-select kb-links-sort', title: 'Sort the links' },
                 ...[['az', 'A to Z'], ['za', 'Z to A'], ['new', 'Newest first'], ['old', 'Oldest first']].map(([v, t]) => el('option', { value: v, text: t, selected: this.kbLinksSort() === v })));
@@ -1452,7 +1495,7 @@
             const view = el('div', { class: 'kb-links-view', 'data-scope': scope, 'data-label-links': ctx.labelId || null, 'data-card-links': ctx.cardId || null });
             // Which group a link is in (shown once its category has groups).
             const mover = (e, kind) => {
-                const groups = this.kbLinkGroups(kind, scope);
+                const groups = ctx.byCard ? [] : this.kbLinkGroups(kind, scope);
                 if (!groups.length) return null;
                 const sel = el('select', { class: 'kb-links-move', title: 'Move to a group' },
                     el('option', { value: '', text: 'No group' }), ...groups.map(g => el('option', { value: g.id, text: g.name })));
@@ -1569,6 +1612,29 @@
             };
             const section = (name, kind, hint) => {
                 const items = ctx.items.filter(e => kindOf(e) === kind);
+                // By the card each came from: its groups make themselves.
+                if (ctx.byCard) {
+                    const cardOf = (e) => { const id = e.link && e.link.from; return id ? this.kbCard(id) || (this.kanban.archived || []).find(x => x.id === id) : null; };
+                    const sec0 = el('div', { class: 'kb-links-sec' }, el('div', { class: 'kb-links-head' }, el('span', { text: `${name} (${items.length})` })));
+                    const groups0 = new Map();
+                    items.forEach((e) => { const cd = cardOf(e); const k = cd ? cd.id : ''; if (!groups0.has(k)) groups0.set(k, { card: cd, items: [] }); groups0.get(k).items.push(e); });
+                    [...groups0.values()].filter(g => g.card).sort((a, b) => a.card.title.localeCompare(b.card.title, undefined, { sensitivity: 'base', numeric: true })).forEach((g) => {
+                        const key = `by:${scope}:${kind}:${g.card.id}`;
+                        const folded = this._kbLinkFolds.has(key);
+                        const box = el('div', { class: 'kb-links-group' }, el('div', { class: 'kb-links-ghead' },
+                            el('button', { class: 'kb-links-gname', type: 'button', title: folded ? 'Open' : 'Fold', text: `${folded ? '▸' : '▾'} ${g.card.title} (${g.items.length})`, onclick: () => {
+                                if (folded) this._kbLinkFolds.delete(key); else this._kbLinkFolds.add(key);
+                                this.renderKanbanBoard(this.kbScrollState());
+                            } })));
+                        if (!folded) box.append(...g.items.map(rowOf));
+                        sec0.append(box);
+                    });
+                    if (groups0.has('')) sec0.append(...groups0.get('').items.map(rowOf));
+                    if (!items.length) sec0.append(el('div', { class: 'kb-links-none', text: 'None yet.' }));
+                    sec0.append(adder(kind, hint, ''));
+                    view.append(sec0);
+                    return;
+                }
                 const groups = this.kbLinkGroups(kind, scope);
                 const by = new Map(groups.map(g => [g.id, []]));
                 const loose = items.filter((e) => { const id = this.kbLinkGroupOf(e.url, kind, scope); if (id) by.get(id).push(e); return !id; });
@@ -1648,7 +1714,7 @@
                     if (over) over.classList.remove('kb-link-drop');
                     if (over && ev.type === 'pointerup' && over.dataset.labelLinks) {
                         const lb = this.kbLabel(over.dataset.labelLinks);
-                        if (lb) this.kbAddLabelLink(lb, { url: entry.url, label: entry.label });
+                        if (lb) this.kbAddLabelLink(lb, { url: entry.url, label: entry.label }, fromCard && fromCard.id);
                         return;
                     }
                     if (over && ev.type === 'pointerup' && over.dataset.group !== undefined) {
@@ -3855,7 +3921,7 @@
         // version draws them).
         if (this.kanban && this.kanban.cards.length) { try { this.syncKanbanFlow(); } catch (e) { console.error('Kanban branch:', e); } }
         this._kbCardSigs = null;
-        if (this.kanban) this.kbStampCards(true);
+        if (this.kanban) { this.kbStampCards(true); this.kbShareNewLinks(true); }
         try { this.kbShowCardTab(); } catch (e) { /* drawn with the notes */ }
         if (this._kanbanMode) this.renderKanban();
         return r;
