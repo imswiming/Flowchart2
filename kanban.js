@@ -52,6 +52,22 @@
         if (/^[a-z]:[\\/]/i.test(s) || s.startsWith('\\\\') || s.startsWith('/')) return 'file:///' + s.replace(/\\/g, '/').replace(/^\/+/, '');
         return 'https://' + s.replace(/^[a-z][a-z0-9+.-]*:(\/\/)?/i, '');
     };
+    // A link's short text: its name, else the site (and what was searched for or
+    // the page), or the file's name.
+    const kbLinkText = (l) => {
+        if (String(l.label || '').trim() && l.label.trim() !== String(l.url).trim()) return kbNorm(l.label);
+        const href = kbHref(l.url);
+        const cut = s => (s.length > 60 ? s.slice(0, 57) + '...' : s);
+        const dec = (s) => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+        if (href.startsWith('file:')) return cut(String(l.url).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(l.url));
+        try {
+            const u = new URL(href);
+            const host = (u.hostname || u.pathname).replace(/^www\./, '');
+            const q = u.searchParams.get('q');
+            const last = dec(u.pathname).split('/').filter(Boolean).pop();
+            return cut(kbNorm(q ? `${host} - ${q}` : last ? `${host} - ${last}` : host));
+        } catch (e) { return cut(String(l.url)); }
+    };
     // Browsers don't let a web page open files on the computer: for a file the
     // path is copied too, to paste into File Explorer / Finder.
     const kbOpenLink = (e, u, app) => {
@@ -1740,7 +1756,7 @@
             // description and its links - above the columns, not part of any of them.
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
-            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(l.label || l.url)}</p>`); });
+            (card.links || []).forEach((l) => { parts.push(`<p>🔗 ${escHtml(kbLinkText(l))}</p>`); });
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -1924,7 +1940,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2009,11 +2025,13 @@
                 // The card's title, the rows' names, and a panel for each
                 // checklist item with what's written under it.
                 let list = [];
+                let top = true; // above the columns: the card's own links
                 const endList = () => { if (list.length) { plan.get(list[0]).push('kb-cl-first'); plan.get(list[list.length - 1]).push('kb-cl-last'); } list = []; };
                 kids.forEach((el) => {
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
-                    if (el.name === 'h4') { endList(); return; }
+                    if (el.name === 'h4') { top = false; endList(); return; }
+                    if (top && el.name === 'p' && textOf(el).startsWith('🔗')) { plan.set(el, ['kb-nc-link']); return; }
                     if (el.name === 'h6') endList(); // each item has its own panel
                     if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
                     else if (list.length) plan.set(el, ['kb-cl-box']);
@@ -2048,6 +2066,28 @@
             editor._kbCardWired = true;
             const isCardNote = () => { const r = editor._noteTabRef || editor.config.get('noteTab'); return !!(r && this.kanban && r.tabId === this.kanban.cardTabId); };
             const dom = editor.editing.view.getDomRoot();
+            // The card's links: a click opens the address, or copies a file's path.
+            const linkAt = (e) => {
+                const p = e.target && e.target.closest && e.target.closest('p.kb-nc-link');
+                return p && isCardNote() && e.button === 0 ? p : null;
+            };
+            if (dom) dom.addEventListener('mousedown', (e) => { if (linkAt(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+            if (dom) dom.addEventListener('click', (e) => {
+                const p = linkAt(e);
+                if (!p) return;
+                e.preventDefault();
+                e.stopPropagation();
+                this.kbFindCardTabCard();
+                const card = this._kbCardTabFor && this.kbCard(this._kbCardTabFor);
+                const links = (card && card.links) || [];
+                const text = kbNorm(p.textContent).replace(/^🔗\s*/, '');
+                const l = links.find(x => [kbLinkText(x), kbNorm(x.label), kbNorm(x.url)].includes(text))
+                    || links[Array.from(dom.querySelectorAll('p.kb-nc-link')).indexOf(p)];
+                if (!l) return;
+                const href = kbHref(l.url);
+                if (href.startsWith('file:')) kbOpenLink(e, l.url, this);
+                else window.open(href, '_blank', 'noopener');
+            }, true);
             // A click on an item's box ticks it: which column, and which item in it.
             if (dom) dom.addEventListener('mousedown', (e) => {
                 const h = e.target && e.target.closest && e.target.closest('h6.kb-nc-card-item');

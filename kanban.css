@@ -601,6 +601,10 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-card-item[data-done="true"]::after { left: 26.5px; top: calc(12px + 0.725em - 6px); width: 3.5px; height: 7.5px; border-width: 0 1.5px 1.5px 0; }
 :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-cl-box.note-folded-hidden { display: none !important; }
 
+/* The card's links at the top of its notes. */
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link { width: fit-content !important; max-width: 100%; color: #6cb8ff; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link:hover { filter: brightness(1.2); }
+
 /* A highlighted card, and its button. */
 .kb-card.highlighted { background: #fff7d6; box-shadow: 0 0 0 2px #e2b203; }
 .kb-card.highlighted.selected { box-shadow: 0 0 0 2px #e2b203, 0 0 0 4px var(--kb-blue); }

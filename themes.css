@@ -172,6 +172,8 @@ html.theme-paper #notes-resize-handle { border-top-color: #c9c1ae; }
 html.theme-paper :is(#notes-resize-handle, #reflection-panel-resize-handle):hover { background: rgba(111, 143, 107, 0.3); }
 html.theme-paper .notes-list-item.active { background: rgba(111, 143, 107, 0.24); }
 
+html.theme-paper :is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-nc-link { color: #2f6f9f; }
+
 /* Questions */
 html.theme-paper #reflection-panel-body { margin: 8px 8px 10px; border: 1px solid #c4ccb6; border-radius: 9px; background: #fbfaf2 var(--paper-tex); box-shadow: 0 1px 6px rgba(80, 95, 70, 0.35); }
 html.theme-paper .reflection-question { color: #7d555b; font-weight: 600; }
