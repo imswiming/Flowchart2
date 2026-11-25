@@ -83,7 +83,13 @@
     };
     // A link's short text: its name, else the site (and what was searched for or
     // the page), or the file's name.
-    const kbLinkText = (l) => {
+    // A file's type (".jpg") goes on the end of its name, if it isn't there.
+    const withType = (text, url) => {
+        const m = kbLinkIcon(url) === '📄' && /\.[a-z0-9]{1,8}$/i.exec(kbPlainUrl(url));
+        return m && !text.toLowerCase().endsWith(m[0].toLowerCase()) ? text + m[0] : text;
+    };
+    const kbLinkText = l => withType(kbLinkName(l), l.url);
+    const kbLinkName = (l) => {
         if (String(l.label || '').trim() && l.label.trim() !== String(l.url).trim()) return kbNorm(l.label);
         const href = kbHref(l.url);
         const cut = s => (s.length > 60 ? s.slice(0, 57) + '...' : s);
@@ -815,7 +821,7 @@
                     const show = () => {
                         row.innerHTML = '';
                         row.append(
-                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${l.label || kbPlainUrl(l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
+                            el('a', { class: 'kb-lk-a', href: kbHref(l.url), target: '_blank', rel: 'noopener', text: `${kbLinkIcon(l.url)} ${withType(l.label || kbPlainUrl(l.url), l.url)}`, title: l.url, onclick: (e) => { e.stopPropagation(); kbOpenLink(e, l.url, this); } }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Name this link', onclick: rename }),
                             el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Remove this link', onclick: () => { card.links = card.links.filter(x => x !== l); this.kanbanChanged(); } }));
                     };
@@ -1270,7 +1276,7 @@
                     row.append(
                         el('span', { class: 'kb-links-grip', text: '⠿' }),
                         el('span', { class: 'kb-links-icon', text: kbLinkIcon(e.url) }),
-                        el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: e.label || kbPlainUrl(e.url), onclick: (ev) => kbOpenLink(ev, e.url, this) }),
+                        el('a', { class: 'kb-links-a', href: kbHref(e.url), target: '_blank', rel: 'noopener', draggable: 'false', text: withType(e.label || kbPlainUrl(e.url), e.url), onclick: (ev) => kbOpenLink(ev, e.url, this) }),
                         e.cards.length ? el('span', { class: 'kb-links-n', text: String(e.cards.length), title: `On ${e.cards.length} card${e.cards.length === 1 ? '' : 's'}` }) : '',
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✎', title: 'Rename it (here and on every card)', onclick: rename }),
                         el('button', { class: 'kb-lk-btn', type: 'button', text: '✕', title: 'Delete this link', onclick: async () => {
