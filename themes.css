@@ -82,10 +82,6 @@ html.theme-paper .kb-chip-btn.on { border-color: #262622; }
 /* Bottom buttons */
 html.theme-paper .reset-view-btn { background: #ece6d8 !important; border-color: #d0c7b2 !important; color: #262622 !important; box-shadow: 0 1px 2px rgba(90, 75, 45, 0.25); }
 html.theme-paper .reset-view-btn:hover { filter: brightness(0.96); }
-html.theme-paper :is(#orientation-btn, #arrangement-btn, #gantt-btn, #kanban-btn) { background: #dec89d !important; border-color: #c8b083 !important; }
-html.theme-paper :is(#export-btn, #import-btn) { background: #b2bf99 !important; border-color: #9aa981 !important; }
-html.theme-paper #share-btn { background: #6f9164 !important; border-color: #5b7b51 !important; color: #fff !important; }
-html.theme-paper #event-btn { background: #a84a2d !important; border-color: #8c3a21 !important; color: #fff !important; }
 
 html.theme-paper :is(#top-share-btn, #share-btn, #hamburger-share) { filter: none; }
 
