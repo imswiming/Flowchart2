@@ -497,9 +497,56 @@
                 if (m.role !== 'owner' && !this._joiningShareId) this.showNotification(`"${title}" was shared with you - it's in 📂 Open.`, 5000);
             }
             if (changed) {
+                this.dropOwnedShareTwins();
                 this.tidySharedTitles();
                 this.saveFlowchartList();
                 this.updateShareBanner();
+            }
+        },
+
+        // When one of your devices turns a flowchart into a shared one, the plain
+        // copy of it on your other devices is now out of date and no longer synced
+        // (edits to it would go nowhere). Once the shared one has turned up there,
+        // the plain copy goes - unless it holds changes made on this device that the
+        // shared flowchart doesn't have, in which case it's kept under a new name.
+        dropOwnedShareTwins() {
+            const base = this.loadSyncBase() || [];
+            const key = (data) => {
+                const stripped = this.stripImagesFromDataString(data || '').stripped;
+                try { return JSON.stringify(JSON.parse(stripped).tree || null); } catch (e) { return stripped; }
+            };
+            let changed = false;
+            this.sharedItems().filter(i => i.share.role === 'owner').forEach((shared) => {
+                const twin = this.flowchartList.find(i => i && !i.share && i.title === shared.share.title);
+                if (!twin) return;
+                const twinKey = key(twin.data);
+                const baseItem = base.find(b => b.title === twin.title);
+                if (twinKey === key(shared.data) || (baseItem && twinKey === key(baseItem.data))) {
+                    this.removeListItem(this.flowchartList.indexOf(twin));
+                } else {
+                    twin.title = this.uniqueTitle(`${twin.title} (before sharing)`, twin);
+                }
+                changed = true;
+            });
+            return changed;
+        },
+
+        // Before the account's flowchart list is merged: pick up the flowcharts the
+        // account shares (so a plain copy that was turned into a shared one elsewhere
+        // is replaced by it now, rather than being merged back in and pushed to every
+        // other device as a duplicate that doesn't share).
+        async syncSharesBeforeMerge() {
+            if (!this._cloudAuth || !this.cloudProjectUrl) return;
+            const conn = this.shareConn(this.cloudProjectUrl);
+            if (!conn || conn.kind !== 'main') return;
+            try {
+                await this.discoverShares(conn);
+                if (this.dropOwnedShareTwins()) {
+                    this.tidySharedTitles();
+                    this.saveFlowchartList();
+                }
+            } catch (err) {
+                console.error('Checking shared flowcharts before a sync failed:', err);
             }
         },
 
@@ -812,6 +859,12 @@
                         btn.disabled = false;
                     }
                 });
+                if (!this._cloudAuth) {
+                    pop.append(
+                        el('p', { class: 'cs-note', text: 'You\'re not signed in with your email on this device. Sign in first and this flowchart shows up on all your own devices after you share it; otherwise only this device will have it (your other devices would each need a link).' }),
+                        el('div', { class: 'cs-row' }, el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Sign in with email first',
+                            onclick: () => { this.closeSharePanel(); this.showCloudSyncPopup(); } })));
+                }
                 pop.append(
                     el('p', { class: 'cs-text', text: 'Invite people to this flowchart with a code. They see and work on this flowchart and its own notes only - never your global notes or your other flowcharts.' }),
                     el('label', { class: 'cs-label', text: 'Your name (shown on what you add and change)' }),
@@ -828,7 +881,15 @@
             const conn = this.shareConnOf(item);
             pop.append(el('div', { class: 'cs-title', text: `👥 Manage access - "${item.title}"` }));
             if (conn && conn.isAnon) {
-                pop.append(el('p', { class: 'cs-note', text: 'You\'re sharing from this device without an email. To open and manage it from your other devices too, make an invite set to "Can manage" and enter that code on each one.' }));
+                // Shared without an email, so nothing ties it to the person's other
+                // devices. Signing in with an email on this device fixes that at once:
+                // the flowchart is handed to the email account, and every device signed
+                // in with the same email then shows it by itself.
+                pop.append(
+                    el('p', { class: 'cs-note', text: 'This flowchart was shared from a device that isn\'t signed in with your email, so it only shows up here. Sign in with your email on this device and it appears on every other device you sign in on - no link or code needed.' }),
+                    el('div', { class: 'cs-row' }, el('button', { class: 'cs-btn cs-primary', type: 'button', text: 'Sign in with email',
+                        onclick: () => { this.closeSharePanel(); this.showCloudSyncPopup(); } })),
+                    el('p', { class: 'cs-text cs-small cs-muted', text: 'Or, without an email: make an invite set to "Can manage" below and enter that code on each device.' }));
             }
 
             // New invite

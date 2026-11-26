@@ -1797,6 +1797,9 @@ class FlowchartViewer {
         this.startCloudPolling();
         this.updateCloudAuthUI();
         this.cloudAuthStatus('Signed in. Syncing...');
+        // Flowcharts this device shared before it had an email are handed to the
+        // account now, and the account's own shared flowcharts are picked up.
+        if (typeof this.pollShares === 'function') setTimeout(() => this.pollShares(true), 1500);
         this.cloudPull().then(() => this.cloudPush()).then((ok) => {
             this.cloudAuthStatus(ok ? 'Signed in and synced.' : 'Signed in, but the first sync failed - see the setup notes under Advanced.', !ok);
         });
@@ -2301,6 +2304,7 @@ class FlowchartViewer {
                     // Without a record of what the cloud held at the last sync (the
                     // first sync after this was added), a flowchart that's only on this
                     // device can't be told apart from one deleted elsewhere, so ask.
+                    if (typeof this.syncSharesBeforeMerge === 'function') await this.syncSharesBeforeMerge();
                     const base = this.loadSyncBase();
                     let keepLocalOnly = true;
                     if (!base) {
