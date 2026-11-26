@@ -758,6 +758,7 @@ class FlowchartViewer {
         this._cloudSyncInFlight = false;
         this._applyingRemote = false;
         this.setupCloudSync();
+        this.setupNotesTablePlus();
         // Coming back from the link in the sign-in email.
         this.handleAuthRedirect().catch(err => console.error('Sign-in link failed:', err));
 
@@ -7414,6 +7415,92 @@ class FlowchartViewer {
         if (!editor.commands.get('insertTable')) { this.showNotification('Tables are not available in this version of the notes editor.'); return; }
         editor.execute('insertTable', { rows: 3, columns: 3 });
         editor.editing.view.focus();
+    }
+
+    // A round + at the right edge of a table in the notes (adds a column at the end) and
+    // at its bottom edge (adds a row at the end). They show while the mouse is over the
+    // table, or the cursor is in it (so on a phone too).
+    setupNotesTablePlus() {
+        if (this._tablePlusReady) return;
+        this._tablePlusReady = true;
+        let current = null;
+        let timer = null;
+        const make = (title, onClick) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'notes-table-plus';
+            b.textContent = '+';
+            b.title = title;
+            b.setAttribute('aria-label', title);
+            b.style.cssText = 'position:fixed;display:none;z-index:2500;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.55);background:#0c66e4;color:#fff;font:700 16px/1 Arial,sans-serif;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.35);';
+            b.addEventListener('mousedown', e => e.preventDefault());
+            b.addEventListener('click', (e) => { e.preventDefault(); onClick(); });
+            b.addEventListener('mouseenter', () => clearTimeout(timer));
+            b.addEventListener('mouseleave', () => hideSoon());
+            document.body.appendChild(b);
+            return b;
+        };
+        const editorFor = el => (this.getAllNotesEditors() || []).find((ed) => {
+            try { const r = ed.editing.view.getDomRoot(); return !!(r && r.contains(el)); } catch (err) { return false; }
+        });
+        const modelTable = (ed, figure) => {
+            const v = ed.editing.view.domConverter.domToView(figure);
+            return v ? ed.editing.mapper.toModelElement(v) : null;
+        };
+        const add = (command, column) => {
+            if (!current || !document.contains(current.figure)) return;
+            const ed = current.editor;
+            const table = modelTable(ed, current.figure);
+            if (!table) return;
+            const rows = Array.from(table.getChildren()).filter(c => c.is('element', 'tableRow'));
+            if (!rows.length) return;
+            // A column is added after the last one, a row after the last one: the cursor
+            // goes into the cell the command works from.
+            const cells = r => Array.from(r.getChildren()).filter(c => c.is('element', 'tableCell'));
+            const cell = column ? cells(rows[0]).pop() : cells(rows[rows.length - 1])[0];
+            if (!cell) return;
+            ed.model.change(w => w.setSelection(w.createPositionAt(cell.getChild(0) || cell, 'end')));
+            ed.execute(command);
+            ed.editing.view.focus();
+            setTimeout(place, 60);
+        };
+        const colBtn = make('Add a column at the end', () => add('insertTableColumnRight', true));
+        const rowBtn = make('Add a row at the end', () => add('insertTableRowBelow', false));
+        const hide = () => { current = null; colBtn.style.display = rowBtn.style.display = 'none'; };
+        const hideSoon = () => { clearTimeout(timer); timer = setTimeout(hide, 350); };
+        const place = () => {
+            if (!current || !document.contains(current.figure)) { hide(); return; }
+            const t = (current.figure.querySelector('table') || current.figure).getBoundingClientRect();
+            if (t.bottom < 0 || t.top > window.innerHeight || !t.width) { hide(); return; }
+            colBtn.style.display = rowBtn.style.display = 'block';
+            colBtn.style.left = Math.min(t.right + 4, window.innerWidth - 26) + 'px';
+            colBtn.style.top = Math.max(0, t.top + t.height / 2 - 11) + 'px';
+            rowBtn.style.left = Math.max(0, t.left + t.width / 2 - 11) + 'px';
+            rowBtn.style.top = Math.min(t.bottom + 4, window.innerHeight - 26) + 'px';
+        };
+        const show = (figure) => {
+            const ed = figure && editorFor(figure);
+            if (!ed) return false;
+            clearTimeout(timer);
+            current = { figure, editor: ed };
+            place();
+            return true;
+        };
+        document.addEventListener('mousemove', (e) => {
+            const t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('.notes-table-plus')) return;
+            const fig = t.closest('.ck-content figure.table');
+            if (fig) show(fig); else if (current) hideSoon();
+        });
+        document.addEventListener('selectionchange', () => {
+            const n = document.getSelection && document.getSelection().anchorNode;
+            const el = n && (n.nodeType === 1 ? n : n.parentElement);
+            const fig = el && el.closest && el.closest('.ck-content figure.table');
+            if (fig) show(fig);
+        });
+        document.addEventListener('scroll', () => { if (current) place(); }, true);
+        window.addEventListener('resize', () => { if (current) place(); });
     }
 
     // The Table button: a new table when the cursor is outside one, otherwise what can
