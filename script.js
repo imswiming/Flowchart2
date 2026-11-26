@@ -683,6 +683,7 @@ class FlowchartViewer {
         this.undoBtn = document.getElementById('undo-btn');
         this.redoBtn = document.getElementById('redo-btn');
         this.exportBtn = document.getElementById('export-btn');
+        this.exportChartBtn = document.getElementById('export-chart-btn');
         this.importBtn = document.getElementById('import-btn');
         this.exportPopup = document.getElementById('export-popup');
         this.exportTextarea = document.getElementById('export-textarea');
@@ -1036,6 +1037,7 @@ class FlowchartViewer {
         this.undoBtn.addEventListener('click', () => this.undo());
         this.redoBtn.addEventListener('click', () => this.redo());
         this.exportBtn.addEventListener('click', () => this.showExportPopup());
+        if (this.exportChartBtn) this.exportChartBtn.addEventListener('click', () => this.showExportPopup('chart'));
         this.closeExportBtn.addEventListener('click', () => this.exportPopup.style.display = 'none');
         this.importBtn.addEventListener('click', () => this.showImportPopup());
         this.closeImportBtn.addEventListener('click', () => this.importPopup.style.display = 'none');
@@ -12855,6 +12857,38 @@ class FlowchartViewer {
         }, null, 2);
     }
 
+    // Just the flowchart that's open: its tree, notes, pictures, drawings, Pugh and
+    // Morph matrices, Gantt, Kanban board, criteria and events - all of it is part of
+    // the flowchart's own saved data. (The global notes and the other flowcharts
+    // are Export All.) Imports like any export.
+    exportChartAsJSON() {
+        this.saveCurrentFlowchart();
+        const item = this.flowchartList[this.currentSlotIndex];
+        if (!item) return this.exportAllAsJSON();
+        return JSON.stringify({
+            app: 'flowchart-editor',
+            version: 2,
+            scope: 'chart',
+            exportedAt: new Date().toISOString(),
+            flowcharts: [{ title: item.title, data: item.data }]
+        }, null, 2);
+    }
+
+    // A flowchart that hasn't been opened since the app started holds small
+    // "@img:<hash>" references in place of its pictures and drawings; they are put
+    // back from this device's picture store (or the cloud / the share) so an export
+    // carries the real thing. `only`: just that flowchart.
+    async fillPicturesForExport(only) {
+        const missing = [];
+        this.flowchartList.forEach((it, i) => {
+            if ((only === undefined || it === only) && /"@img:/.test(it.data || '')) missing.push(i);
+        });
+        for (const i of missing) {
+            try { await this.rehydrateFlowchartImages(i); } catch (e) { console.error('Pictures for the export:', e); }
+        }
+        return this.flowchartList.reduce((n, it) => n + (/"@img:/.test(it.data || '') ? 1 : 0), 0);
+    }
+
     // Adds the global notes from an export to this device's: notes that aren't here yet
     // are added, a note with the same id but different text is kept alongside as a
     // copy ("(imported)"), and any drawings/pictures that are missing are added.
@@ -13236,13 +13270,30 @@ class FlowchartViewer {
 
     // ===== END AI IMPORT/EXPORT =====
 
-    showExportPopup() {
+    // scope 'chart': only the open flowchart; otherwise everything (Export All).
+    showExportPopup(scope) {
+        const chartOnly = scope === 'chart' && this.currentSlotIndex !== null && !!this.flowchartList[this.currentSlotIndex];
+        this._exportScope = chartOnly ? 'chart' : 'all';
         // Always snapshot current state before exporting
         this.saveCurrentFlowchart();
-        this.exportTextarea.value = this.exportAllAsJSON();
+        const title = this.exportPopup.firstElementChild;
+        if (title) title.textContent = chartOnly ? `Exported flowchart: ${this.flowchartList[this.currentSlotIndex].title}` : 'Exported Flowcharts';
+        const make = () => (chartOnly ? this.exportChartAsJSON() : this.exportAllAsJSON());
+        this.exportTextarea.value = make();
         this.exportPopup.style.display = 'block';
         this.exportTextarea.select();
-        
+        // Pictures of flowcharts not opened yet are fetched and the text filled in again.
+        const seq = this._exportSeq = (this._exportSeq || 0) + 1;
+        const open = chartOnly ? this.flowchartList[this.currentSlotIndex] : undefined;
+        if (this.flowchartList.some(it => (open === undefined || it === open) && /"@img:/.test(it.data || ''))) {
+            this.exportTextarea.value = 'Collecting the pictures...\n\n' + this.exportTextarea.value;
+            this.fillPicturesForExport(open).then((left) => {
+                if (seq !== this._exportSeq || this.exportPopup.style.display === 'none') return;
+                this.exportTextarea.value = make();
+                if (left) this.showNotification(`${left} flowchart${left === 1 ? ' has' : 's have'} pictures that couldn't be fetched - they're in the export as references only.`, 6000);
+            });
+        }
+
         if (!document.getElementById('open-file-export-btn')) {
             const buttonContainer = this.exportPopup.querySelector('div:last-child');
             const openFileBtn = document.createElement('button');
@@ -13292,7 +13343,8 @@ class FlowchartViewer {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'flowcharts.txt';
+        const one = this._exportScope === 'chart' && this.flowchartList[this.currentSlotIndex];
+        a.download = one ? `${String(one.title).replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'flowchart'}.txt` : 'flowcharts.txt';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
