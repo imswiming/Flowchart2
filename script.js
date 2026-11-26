@@ -593,6 +593,7 @@ const NOTES_ICONS = (() => {
         undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
         redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'),
         drawing: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.3-.9-.5-1.3-.3-.4-.4-.8-.4-1.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10.5" cy="7" r="1"/><circle cx="15.5" cy="7.5" r="1"/>'),
+        table: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/>'),
         checklist: svg('<rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L8 6"/><path d="M13 7h8"/><rect x="3" y="14" width="6" height="6" rx="1"/><path d="M13 17h8"/>'),
         clearDone: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>'),
         title: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
@@ -7398,6 +7399,63 @@ class FlowchartViewer {
     // instance, so each copy can live in its own place in the DOM; every copy's
     // buttons act on getActiveNotesTarget() (see the toggle functions), so it
     // doesn't matter which copy the person actually clicked.
+    // Tables in notes: the editor's table plugins (rows and columns are added or
+    // removed from the little toolbar that shows over a table, columns are dragged to
+    // resize, a cell can be coloured). A table is saved in the note's HTML like
+    // everything else, so it travels with exports, sharing and sync.
+    getNoteTablePlugins() {
+        const C = window.CKEDITOR || {};
+        return [C.Table, C.TableToolbar, C.TableColumnResize, C.TableCellProperties].filter(Boolean);
+    }
+
+    insertNotesTable() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        if (!editor.commands.get('insertTable')) { this.showNotification('Tables are not available in this version of the notes editor.'); return; }
+        editor.execute('insertTable', { rows: 3, columns: 3 });
+        editor.editing.view.focus();
+    }
+
+    // The Table button: a new table when the cursor is outside one, otherwise what can
+    // be done to the table the cursor is in.
+    openNotesTableMenu() {
+        const { editor } = this.getActiveNotesTarget();
+        if (!editor) return;
+        const sel = editor.model.document.selection;
+        const pos = sel.getFirstPosition();
+        const picked = sel.getSelectedElement();
+        const table = (picked && picked.is('element', 'table') && picked) || (pos && pos.findAncestor('table'));
+        if (!table) { this.insertNotesTable(); return; }
+        this.dismissNotesKeyboard();
+        const ops = [
+            ['Add a row above', 'insertTableRowAbove'],
+            ['Add a row below', 'insertTableRowBelow'],
+            ['Add a column to the left', 'insertTableColumnLeft'],
+            ['Add a column to the right', 'insertTableColumnRight'],
+            ['Delete this row', 'removeTableRow'],
+            ['Delete this column', 'removeTableColumn'],
+            ['Merge the selected cells', 'mergeTableCells'],
+            ['Split this cell in two (down)', 'splitTableCellVertically'],
+            ['Split this cell in two (across)', 'splitTableCellHorizontally'],
+            ['Top row is a heading (on / off)', 'setTableRowHeader'],
+            ['Left column is a heading (on / off)', 'setTableColumnHeader'],
+        ].filter(([, name]) => { const c = editor.commands.get(name); return c && c.isEnabled; });
+        this.showNotesListPopup(({ close }) => ({
+            title: 'Table',
+            emptyText: '',
+            items: ops.map(([label, name]) => ({
+                label,
+                sub: '',
+                onClick: () => { close(); editor.execute(name); editor.editing.view.focus(); }
+            })).concat([{
+                label: 'Delete the whole table',
+                sub: '',
+                onClick: () => { close(); editor.model.change(w => w.remove(table)); editor.editing.view.focus(); }
+            }]),
+            footer: []
+        }));
+    }
+
     buildNotesToolbar() {
         const row = document.createElement('div');
         row.className = 'notes-toolbar-row';
@@ -7455,6 +7513,7 @@ class FlowchartViewer {
         row.appendChild(makeBtn('search', 'Search this note', 'notes-search-btn', () => this.openNotesSearch()));
         row.appendChild(makeBtn('checklist', 'Checklist - turn the selected (or current) lines into a checklist', 'nt-checklist', () => this.toggleNotesChecklist()));
         row.appendChild(makeBtn('clearDone', 'Remove all checked (crossed-out) checklist lines in this note', '', () => this.removeCheckedChecklistLines()));
+        row.appendChild(makeBtn('table', 'Table - insert a 3 x 3 table here; with the cursor in a table: add or delete rows and columns, merge cells (drag a column edge to resize)', 'nt-table', () => this.openNotesTableMenu()));
         row.appendChild(makeBtn('title', 'Title - click once for a title, twice for a subheading, three times for normal text', 'nt-title', () => this.toggleNotesTitle()));
         row.appendChild(makeBtn('subtitle', 'Subtitle - turn the selected (or current) lines into a subheading, or back to normal text', 'nt-subtitle', () => this.toggleNotesSubtitle()));
         row.appendChild(makeBtn('highlight', 'Highlight the selected text in yellow', 'nt-highlight', () => this.toggleNotesHighlight()));
@@ -7723,7 +7782,9 @@ class FlowchartViewer {
             if (entry.dead) return null;
             return DecoupledEditor.create(host, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()].filter(Boolean),
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin(), ...this.getNoteTablePlugins()].filter(Boolean),
+            // The little toolbar over a table (rows, columns, merge cells, cell colours).
+            table: { contentToolbar: ['tableRow', 'tableColumn', 'mergeTableCells', 'tableCellProperties'] },
             noteMediaMarkerApp: this,
             // Only paragraph/heading4 ("Title") are offered - matches the old
             // Tiptap config (StarterKit's heading restricted to level 4 only).
@@ -7773,6 +7834,9 @@ class FlowchartViewer {
             // next, which is what "the caret disappears" actually was.
             editor.editing.view.document.on('keydown', (evt, data) => {
                 if (data.domEvent.key === 'Tab') {
+                    // In a table Tab / Shift+Tab move between cells (the editor's own).
+                    const at = editor.model.document.selection.getFirstPosition();
+                    if (at && at.findAncestor('tableCell')) return;
                     data.preventDefault();
                     evt.stop();
                     if (data.domEvent.shiftKey) {
@@ -10791,7 +10855,9 @@ class FlowchartViewer {
         const { DecoupledEditor, Essentials, Paragraph, Heading, List, TodoList, Highlight } = window.CKEDITOR;
         DecoupledEditor.create(editorEl, {
             licenseKey: 'GPL',
-            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin()].filter(Boolean),
+            plugins: [Essentials, Paragraph, Heading, List, TodoList, Highlight, window.CKEDITOR.FindAndReplaceEditing, this.getNoteMediaMarkerPlugin(), this.getNoteTitleFoldPlugin(), this.getNoteStampPlugin(), ...this.getNoteTablePlugins()].filter(Boolean),
+            // The little toolbar over a table (rows, columns, merge cells, cell colours).
+            table: { contentToolbar: ['tableRow', 'tableColumn', 'mergeTableCells', 'tableCellProperties'] },
             noteMediaMarkerApp: this,
             heading: {
                 options: [
