@@ -8137,6 +8137,49 @@ class FlowchartViewer {
                 editor.once('ready', refreshDefault);
                 editor._noteRefreshDefault = refreshDefault;
 
+                // "Assumption:" at the start of a line (what the flowchart's assumption nodes
+                // become in the notes) is shown in red. On-screen-only markers again, so
+                // nothing about it is saved in the note.
+                editor.conversion.for('editingDowncast').markerToHighlight({
+                    model: 'noteAssumption',
+                    view: { classes: 'note-assumption-word', priority: 1 },
+                });
+                const refreshAssumption = () => {
+                    if (editor.state === 'destroyed') return;
+                    const model = editor.model;
+                    const root = model.document.getRoot();
+                    if (!root) return;
+                    const stale = Array.from(model.markers).filter(m => m.name.startsWith('noteAssumption:'));
+                    const found = [];
+                    for (const item of model.createRangeIn(root).getItems()) {
+                        if (!item.is('element') || !/^(paragraph|heading\d)$/.test(item.name)) continue;
+                        let text = '';
+                        let plain = true;
+                        for (const ch of item.getChildren()) {
+                            if (ch.is('$text')) text += ch.data; else { plain = false; break; }
+                        }
+                        const m = plain && /^[^\p{L}\p{N}]*(Assumption:)/u.exec(text);
+                        if (m) found.push([item, m.index + m[0].length - m[1].length, m.index + m[0].length]);
+                    }
+                    if (!found.length && !stale.length) return;
+                    model.change((writer) => {
+                        stale.forEach(m => writer.removeMarker(m));
+                        found.forEach(([block, from, to], i) => {
+                            writer.addMarker('noteAssumption:' + i, {
+                                range: writer.createRange(writer.createPositionAt(block, from), writer.createPositionAt(block, to)),
+                                usingOperation: false, affectsData: false
+                            });
+                        });
+                    });
+                };
+                let assumptionTimer = null;
+                editor.model.document.on('change:data', () => {
+                    clearTimeout(assumptionTimer);
+                    assumptionTimer = setTimeout(refreshAssumption, 120);
+                }, { priority: 'low' });
+                editor.once('ready', refreshAssumption);
+                editor._noteRefreshAssumption = refreshAssumption;
+
                 // Comments made by the previous version were also given a green highlight;
                 // take that off (comments are not coloured). Colours picked from the old
                 // colour bar have a colour on their entry and are left alone.

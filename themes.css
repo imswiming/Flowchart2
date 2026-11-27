@@ -290,3 +290,4 @@ html.theme-paper #notes-tab-bar .matrix-tab.active .matrix-tab-delete-btn { colo
     html.theme-paper #node-tools-strip .nts-btn { border-color: #cfc4a9; }
     html.theme-paper html, html.theme-paper body, html.theme-paper .container { background: #fbfaf2 !important; }
 }
+html.theme-paper .ck.ck-content .note-assumption-word { color: #c8283a; }

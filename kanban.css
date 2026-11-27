@@ -689,3 +689,7 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
     .kb-photos { position: absolute; right: 0; top: 0; bottom: 0; width: 230px; margin: 0; z-index: 5; box-shadow: -4px 0 16px rgba(9, 30, 66, 0.2); }
     .kb-photos-strip { display: none; }
 }
+
+/* Phone only: the 📝 on a card opens that card's note. */
+.kb-card-note-m { display: none; }
+@media (max-width: 900px) { .kb-card-note-m { display: inline-block; } }

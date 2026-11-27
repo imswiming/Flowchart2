@@ -1981,6 +1981,9 @@
                     // Highlights the card (shown on the selected card, and on highlighted ones).
                     el('button', { class: 'kb-card-flow kb-hl-btn', type: 'button', text: '🖍', title: card.highlight ? 'Remove the highlight' : 'Highlight this card',
                         onclick: (e) => { e.stopPropagation(); card.highlight = !card.highlight; this.kanbanChanged(); } }),
+                    // Phone only: the card's notes, opened and focused on this card.
+                    el('button', { class: 'kb-card-flow kb-card-note-m', type: 'button', text: '📝', title: 'Edit the note of this card',
+                        onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKbCardNotes(card.id, { focus: true, force: true }); } }),
                     // Opens the card's details.
                     el('button', { class: 'kb-card-flow', type: 'button', text: '✎', title: 'Edit card',
                         onclick: (e) => { e.stopPropagation(); this._kbSelected = card.id; this.openKanbanCard(card.id); } }),
@@ -2614,7 +2617,7 @@
                     if (next && next.is('element') && !/^heading[456]$/.test(next.name)) {
                         try { editor.model.change(w => w.setSelection(w.createPositionAt(next, 0))); } catch (e) { /* not a text block */ }
                     }
-                    if (opts && opts.focus && !window.matchMedia('(pointer: coarse)').matches) {
+                    if (opts && opts.focus && (opts.force || !window.matchMedia('(pointer: coarse)').matches)) {
                         try { editor.editing.view.focus(); } catch (e) { /* not on screen */ }
                     }
                 };
@@ -2958,8 +2961,11 @@
                 let half = 0;
                 try { half = textEl ? textEl.getBBox().width / 2 : 0; } catch (e) { /* not on screen */ }
                 const left = +rect.getAttribute('x') + 6;
-                const shift = Math.max(10, left + 20 + half);
-                const x = half ? Math.max(left, Math.min(10, shift) - half - 20) : left;
+                const right = +rect.getAttribute('x') + (+rect.getAttribute('width')) - 6;
+                // Box, gap and text centred together; the box stays inside the node's left
+                // edge and the text inside its right edge (a long item fills the node).
+                const x = half ? Math.max(left, -(20 + 2 * half) / 2) : left;
+                const textX = half ? Math.min(x + 20 + half, right - half) : 10;
                 const y = +rect.getAttribute('y') + (+rect.getAttribute('height')) / 2 - 7;
                 const g = d3.select(this).append('g').attr('class', 'kb-ck-box').style('cursor', 'pointer');
                 g.append('title').text(item.done ? 'Done - untick' : 'Tick off');
@@ -2968,7 +2974,7 @@
                 if (item.done) g.append('path').attr('d', `M${x + 3},${y + 7.5} l3,3 l5,-6`).attr('fill', 'none').attr('stroke', '#fff').attr('stroke-width', 2).attr('stroke-linecap', 'round');
                 g.on('mousedown', ev => ev.stopPropagation()).on('dblclick', ev => ev.stopPropagation())
                     .on('click', (ev) => { ev.stopPropagation(); app.kbToggleItem(id.slice(3)); });
-                d3.select(this).select('text').attr('transform', `translate(${half ? Math.max(0, x + 20 + half) : 10},0)`).style('text-decoration', item.done ? 'line-through' : null);
+                d3.select(this).select('text').attr('transform', `translate(${textX},0)`).style('text-decoration', item.done ? 'line-through' : null);
             });
         },
 
@@ -3372,7 +3378,7 @@
                     }
                     const liveItems = card.checklist.filter(it => it.text.trim());
                     const itemNodes = reconcile(n, liveItems.map(it => Object.assign({ id: `ck:${it.id}` }, itemNode(it, card))));
-                    itemNodes.forEach((inode, j) => syncBullets(inode, liveItems[j].note ? kbBulletTree(kbNoteDoc(liveItems[j].note)) : [], liveItems[j].id, '', inode.color));
+                    itemNodes.forEach((inode, j) => syncBullets(inode, liveItems[j].note ? kbBulletTree(kbNoteDoc(liveItems[j].note)) : [], liveItems[j].id, '', n.color));
                     // Whatever is built under a card takes the card node's colour. The
                     // checklist items were coloured above (green once ticked), so this is
                     // for the hand-made nodes in between and below them.

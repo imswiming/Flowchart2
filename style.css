@@ -4114,3 +4114,6 @@ body.gantt-mode #flowchart {
 
 /* Taps act straight away (no wait for a possible double-tap zoom). */
 html { touch-action: manipulation; }
+
+/* "Assumption:" at the start of a note line is red (see the notes editor's NoteStamp plugin). */
+.ck.ck-content .note-assumption-word { color: #e5384a; }
