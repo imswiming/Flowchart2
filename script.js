@@ -1,3 +1,144 @@
+// ===== Big saved data lives in IndexedDB, not localStorage =====
+// A browser gives localStorage only about 5 MB in total (less on some phones), and
+// the flowchart list, the notes and the copies kept for merging between devices
+// together outgrew it: "failed to execute setItem on storage" / "storage limit
+// reached" - and sync stopped. IndexedDB has far more room. This swaps in, for just
+// the keys below, a store that behaves exactly like localStorage to the rest of the
+// app (getItem / setItem / removeItem, read straight from memory) but saves to
+// IndexedDB. What a device already holds in localStorage is moved across (and taken
+// out of localStorage, freeing the space) the first time it starts. If IndexedDB
+// isn't available, nothing changes. Every other key is untouched, except that a
+// full localStorage no longer throws errors in the middle of a sync.
+const BigStore = (() => {
+    const KEYS = new Set([
+        'flowchart-list', 'cloud-sync-base-list', 'flowchart-notes-bases', 'flowchart-share-sync',
+        'flowchart-global-notes-media', 'flowchart-global-notes-media-base', 'flowchart-global-notes-base',
+        'flowchart-global-notes-tabs', 'flowchart-branch-clipboard'
+    ]);
+    const mem = new Map();
+    const pending = new Map();
+    let db = null;
+    let ready = false;
+    let timer = null;
+    const ls = window.localStorage;
+    const rawGet = Storage.prototype.getItem;
+    const rawSet = Storage.prototype.setItem;
+    const rawRemove = Storage.prototype.removeItem;
+    const isQuota = (err) => !!err && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED' || err.code === 22 || err.code === 1014);
+
+    const openDb = () => new Promise((resolve) => {
+        if (!window.indexedDB) { resolve(null); return; }
+        try {
+            const req = indexedDB.open('flowchart-kv', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('kv');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve(null);
+            req.onblocked = () => resolve(null);
+        } catch (err) {
+            resolve(null);
+        }
+    });
+
+    const readAll = () => new Promise((resolve) => {
+        const out = {};
+        try {
+            const tx = db.transaction('kv', 'readonly');
+            const req = tx.objectStore('kv').openCursor();
+            req.onsuccess = () => {
+                const c = req.result;
+                if (c) { out[c.key] = c.value; c.continue(); }
+            };
+            tx.oncomplete = () => resolve(out);
+            tx.onerror = () => resolve(out);
+            tx.onabort = () => resolve(out);
+        } catch (err) {
+            resolve(out);
+        }
+    });
+
+    const flush = () => {
+        timer = null;
+        if (!db || pending.size === 0) return;
+        const batch = new Map(pending);
+        pending.clear();
+        const fallback = () => batch.forEach((v, k) => {
+            // IndexedDB refused: keep it in localStorage as before rather than lose it.
+            try { if (v === null) rawRemove.call(ls, k); else rawSet.call(ls, k, v); } catch (err) { storageFull(k); }
+        });
+        try {
+            const tx = db.transaction('kv', 'readwrite');
+            const st = tx.objectStore('kv');
+            batch.forEach((v, k) => { if (v === null) st.delete(k); else st.put(v, k); });
+            tx.onerror = fallback;
+            tx.onabort = fallback;
+        } catch (err) {
+            fallback();
+        }
+    };
+    const persist = (k, v) => {
+        pending.set(k, v);
+        if (!timer) timer = setTimeout(flush, 120);
+    };
+    const storageFull = (k) => {
+        console.error('Browser storage is full (could not save ' + k + ').');
+        try { window.dispatchEvent(new CustomEvent('flowchart-storage-full', { detail: k })); } catch (e) { /* ignore */ }
+    };
+
+    Storage.prototype.getItem = function (k) {
+        if (this === ls && ready && KEYS.has(k)) return mem.has(k) ? mem.get(k) : null;
+        return rawGet.call(this, k);
+    };
+    Storage.prototype.setItem = function (k, v) {
+        if (this === ls && ready && KEYS.has(k)) {
+            const str = String(v);
+            mem.set(k, str);
+            persist(k, str);
+            return;
+        }
+        try {
+            return rawSet.call(this, k, v);
+        } catch (err) {
+            if (this === ls && isQuota(err)) { storageFull(k); return; }
+            throw err;
+        }
+    };
+    Storage.prototype.removeItem = function (k) {
+        if (this === ls && ready && KEYS.has(k)) {
+            mem.delete(k);
+            persist(k, null);
+        }
+        return rawRemove.call(this, k);
+    };
+
+    const init = async () => {
+        try {
+            db = await openDb();
+            if (!db) return;
+            const all = await readAll();
+            Object.keys(all).forEach(k => { if (typeof all[k] === 'string') mem.set(k, all[k]); });
+            // Whatever localStorage still holds for these keys is the newest write
+            // (an older cached copy of the app may have written it) - it wins, and
+            // moves across.
+            KEYS.forEach((k) => {
+                let v = null;
+                try { v = rawGet.call(ls, k); } catch (err) { /* unreadable */ }
+                if (v !== null) {
+                    mem.set(k, v);
+                    persist(k, v);
+                    try { rawRemove.call(ls, k); } catch (err) { /* ignore */ }
+                }
+            });
+            ready = true;
+            flush();
+            document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+            window.addEventListener('pagehide', flush);
+        } catch (err) {
+            console.error('Could not set up the saved-data store:', err);
+        }
+    };
+    return { init };
+})();
+
 // Three-way merge for Notes, so devices that edited the same note (at the same
 // time, or one long after the other) combine their changes instead of one
 // whole version overwriting the other. Given the last version both sides
@@ -920,6 +1061,7 @@ class FlowchartViewer {
         window.addEventListener('pagehide', flushNotes);
         this.calibrateNotesLineWidth();
         if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this.calibrateNotesLineWidth());
+        window.addEventListener('flowchart-storage-full', () => this.handleStorageFull());
         this.setupKeyboardTracking();
         window.matchMedia('(max-width: 600px)').addEventListener('change', () => this.applyMobileViewState());
         this.setupPughPanel();
@@ -14890,5 +15032,6 @@ class FlowchartViewer {
 // by the time this runs - no async wait needed, unlike the old Tiptap ESM
 // loader this replaced.
 document.addEventListener('DOMContentLoaded', () => {
-    new FlowchartViewer();
+    // The saved data is read from IndexedDB first (see BigStore), then the app starts.
+    BigStore.init().then(() => { new FlowchartViewer(); });
 });
