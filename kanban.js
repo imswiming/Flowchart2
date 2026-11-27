@@ -2641,7 +2641,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead', 'kb-nc-linktop'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead', 'kb-nc-linktop', 'kb-cl-head'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2726,17 +2726,19 @@
                 // The card's title, the rows' names, and a panel for each
                 // checklist item with what's written under it.
                 let list = [];
+                let inItem = false; // under a checklist item's heading
                 let top = true; // above the columns: the card's own links
-                const endList = () => { if (list.length) { plan.get(list[0]).push('kb-cl-first'); plan.get(list[list.length - 1]).push('kb-cl-last'); } list = []; };
+                const endList = () => { if (list.length) { plan.get(list[0]).push('kb-cl-first'); plan.get(list[list.length - 1]).push('kb-cl-last'); } list = []; inItem = false; };
                 kids.forEach((el) => {
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
                     if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, textOf(el) === LINKS_TOP ? ['kb-nc-linktop'] : isLinkHead(textOf(el)) ? ['kb-nc-linkhead'].concat(textOf(el).startsWith('🏷') ? ['kb-nc-labhead'] : []) : ['kb-nc-link']); return; }
-                    if (el.name === 'h6') endList(); // each item has its own panel
-                    if (el.name === 'h6') plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-box']);
-                    else if (list.length) plan.set(el, ['kb-cl-box']);
-                    else return;
+                    // Each item's heading (with its tick box) stands just above its own panel,
+                    // which holds what is written under it.
+                    if (el.name === 'h6') { endList(); plan.set(el, ['kb-nc-item', 'kb-nc-card-item', 'kb-cl-head']); inItem = true; return; }
+                    if (!inItem) return;
+                    plan.set(el, ['kb-cl-box']);
                     list.push(el);
                 });
                 endList();

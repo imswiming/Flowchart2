@@ -693,3 +693,10 @@ body.kb-card-notes .nt-card-check { display: inline-flex !important; }
 /* Phone only: the 📝 on a card opens that card's note. */
 .kb-card-note-m { display: none; }
 @media (max-width: 900px) { .kb-card-note-m { display: inline-block; } }
+
+/* A card's checklist item: its heading and tick box stand above the panel, outside it. */
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-cl-head { display: block !important; box-sizing: border-box; max-width: 640px; margin: 14px 0 4px 14px !important; padding: 0 0 0 33px !important; font-size: 16px !important; font-weight: 400 !important; line-height: 1.45; color: #b3bac6; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-card-item.kb-cl-head::before { left: 0; top: 0.725em; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content h6.kb-nc-card-item.kb-cl-head[data-done="true"]::after { left: 6.5px; top: calc(0.725em - 6px); }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-cl-head + .kb-cl-first { margin-top: 0 !important; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-cl-head.note-folded-hidden { display: none !important; }
