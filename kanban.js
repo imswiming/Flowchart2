@@ -2011,6 +2011,9 @@
                     : null,
                 card.blocked ? el('div', { class: 'kb-blocked', text: '⛔ Blocked' + (card.blockReason ? ` - ${card.blockReason}` : '') }) : null,
                 this.buildKanbanCardChecklist(card),
+                // Criteria comparisons put in the card's notes (criteria.js): a click
+                // opens the comparison in the flowchart.
+                typeof this.critComparisonsOfCard === 'function' ? this.critComparisonsOfCard(card) : null,
                 this.buildKanbanCardLinks(card),
                 // Labels: click one to change it, "+ label" to add one.
                 el('div', { class: 'kb-chips' + (card.labels.length ? '' : ' none') }, ...card.labels.map((id) => {

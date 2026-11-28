@@ -36,6 +36,9 @@
     // starting "Assumption:" (in red), like a pink node's.
     const ASSUMP = '#ffcc01';
     const ASSUMP_RED = '#d42a2a';
+    // A comparison's line in the notes starts with this (criteria.js insertCritComparison).
+    const CMP_MARK = '🎯⁠ ';
+    const CMP_SEP = ' · ';
     // The "(Simplify?)" the chart adds to end nodes by itself: a picked node
     // drawn as an end node in the view mustn't take it back to the tree.
     const plainName = n => String(n || '').replace(/\s*\(Simplify\?\)\s*$/, '');
@@ -85,6 +88,12 @@
         .crit-row .cs-btn { padding: 5px 9px; }
         .crit-dot { width: 10px; height: 10px; border-radius: 50%; background: ${YELLOW}; flex: 0 0 auto; }
         @media (max-width: 600px) { #crit-banner { top: 62px; max-width: calc(100% - 20px); } }
+        body:not(.crit-comparing) .nt-crit-compare { display: none !important; }
+        .ck-editor__editable p.crit-cmp-bubble { display: inline-block; margin: 6px 0 2px; padding: 4px 12px; border-radius: 14px;
+            background: rgba(255, 204, 0, 0.18); border: 1px solid ${YELLOW}; font-weight: 600; cursor: pointer; }
+        .kb-cmp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+        .kb-cmp-chip { padding: 2px 9px; border-radius: 12px; border: 1px solid ${YELLOW}; background: rgba(255, 204, 0, 0.18);
+            color: inherit; font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
     `;
     document.head.append(style);
 
@@ -907,6 +916,8 @@
         updateCritBanner() {
             const v = this._critView;
             let banner = document.getElementById('crit-banner');
+            // The notes' 🎯 (add the comparison) shows only while comparing.
+            document.body.classList.toggle('crit-comparing', !!(v && v.hosts.length > 1));
             if (!v) { if (banner) banner.remove(); return; }
             const panel = document.getElementById('flowchart-panel') || document.body;
             if (!banner) {
@@ -920,6 +931,94 @@
                 el('span', { class: 'crit-names', title: names.join(', '), text: names.join('  ·  ') }),
                 el('button', { type: 'button', text: '✎ Criteria', title: 'Add, rename, reorder or remove criteria', onclick: () => this.openCriteriaEditor() }),
                 el('button', { type: 'button', class: 'primary', text: '↩ Back to flowchart', onclick: () => this.exitCriteriaView() }));
+        },
+
+        // ----- A comparison put in the notes -----
+        // In the comparison view the notes' 🎯 button puts, where the cursor is,
+        // a line naming the compared nodes (drawn as a bubble; a click on it opens
+        // the comparison again) and under it bullets: each criterion, and what
+        // each node has for it. A card whose notes have one shows it as a chip.
+        insertCritComparison() {
+            const v = this._critView;
+            if (!v || v.hosts.length < 2) { this.showNotification('Open a comparison first (Shift + click nodes, then 🎯).'); return; }
+            this.critWriteBack();
+            const t = this.getActiveNotesTarget && this.getActiveNotesTarget();
+            const editor = t && t.editor;
+            if (!editor) { this.showNotification('Open a note first, with the cursor where the comparison should go.'); return; }
+            const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            const names = v.hosts.map(h => plainName(h.name).trim() || '(no name)');
+            const live = arr => (Array.isArray(arr) ? arr : []).filter(x => x && !this.isPlaceholderNodeData(x) && plainName(x.name).trim());
+            const sub = x => `<li>${esc(plainName(x.name).trim())}${live(x.children).length ? `<ul>${live(x.children).map(sub).join('')}</ul>` : ''}</li>`;
+            const html = `<p>${esc(`${CMP_MARK}Comparison: ${names.join(CMP_SEP)}`)}</p><ul>${this.criteria.map(c => `<li>${esc(c.name)}<ul>${v.hosts.map((h, i) => {
+                const its = live(h._crit && h._crit[c.id]);
+                return `<li>${esc(names[i])}${its.length ? `<ul>${its.map(sub).join('')}</ul>` : ': -'}</li>`;
+            }).join('')}</ul></li>`).join('')}</ul><p>&nbsp;</p>`;
+            try {
+                editor.model.change(() => {
+                    const frag = editor.data.toModel(editor.data.processor.toView(html));
+                    editor.model.insertContent(frag);
+                });
+                editor.editing.view.focus();
+                this.showNotification('Comparison added to the note - click its line to come back to it.');
+            } catch (e) {
+                console.error('Comparison into the notes:', e);
+                this.showNotification('Could not add the comparison to this note.');
+            }
+        },
+
+        critParseComparison(text) {
+            const s = String(text || '');
+            if (!s.startsWith(CMP_MARK)) return null;
+            const names = s.slice(CMP_MARK.length).replace(/^Comparison:\s*/, '').split(CMP_SEP.trim()).map(x => x.replace(/ /g, ' ').trim()).filter(Boolean);
+            return names.length > 1 ? names : null;
+        },
+
+        // Opens the comparison of the nodes with these names (from the flowchart).
+        openCritComparisonByNames(names) {
+            if (this._kanbanMode && typeof this.toggleKanbanMode === 'function') this.toggleKanbanMode(false);
+            if (this._ganttMode && typeof this.toggleGanttMode === 'function') this.toggleGanttMode(false);
+            if (this._critView) this.exitCriteriaView();
+            const found = [];
+            const walk = (n) => {
+                if (!n || typeof n !== 'object' || n._critG || n._critId) return;
+                const i = names.indexOf(plainName(n.name).trim());
+                if (i >= 0 && !found[i] && n !== this.rootData) found[i] = n;
+                const kids = n._critOn ? n._critSaved : n._kbColView ? n._kbColSaved : n.children;
+                (Array.isArray(kids) ? kids : []).forEach(walk);
+            };
+            walk(this.rootData);
+            const hosts = found.filter(Boolean);
+            if (hosts.length < 2) {
+                const miss = names.filter((n, i) => !found[i]);
+                this.showNotification(`Couldn't find ${miss.map(n => `"${n}"`).join(', ')} in the flowchart (renamed or deleted?).`, 5000);
+                return;
+            }
+            this._critPicks = new Set(hosts);
+            this.openCriteriaView(hosts[0]);
+        },
+
+        // The comparisons in a card's notes, as chips (null if none).
+        critComparisonsOfCard(card) {
+            if (!card) return null;
+            const htmls = [card.meetingNotes].concat(Object.values(card.notes || {}),
+                (card.checklist || []).map(i => i.note),
+                Object.values(card.colChecklists || {}).flat().map(i => i && i.note));
+            const out = [];
+            const seen = new Set();
+            htmls.forEach((h) => {
+                if (typeof h !== 'string' || !h.includes(CMP_MARK.slice(0, 2))) return;
+                const doc = new DOMParser().parseFromString(`<body>${h}</body>`, 'text/html');
+                doc.querySelectorAll('p').forEach((p) => {
+                    const names = this.critParseComparison(p.textContent);
+                    const key = names && names.join('|');
+                    if (names && !seen.has(key)) { seen.add(key); out.push(names); }
+                });
+            });
+            if (!out.length) return null;
+            return el('div', { class: 'kb-cmp-chips' }, ...out.map(names => el('button', {
+                type: 'button', class: 'kb-cmp-chip', text: `🎯 ${names.join(CMP_SEP)}`, title: 'Open this comparison in the flowchart',
+                onclick: (e) => { e.stopPropagation(); this.openCritComparisonByNames(names); }
+            })));
         },
 
         // ----- Editing the list -----
@@ -1178,6 +1277,38 @@
         if (!orig) return;
         proto[name] = function (...args) { return withoutCritGroup(this, () => orig.apply(this, args)); };
     });
+
+    // The notes' 🎯: the comparison open now goes into the note.
+    const origToolbar = proto.buildNotesToolbar;
+    if (origToolbar) {
+        proto.buildNotesToolbar = function (...args) {
+            const row = origToolbar.apply(this, args);
+            if (row && row.appendChild) row.appendChild(el('button', {
+                class: 'notes-toolbar-btn nt-crit-compare', type: 'button', text: '🎯', title: 'Add this comparison to the note, where the cursor is',
+                onmousedown: e => e.preventDefault(), onclick: () => this.insertCritComparison()
+            }));
+            return row;
+        };
+    }
+    // A comparison's line in the notes is drawn as a bubble; a click opens it.
+    let cmpRaf = 0;
+    const markCmp = () => {
+        cmpRaf = 0;
+        document.querySelectorAll('.ck-editor__editable > p').forEach((p) => {
+            const on = (p.textContent || '').startsWith(CMP_MARK);
+            if (on !== p.classList.contains('crit-cmp-bubble')) p.classList.toggle('crit-cmp-bubble', on);
+        });
+    };
+    if (typeof MutationObserver !== 'undefined') {
+        new MutationObserver(() => { if (!cmpRaf) cmpRaf = requestAnimationFrame(markCmp); })
+            .observe(document.body, { childList: true, subtree: true, characterData: true });
+    }
+    document.addEventListener('click', (e) => {
+        const app = window.__flowchartApp;
+        const p = app && e.target && e.target.closest && e.target.closest('.ck-editor__editable p.crit-cmp-bubble');
+        const names = p && app.critParseComparison(p.textContent);
+        if (names) app.openCritComparisonByNames(names);
+    }, true);
 
     // A criterion's menu (or a yellow node's) has the assumption colour too.
     const origShowPopup = proto.showNodeEditPopup;
