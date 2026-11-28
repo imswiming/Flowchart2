@@ -401,31 +401,46 @@
         <div class="zoom-btn" id="top-notes-btn" title="Notes">📝</div>
         <div class="zoom-btn" id="top-reset-view-btn" title="Reset View">⟲</div>
         <div class="zoom-btn" id="top-help-btn" title="Help">?</div>
-        <!-- The bottom bar's other buttons (each clicks the original, which stays hidden). -->
-        <div class="zoom-btn zb-extra" data-for="orientation-btn" title="Top-Down / Left-Right">↕</div>
-        <div class="zoom-btn zb-extra" data-for="arrangement-btn" title="Centered / Indented Layout">📐</div>
-        <div class="zoom-btn zb-extra" data-for="fold-all-btn" title="Fold / unfold every branch">⊟</div>
-        <div class="zoom-btn zb-extra" data-for="event-btn" title="Add an event, with a reminder">⏰</div>
-        <div class="zoom-btn zb-extra" data-for="ai-export-btn" title="Export to AI">🤖</div>
-        <div class="zoom-btn zb-extra" data-for="ai-import-btn" title="Import from AI">🧠</div>
-        <div class="zoom-btn zb-extra" data-for="export-chart-btn" title="Export Chart - only the flowchart that's open">📤</div>
-        <div class="zoom-btn zb-extra" data-for="export-btn" title="Export All - every flowchart and the global notes">💾</div>
-        <div class="zoom-btn zb-extra" data-for="import-btn" title="Import All">📥</div>
+        <!-- The bottom bar's other buttons, in a menu (each item clicks the original, which stays hidden). -->
+        <div class="zoom-btn zb-extra" id="top-more-btn" title="More: layout, fold, event, export / import">☰</div>
+      </div>
+      <div id="more-menu" class="more-menu" hidden>
+        <button class="menu-item" type="button" data-for="orientation-btn">↕ Top-Down</button>
+        <button class="menu-item" type="button" data-for="arrangement-btn">📐 Centered Layout</button>
+        <button class="menu-item" type="button" data-for="fold-all-btn">⊟ Fold All</button>
+        <button class="menu-item" type="button" data-for="event-btn">⏰ Event</button>
+        <button class="menu-item" type="button" data-for="ai-export-btn">🤖 Export to AI</button>
+        <button class="menu-item" type="button" data-for="ai-import-btn">🤖 Import from AI</button>
+        <button class="menu-item" type="button" data-for="export-chart-btn">⬇ Export Chart</button>
+        <button class="menu-item" type="button" data-for="export-btn">⬇ Export All</button>
+        <button class="menu-item" type="button" data-for="import-btn">⬆ Import All</button>
       </div>
       <script>
-        // The strip's extra icons click the bottom bar's buttons (their titles follow
-        // what those buttons say now, e.g. Top-Down / Left-Right).
-        document.addEventListener('click', function (e) {
-          var b = e.target && e.target.closest && e.target.closest('.zoom-btn.zb-extra');
-          if (!b) return;
-          var src = document.getElementById(b.getAttribute('data-for'));
-          if (src) src.click();
-        });
-        document.addEventListener('mouseover', function (e) {
-          var b = e.target && e.target.closest && e.target.closest('.zoom-btn.zb-extra');
-          var src = b && document.getElementById(b.getAttribute('data-for'));
-          if (src && src.textContent.trim()) b.title = src.textContent.trim() + (src.title ? ' - ' + src.title : '');
-        });
+        // ☰ on the strip: a menu of the bottom bar's buttons (labels follow what
+        // those buttons say now, e.g. Top-Down / Left-Right).
+        (function () {
+          var menu = document.getElementById('more-menu');
+          var open = function (btn) {
+            Array.prototype.forEach.call(menu.querySelectorAll('[data-for]'), function (it) {
+              var src = document.getElementById(it.getAttribute('data-for'));
+              it.style.display = src ? '' : 'none';
+              if (src && src.textContent.trim()) it.textContent = src.textContent.trim();
+            });
+            var r = btn.getBoundingClientRect();
+            menu.hidden = false;
+            menu.style.top = Math.max(8, Math.min(r.top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
+            menu.style.right = (window.innerWidth - r.left + 8) + 'px';
+          };
+          document.addEventListener('click', function (e) {
+            var t = e.target;
+            var btn = t && t.closest && t.closest('#top-more-btn');
+            if (btn) { e.stopPropagation(); if (menu.hidden) open(btn); else menu.hidden = true; return; }
+            var it = t && t.closest && t.closest('#more-menu [data-for]');
+            if (it) { var src = document.getElementById(it.getAttribute('data-for')); menu.hidden = true; if (src) src.click(); return; }
+            if (!menu.hidden && !(t && t.closest && t.closest('#more-menu'))) menu.hidden = true;
+          }, true);
+          document.addEventListener('keydown', function (e) { if (e.key === 'Escape') menu.hidden = true; });
+        })();
       </script>
 
       <div class="reset-view-controls">
