@@ -387,24 +387,25 @@ const NODE_BTN_TONES = {
 // The node menu's highlighter outline.
 const NODE_HIGHLIGHT = '#ffcc00';
 const NODE_BTN_ICONS = {
-    '+': { d: 'M12 5v14M5 12h14' },
-    '←': { d: 'M19 12H5M11 18l-6-6 6-6' },
-    '→': { d: 'M5 12h14M13 6l6 6-6 6' },
-    fold: { title: 'Fold', d: 'M7 14l5-5 5 5' },
-    unfold: { title: 'Unfold', d: 'M7 10l5 5 5-5' },
-    '⊟': { title: 'Fold everything below', d: 'M7 20l5-5 5 5M7 4l5 5 5-5' },
-    '⊞': { title: 'Unfold everything below', d: 'M7 15l5 5 5-5M7 9l5-5 5 5' },
-    C: { title: 'Connect to another node', d: 'M6 20a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM7.5 15.5C11 7 13 17 16.5 8.5' },
-    M: { title: 'Move to another parent', tone: 'blue', d: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20' },
-    '✕': { title: 'Delete with everything under it', tone: 'red', d: 'M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6' },
-    P: { title: 'Delete, keeping its children', tone: 'red', d: 'M3 14h6v6H3zM13 3h5v5h-5zM4 4l16 16M17 13l4 4M21 13l-4 4' },
-    H: { title: 'Highlight the node (yellow outline) - again to take it off', tone: 'yellow', d: 'M9 11l7.5-7.5 4 4L13 15zM9 11l-5 5v4h4l5-5M14.5 5.5l4 4' },
-    '🔗': { title: 'Links and files', d: 'M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' },
-    '📷': { title: 'Picture from the clipboard', d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
+    // Coloured, solid icons (emoji), like the drawing one.
+    '+': { text: '➕' },
+    '←': { text: '⬅️' },
+    '→': { text: '➡️' },
+    fold: { title: 'Fold', text: '🔼' },
+    unfold: { title: 'Unfold', text: '🔽' },
+    '⊟': { title: 'Fold everything below', text: '⏫' },
+    '⊞': { title: 'Unfold everything below', text: '⏬' },
+    C: { title: 'Connect to another node', text: '🔌' },
+    M: { title: 'Move to another parent', tone: 'blue', text: '🚚' },
+    '✕': { title: 'Delete with everything under it', tone: 'red', text: '🗑️' },
+    P: { title: 'Delete, keeping its children', tone: 'red', text: '✂️' },
+    H: { title: 'Highlight the node (yellow outline) - again to take it off', tone: 'yellow', text: '🖍️' },
+    '🔗': { title: 'Links and files', text: '🔗' },
+    '📷': { title: 'Picture from the clipboard', text: '📷' },
     '🎨': { title: 'Drawing', text: '🎨' },
-    '🎯': { title: 'Criteria view', tone: 'yellow', d: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z' },
-    '✎': { title: 'Edit the list of criteria', tone: 'yellow', d: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4' },
-    '↩': { title: 'Back to the flowchart', tone: 'yellow', d: 'M9 14l-5-5 5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11' }
+    '🎯': { title: 'Criteria view', tone: 'yellow', text: '🎯' },
+    '✎': { title: 'Edit the list of criteria', tone: 'yellow', text: '✏️' },
+    '↩': { title: 'Back to the flowchart', tone: 'yellow', text: '↩️' }
 };
 
 const FlowchartMerge = (() => {
