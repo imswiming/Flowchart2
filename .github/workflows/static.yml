@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Stamp the version (shown in the Synced pill)
+        run: echo "window.APP_VERSION = '${GITHUB_SHA::7}';" > version.js
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact

@@ -1802,7 +1802,8 @@ class FlowchartViewer {
         const label = this.cloudSyncStatusText || badge;
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (state === 'syncing') label.textContent = '☁ Syncing...';
-        else if (state === 'synced') label.textContent = `☁ Synced ${time}`;
+        // With the running version's code (version.js, stamped by the deploy).
+        else if (state === 'synced') label.textContent = `☁ Synced${window.APP_VERSION ? ` (${window.APP_VERSION})` : ''} ${time}`;
         else if (state === 'error') label.textContent = `☁ Sync error${message ? ': ' + message : ''}`;
         else label.textContent = '☁ Cloud sync on';
     }
