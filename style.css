@@ -4137,3 +4137,13 @@ html { touch-action: manipulation; }
 
 /* "Assumption:" at the start of a note line is red (see the notes editor's NoteStamp plugin). */
 .ck.ck-content .note-assumption-word { color: #e5384a; }
+
+/* The bottom bar's buttons are icons on the right-hand strip now (index.html,
+   .zb-extra): the bar itself is hidden; the strip scrolls if the window is short.
+   Phones keep these in the menu instead. */
+@media (min-width: 601px) {
+    .desktop-controls { display: none !important; }
+    .zoom-controls { max-height: calc(100vh - 40px); overflow-y: auto; scrollbar-width: none; }
+    .zoom-controls::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 600px) { .zoom-btn.zb-extra { display: none !important; } }
