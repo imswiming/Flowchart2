@@ -14982,7 +14982,13 @@ class FlowchartViewer {
         }
         if (!critLock || critLock.addChild) {
             if (lr) drawPlus(targetDatum._boxWidth / 2 + 58, 0, activateAddChild, 'New child');
-            else drawPlus(0, bottomHalf + 30 + 16, activateAddChild, 'New child');
+            else {
+                // As far below the node as the parent's + is above it - further only
+                // when the node has its fold arrow there.
+                const kids = targetDatum.data.children || [];
+                const hasFold = !!targetDatum.data._collapsed || kids.some(c => c && !this.isPlaceholderNodeData(c));
+                drawPlus(0, bottomHalf + (hasFold ? 30 : 12) + 16, activateAddChild, 'New child');
+            }
         }
     }
 
