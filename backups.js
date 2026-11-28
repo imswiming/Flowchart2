@@ -15,9 +15,19 @@
 (function () {
     if (typeof FlowchartViewer === 'undefined') return;
 
+    // Two kinds of backup, both in a fixed number of slots so the space used stays bounded:
+    //  - daily: the last version of each day something was changed, in SLOTS slots -
+    //    once they are all used, the newest replaces the oldest.
+    //  - half-hourly: during the day, the version every half hour (at most one per
+    //    half hour), wiped when the day is over (its last version having gone into a
+    //    daily slot), so they never pile up.
+    // Days are the device's own (local) days.
     const DAY_MS = 86400000;
     const SLOTS = 16;
-    const DAY_KEY = 'cloud-backup-day';
+    const DAY_KEY = 'cloud-backup-day2';
+    const HALF_MS = 30 * 60000;
+    const localDay = at => Math.floor((at - new Date(at).getTimezoneOffset() * 60000) / DAY_MS);
+    const halfOfDay = (at) => { const d = new Date(at); return Math.floor((d.getHours() * 60 + d.getMinutes()) / 30); };
 
     const toB64 = (bytes) => {
         let s = '';
@@ -50,7 +60,7 @@
         },
 
         // Writes what the server holds right now (flowcharts + global notes) into a backup slot.
-        async snapshotServerTo(slot, kind) {
+        async snapshotServerTo(slot, kind, extra) {
             const main = await this.fetchRowData(this.cloudSyncId);
             if (!main || !Array.isArray(main.flowchartList)) return false;
             let gn = null;
@@ -61,7 +71,7 @@
             });
             const at = Date.now();
             const meta = {
-                v: 1, kind, at, day: Math.floor(at / DAY_MS), charts: main.flowchartList.length,
+                v: 1, kind, at, day: localDay(at), charts: main.flowchartList.length, ...(extra || {}),
                 titles: main.flowchartList.slice(0, 12).map(i => String(i.title || '').slice(0, 60)),
                 notes: gn && Array.isArray(gn.tabs) ? gn.tabs.length : 0, raw: payload.length
             };
@@ -84,35 +94,85 @@
             return true;
         },
 
-        // Called by cloudPush just before it replaces the cloud copy: the first time
-        // on each day, keep the copy about to be replaced. Never blocks syncing.
+        // When the cloud copy was last changed.
+        async serverUpdatedAt() {
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at`, {
+                headers: this.cloudHeaders({ 'Accept': 'application/json' })
+            });
+            if (!res.ok) return null;
+            const row = (await res.json())[0];
+            const t = row && (typeof row.updated_at === 'number' ? row.updated_at : Date.parse(row.updated_at));
+            return Number.isFinite(t) ? t : null;
+        },
+
+        // Called by cloudPush just before it replaces the cloud copy. Never blocks syncing.
         async ensureServerBackup() {
             try {
                 if (!this.cloudProjectUrl || !this.cloudSyncId) return;
-                const today = Math.floor(Date.now() / DAY_MS);
-                if (this._backupDay === today) return;
-                let done = 0;
-                try { done = Number(localStorage.getItem(DAY_KEY)) || 0; } catch (e) { /* ignore */ }
-                if (done === today) { this._backupDay = today; return; }
-                const slot = today % SLOTS;
-                const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.backupRowId(slot))}&select=meta:data->meta`, {
-                    headers: this.cloudHeaders({ 'Accept': 'application/json' })
-                });
-                if (res.ok) {
-                    const row = (await res.json())[0];
-                    if (row && row.meta && row.meta.day === today) {
-                        this._backupDay = today;
-                        try { localStorage.setItem(DAY_KEY, String(today)); } catch (e) { /* ignore */ }
-                        return;
-                    }
-                }
-                if (await this.snapshotServerTo(slot, 'daily')) {
-                    this._backupDay = today;
-                    try { localStorage.setItem(DAY_KEY, String(today)); } catch (e) { /* ignore */ }
-                }
+                const now = Date.now();
+                const today = localDay(now);
+                await this.ensureDailyBackup(today);
+                await this.ensureHalfHourBackup(now, today);
             } catch (err) {
                 console.error('Server backup failed (syncing carries on):', err);
             }
+        },
+
+        // The first push of a day: what the server holds is the last version of the
+        // day it was last changed on - kept in a daily slot (the oldest one once all
+        // are used), and the half-hourly backups of earlier days are wiped.
+        async ensureDailyBackup(today) {
+            if (this._backupDay === today) return;
+            let done = 0;
+            try { done = Number(localStorage.getItem(DAY_KEY)) || 0; } catch (e) { /* ignore */ }
+            const mark = () => { this._backupDay = today; try { localStorage.setItem(DAY_KEY, String(today)); } catch (e) { /* ignore */ } };
+            if (done === today) { this._backupDay = today; return; }
+            const changed = await this.serverUpdatedAt();
+            const editDay = changed ? localDay(changed) : today - 1;
+            // Changed today already (another device): today isn't over - but yesterday's
+            // last version was kept by that device's first push.
+            if (editDay < today) {
+                const rows = await this.listServerBackups();
+                const daily = rows.filter(r => r.meta.kind === 'daily');
+                if (!daily.some(r => (r.meta.editDay !== undefined ? r.meta.editDay : r.meta.day) === editDay)) {
+                    let id;
+                    if (daily.length < SLOTS) {
+                        const used = new Set(daily.map(r => r.id));
+                        for (let i = 0; i < SLOTS && !id; i++) if (!used.has(this.backupRowId(`d${i}`))) id = this.backupRowId(`d${i}`);
+                    }
+                    if (!id) id = daily.slice().sort((a, b) => (a.meta.at || 0) - (b.meta.at || 0))[0].id;
+                    const slot = id.slice(this.backupRowId('').length);
+                    await this.snapshotServerTo(slot, 'daily', { editDay, editedAt: changed || undefined });
+                }
+                // Earlier days' half-hourly backups go (their last version is kept above).
+                const stale = rows.filter(r => r.meta.kind === 'half' && r.meta.day !== today);
+                if (stale.length) {
+                    await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=in.(${stale.map(r => `"${encodeURIComponent(r.id)}"`).join(',')})`, {
+                        method: 'DELETE',
+                        headers: this.cloudHeaders({ 'Prefer': 'return=minimal' })
+                    }).catch(() => {});
+                }
+            }
+            mark();
+        },
+
+        // At most once each half hour of the day: the version the server holds.
+        async ensureHalfHourBackup(now, today) {
+            const half = halfOfDay(now);
+            const key = `${today}:${half}`;
+            if (this._backupHalf === key) return;
+            const id = this.backupRowId(`h${half}`);
+            const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(id)}&select=meta:data->meta`, {
+                headers: this.cloudHeaders({ 'Accept': 'application/json' })
+            });
+            if (res.ok) {
+                const row = (await res.json())[0];
+                if (row && row.meta && row.meta.day === today && now - (row.meta.at || 0) < HALF_MS) { this._backupHalf = key; return; }
+            }
+            // Nothing changed today yet: nothing of today's to keep.
+            const changed = await this.serverUpdatedAt();
+            if (changed && localDay(changed) !== today) { this._backupHalf = key; return; }
+            if (await this.snapshotServerTo(`h${half}`, 'half', { editedAt: changed || undefined })) this._backupHalf = key;
         },
 
         async listServerBackups() {
@@ -167,7 +227,10 @@
                 const info = document.createElement('div');
                 info.className = 'cs-backup-info';
                 const title = document.createElement('b');
-                title.textContent = (m.kind === 'undo' ? 'Before the last restore - ' : '') + this.backupLabel(m.at);
+                const dayLabel = at => new Date(at).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                title.textContent = m.kind === 'undo' ? `Before the last restore - ${this.backupLabel(m.at)}`
+                    : m.kind === 'half' ? `Today, half-hourly - ${new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : `End of ${dayLabel(m.editedAt || (m.editDay !== undefined ? m.at - DAY_MS : m.at))}`;
                 const detail = document.createElement('span');
                 detail.className = 'cs-muted cs-small';
                 detail.textContent = ` ${m.charts} flowchart${m.charts === 1 ? '' : 's'}, ${m.notes || 0} global note${m.notes === 1 ? '' : 's'} (${kb(m.bytes || 0)})`;
@@ -190,12 +253,92 @@
                 all.textContent = 'Restore all';
                 all.title = 'Makes everything - on every device - the way it was in this backup.';
                 all.addEventListener('click', () => this.restoreServerBackup(r.id, 'replace'));
+                const look = document.createElement('button');
+                look.type = 'button';
+                look.className = 'cs-btn cs-small-btn';
+                look.textContent = '👁 Preview';
+                look.title = 'Look through this backup\'s flowcharts first. Nothing is changed or saved while you look.';
+                look.addEventListener('click', () => this.previewServerBackup(r.id));
                 const btns = document.createElement('div');
                 btns.className = 'cs-row';
-                btns.append(copies, all);
+                btns.append(look, copies, all);
                 row.append(info, btns);
                 box.append(row);
             });
+        },
+
+        // ----- Previewing a backup -----
+        // The backup's flowcharts are drawn in the chart, one at a time (picked on the
+        // banner), read only: nothing is saved or synced while previewing, and Exit
+        // brings back the open flowchart as it was.
+        async previewServerBackup(id) {
+            try {
+                await this.ensureCloudToken();
+                this.setCloudPopupStatus('Reading the backup...');
+                const snap = await this.readServerBackup(id);
+                const charts = snap.list.filter(i => i && typeof i.title === 'string');
+                if (!charts.length) { this.setCloudPopupStatus('That backup has no flowcharts.', true); return; }
+                this.setCloudPopupStatus('');
+                if (this.cloudSyncPopup) this.cloudSyncPopup.style.display = 'none';
+                if (!this._bakPreview) {
+                    // What's open now is saved first; it comes back on Exit.
+                    try { if (typeof this.flushNotesEditors === 'function') this.flushNotesEditors(); this.saveCurrentFlowchart(); this.saveFlowchartList(); } catch (e) { /* as it was */ }
+                    if (this.nodeBeingEdited && typeof this.hideNodeEditPopup === 'function') this.hideNodeEditPopup(false);
+                }
+                this._bakPreview = { id, snap, charts, at: 0 };
+                this.showBackupPreviewChart(0);
+            } catch (err) {
+                console.error('Previewing a backup failed:', err);
+                this.setCloudPopupStatus('Preview failed: ' + err.message, true);
+            }
+        },
+
+        showBackupPreviewChart(i) {
+            const p = this._bakPreview;
+            if (!p) return;
+            p.at = i;
+            let tree = null;
+            try { tree = JSON.parse(p.charts[i].data || '{}').tree; } catch (e) { tree = null; }
+            if (!tree) tree = { name: '(this flowchart could not be read)', color: '#c9372c' };
+            if (typeof this.deselectNode === 'function') this.deselectNode();
+            this.renderFlowchart(this.wrapRootWithPlaceholder(tree), { fitView: true });
+            if (typeof this.applyPendingFit === 'function') { try { this.applyPendingFit(); } catch (e) { /* fits on its own */ } }
+            let bar = document.getElementById('bak-preview-bar');
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'bak-preview-bar';
+                bar.style.cssText = 'position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:6000; display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:center; max-width:calc(100% - 20px); padding:6px 10px; border-radius:20px; background:rgba(30,36,48,0.95); border:1px solid #4c9aff; color:#e6eef8; font:13px Arial,sans-serif; box-shadow:0 4px 16px rgba(0,0,0,0.35);';
+                document.body.append(bar);
+            }
+            bar.innerHTML = '';
+            const btn = (text, fn, primary) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = text;
+                b.style.cssText = `padding:4px 11px; border-radius:14px; border:1px solid rgba(255,255,255,0.2); cursor:pointer; font:inherit; ${primary ? 'background:#4c9aff; color:#10233f; font-weight:bold;' : 'background:rgba(255,255,255,0.08); color:#e6eef8;'}`;
+                b.addEventListener('click', fn);
+                return b;
+            };
+            const label = document.createElement('b');
+            label.textContent = `👁 Backup preview - ${this.backupLabel(p.snap.meta.at || Date.now())}`;
+            const pick = document.createElement('select');
+            pick.style.cssText = 'max-width:40vw; padding:3px; border-radius:6px;';
+            p.charts.forEach((c, j) => { const o = document.createElement('option'); o.value = String(j); o.textContent = c.title || '(untitled)'; if (j === i) o.selected = true; pick.append(o); });
+            pick.addEventListener('change', () => this.showBackupPreviewChart(Number(pick.value)));
+            const id = p.id;
+            bar.append(label, pick,
+                btn('Open as copies', () => { this.exitBackupPreview(); this.restoreServerBackup(id, 'copies'); }),
+                btn('Restore all', () => { this.exitBackupPreview(); this.restoreServerBackup(id, 'replace'); }),
+                btn('✕ Exit preview', () => this.exitBackupPreview(), true));
+        },
+
+        exitBackupPreview() {
+            if (!this._bakPreview) return;
+            this._bakPreview = null;
+            const bar = document.getElementById('bak-preview-bar');
+            if (bar) bar.remove();
+            if (typeof this.deselectNode === 'function') this.deselectNode();
+            this.loadFlowchartFromList(this.currentSlotIndex);
         },
 
         async restoreServerBackup(id, mode) {
@@ -284,4 +427,26 @@
     };
 
     Object.assign(FlowchartViewer.prototype, methods);
+
+    // While a backup is being previewed nothing is saved or synced (the chart
+    // shows the backup, not the flowchart that's open).
+    const proto = FlowchartViewer.prototype;
+    ['autosave', 'autosaveNow', 'saveCurrentFlowchart', 'saveFlowchartList', 'scheduleCloudPush'].forEach((name) => {
+        const orig = proto[name];
+        if (!orig) return;
+        proto[name] = function (...args) { return this._bakPreview ? undefined : orig.apply(this, args); };
+    });
+    ['cloudPush', 'cloudPull'].forEach((name) => {
+        const orig = proto[name];
+        if (!orig) return;
+        proto[name] = function (...args) { return this._bakPreview ? Promise.resolve(false) : orig.apply(this, args); };
+    });
+    // Opening another flowchart ends the preview.
+    const origLoad = proto.loadFlowchartFromList;
+    if (origLoad) {
+        proto.loadFlowchartFromList = function (...args) {
+            if (this._bakPreview) { this._bakPreview = null; const bar = document.getElementById('bak-preview-bar'); if (bar) bar.remove(); }
+            return origLoad.apply(this, args);
+        };
+    }
 })();

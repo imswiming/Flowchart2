@@ -3228,6 +3228,8 @@
         },
 
         syncKanbanFlow() {
+            // (Not while a backup is being previewed - backups.js.)
+            if (this._bakPreview) return;
             const k = this.kanban;
             const top = this.rootData;
             if (!top || typeof this.isPlaceholderNodeData !== 'function') return;
@@ -3483,7 +3485,7 @@
         pullKanbanFlowEdits() {
             const k = this.kanban;
             const branch = this.findKanbanFlowRoot();
-            if (!k || !branch || this._kbPulling) return false;
+            if (!k || !branch || this._kbPulling || this._bakPreview) return false;
             const strip = n => String(n || '').replace(/(\s*\(Simplify\?\))+\s*$/, '').trim();
             const real = n => (n._critOn ? (n._critSaved || []) : n._kbColView ? (n._kbColSaved || []) : (n.children || []));
             // A hand-made node holding cards (a parent added to cards) is a group, not a new card.

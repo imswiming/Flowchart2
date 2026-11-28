@@ -1197,7 +1197,7 @@
         if (this._critView && data === this.rootData) this.critWriteBack();
         // The global criteria: what was done in them goes back first, then
         // they're built again (always the last of the top row).
-        if (!this._critView && data && data === this.rootData) {
+        if (!this._critView && !this._bakPreview && data && data === this.rootData) {
             try { this.critGlobalWriteBack(); this.critGlobalBuild(); } catch (e) { console.error('Global criteria:', e); }
         }
         const r = origRender.call(this, data, ...rest);
