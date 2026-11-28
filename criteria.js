@@ -32,6 +32,10 @@
     if (typeof FlowchartViewer === 'undefined') return;
 
     const YELLOW = '#ffcc00';
+    // An assumption criterion: the same yellow with a red outline, its name
+    // starting "Assumption:" (in red), like a pink node's.
+    const ASSUMP = '#ffcc01';
+    const ASSUMP_RED = '#d42a2a';
     // The "(Simplify?)" the chart adds to end nodes by itself: a picked node
     // drawn as an end node in the view mustn't take it back to the tree.
     const plainName = n => String(n || '').replace(/\s*\(Simplify\?\)\s*$/, '');
@@ -108,7 +112,284 @@
             if (!Array.isArray(raw)) return [];
             const seen = new Set();
             return raw.filter(c => c && typeof c.id === 'string' && !seen.has(c.id) && seen.add(c.id))
-                .map(c => ({ id: c.id, name: typeof c.name === 'string' ? c.name : '' }));
+                .map(c => Object.assign({ id: c.id, name: typeof c.name === 'string' ? c.name : '' }, c.color === ASSUMP ? { color: ASSUMP } : {}));
+        },
+
+        // ----- Criterion colours: yellow, or an assumption's yellow with a red outline -----
+        critColorOf(c) { return c && c.color === ASSUMP ? ASSUMP : YELLOW; },
+
+        // A criterion node's colour, picked in its menu, goes to the list (any
+        // colour but the assumption's makes it plain yellow). True if it changed.
+        critTakeColor(crit, node) {
+            if (!crit || !node) return false;
+            const cur = this.critColorOf(crit);
+            const nc = String(node.color || '').toLowerCase();
+            if (nc === cur) return false;
+            if (nc === ASSUMP) crit.color = ASSUMP; else delete crit.color;
+            node.color = this.critColorOf(crit);
+            return node.color !== cur;
+        },
+
+        // Every node showing a criterion (in place, in the global group, in the
+        // view) takes its name and colour from the list.
+        critSpread(id) {
+            const crit = (this.criteria || []).find(c => c.id === id);
+            if (!crit) return;
+            const walk = (n) => {
+                if (!n || typeof n !== 'object') return;
+                if (n._critId === id) { n.name = crit.name || 'Criterion'; n.color = this.critColorOf(crit); }
+                (n.children || []).forEach(walk);
+            };
+            walk(this.rootData);
+        },
+
+        // ----- The global criteria (always shown, at the far right of the top row) -----
+        // A blank node holds every criterion (yellow). Under each one: a copy of
+        // every node that has something written under that criterion (in
+        // criteria mode), and under each copy what that node has for it - the
+        // same nodes, so editing them here edits the node's criteria. A node
+        // added straight under a criterion here is a new option: it shows under
+        // every criterion, and renaming or deleting it does so everywhere. The
+        // options are kept in `criteriaOptions`; the group itself is never saved.
+        critGState() {
+            if (!this._critG) this._critG = { group: null, crits: new Map(), mirrors: new WeakMap(), recs: new Map() };
+            return this._critG;
+        },
+
+        // Has the node at least one real node under any criterion?
+        critHasContent(n) {
+            const crit = n && n._crit;
+            if (!crit || typeof crit !== 'object') return false;
+            return (this.criteria || []).some(c => Array.isArray(crit[c.id]) && crit[c.id].some(x => x && (
+                !this.isPlaceholderNodeData(x) || (x.name || '').trim() || x._nodePhotoUrl
+                || (Array.isArray(x.children) && x.children.some(y => y && !this.isPlaceholderNodeData(y))))));
+        },
+
+        // The nodes the group shows, in tree order, then the options made in it.
+        // Nodes showing their criteria in place right now are left out (the same
+        // nodes can't be drawn twice); they come back when criteria mode ends.
+        critGlobalHosts() {
+            const root = this.rootData;
+            const out = [];
+            const walk = (n) => {
+                if (!n || typeof n !== 'object' || n._critG || n._critId || n._colViewId) return;
+                if (n !== root && !n._critOn && this.critHasContent(n)) out.push(n);
+                const kids = n._critOn ? n._critSaved : n._kbColView ? n._kbColSaved : n.children;
+                (Array.isArray(kids) ? kids : []).forEach(walk);
+            };
+            walk(root);
+            (this.criteriaOptions || []).forEach((o) => { if (o && ((o.name || '').trim() || this.critHasContent(o))) out.push(o); });
+            return out;
+        },
+
+        critGlobalBuild() {
+            const root = this.rootData;
+            if (!root || typeof root !== 'object' || this._critView) return;
+            const G = this.critGState();
+            const rest = (Array.isArray(root.children) ? root.children : []).filter(c => !(c && c._critG === 'g'));
+            G.recs = new Map();
+            if (!this.criteria || !this.criteria.length) {
+                if (Array.isArray(root.children)) root.children = rest;
+                G.group = null;
+                return;
+            }
+            const hosts = this.critGlobalHosts();
+            const opts = new Set(this.criteriaOptions || []);
+            const stubOf = c => c && this.isPlaceholderNodeData(c) && !(c.name || '').trim() && !(c.children || []).length;
+            const critNodes = this.criteria.map((c) => {
+                let cn = G.crits.get(c.id);
+                if (!cn) { cn = { _critG: 'c', _critId: c.id }; G.crits.set(c.id, cn); }
+                cn.name = c.name || 'Criterion';
+                cn.color = this.critColorOf(c);
+                delete cn._isPlaceholder;
+                const stub = (cn.children || []).find(stubOf) || this.createPlaceholderNode();
+                cn.children = hosts.map((h) => {
+                    let per = G.mirrors.get(h);
+                    if (!per) { per = new Map(); G.mirrors.set(h, per); }
+                    let m = per.get(c.id);
+                    if (!m) { m = { _critG: 'm' }; per.set(c.id, m); }
+                    if (!h._crit || typeof h._crit !== 'object') h._crit = {};
+                    if (!Array.isArray(h._crit[c.id])) h._crit[c.id] = [];
+                    m.name = h.name || '';
+                    m.color = h.color || '#00a67e';
+                    m.children = h._crit[c.id];
+                    m._critG = 'm';
+                    delete m._isPlaceholder;
+                    G.recs.set(m, { host: h, cid: c.id, arr: h._crit[c.id], name: m.name, color: m.color, option: opts.has(h) });
+                    return m;
+                }).concat(stub);
+                return cn;
+            });
+            if (!G.group) G.group = { name: '', color: this.getPlaceholderColor(), _critG: 'g', _skipAutoPlaceholder: true };
+            G.group.children = critNodes;
+            // The top row keeps its "+" (before the group).
+            const last = rest[rest.length - 1];
+            if (!last || !(this.isPlaceholderNodeData(last) || !(last.name || '').trim())) rest.push(this.createPlaceholderNode());
+            root.children = rest.concat(G.group);
+        },
+
+        // What was done in the group goes back to the nodes and the list.
+        critGlobalWriteBack() {
+            const G = this._critG;
+            const root = this.rootData;
+            if (!G || !G.group || this._critView || !root || !(root.children || []).includes(G.group)) return;
+            const seen = new Set();
+            const done = new Set();
+            const spread = new Set();
+            (G.group.children || []).forEach((cn) => {
+                if (!cn || cn._critG !== 'c') return;
+                const crit = (this.criteria || []).find(x => x.id === cn._critId);
+                if (!crit) return;
+                done.add(crit.id);
+                const nm = plainName(cn.name).trim();
+                if (nm && nm !== crit.name) { crit.name = nm; spread.add(crit.id); }
+                if (this.critTakeColor(crit, cn)) spread.add(crit.id);
+                (cn.children || []).forEach((m) => {
+                    if (!m) return;
+                    const rec = G.recs.get(m);
+                    if (rec) {
+                        if (rec.cid !== crit.id) return;
+                        seen.add(m);
+                        const h = rec.host;
+                        if (!h._crit || typeof h._crit !== 'object') h._crit = {};
+                        // (Unless something else replaced it meanwhile.)
+                        if (h._crit[rec.cid] === rec.arr) h._crit[rec.cid] = Array.isArray(m.children) ? m.children : [];
+                        const hn = plainName(m.name).trim();
+                        if (hn && hn !== plainName(rec.name).trim()) h.name = hn;
+                        if (m.color && m.color !== rec.color && m.color !== this.getPlaceholderColor()) h.color = m.color;
+                        return;
+                    }
+                    if (m._critG) return;
+                    // A node added under the criterion: a new option.
+                    const name = plainName(m.name).trim();
+                    const kids = Array.isArray(m.children) ? m.children : [];
+                    if (!name && !kids.some(x => x && !this.isPlaceholderNodeData(x))) return;
+                    const o = { id: uid(), name, color: (m.color && m.color !== this.getPlaceholderColor()) ? m.color : '#00a67e', _crit: { [crit.id]: kids } };
+                    if (!Array.isArray(this.criteriaOptions)) this.criteriaOptions = [];
+                    this.criteriaOptions.push(o);
+                    delete m._isPlaceholder;
+                    m._critG = 'm';
+                    G.mirrors.set(o, new Map([[crit.id, m]]));
+                    seen.add(m);
+                });
+            });
+            // A copy deleted: an option goes everywhere; a node's copy takes away
+            // what the node had for that criterion.
+            G.recs.forEach((rec, m) => {
+                if (seen.has(m) || !done.has(rec.cid)) return;
+                const h = rec.host;
+                if (rec.option) {
+                    const i = (this.criteriaOptions || []).indexOf(h);
+                    if (i >= 0) this.criteriaOptions.splice(i, 1);
+                    return;
+                }
+                if (h._crit && h._crit[rec.cid] === rec.arr) h._crit[rec.cid] = [];
+            });
+            spread.forEach(id => this.critSpread(id));
+        },
+
+        // Takes the group's edits, then takes the group out of the tree (it's
+        // built again on the next redraw).
+        critGlobalDetach() {
+            this.critGlobalWriteBack();
+            const root = this._critView ? this._critView.real : this.rootData;
+            if (root && Array.isArray(root.children)) root.children = root.children.filter(c => !(c && c._critG === 'g'));
+        },
+
+        // The options as saved: only fields that are set, criteria with something under them.
+        leanCriteriaOptions() {
+            const out = (this.criteriaOptions || []).map((o) => {
+                if (!o || typeof o !== 'object') return null;
+                const crit = this.leanCriteriaTrees(o._crit);
+                const name = (o.name || '').trim();
+                if (!name && !crit) return null;
+                if (!o.id) o.id = uid();
+                const r = { id: o.id, name };
+                if (o.color) r.color = o.color;
+                if (crit) r._crit = crit;
+                return r;
+            }).filter(Boolean);
+            return out.length ? out : undefined;
+        },
+
+        sanitizeCriteriaOptions(raw) {
+            if (!Array.isArray(raw)) return [];
+            const seen = new Set();
+            return raw.filter(o => o && typeof o === 'object' && typeof o.id === 'string' && !seen.has(o.id) && seen.add(o.id))
+                .map(o => ({
+                    id: o.id,
+                    name: typeof o.name === 'string' ? o.name : '',
+                    color: typeof o.color === 'string' ? o.color : '#00a67e',
+                    _crit: o._crit && typeof o._crit === 'object' ? JSON.parse(JSON.stringify(o._crit)) : {}
+                }));
+        },
+
+        // The group's blank node looks like an empty one; an assumption
+        // criterion has its red outline and a red "Assumption:".
+        paintCritGlobal() {
+            if (typeof d3 === 'undefined') return;
+            const self = this;
+            d3.selectAll('#flowchart g.node').each(function (d) {
+                if (!d || !d.data) return;
+                const rect = this.querySelector(':scope > rect');
+                if (d.data._critG === 'g' && rect) {
+                    rect.setAttribute('fill', self.getPlaceholderColor());
+                    rect.setAttribute('stroke', (typeof window.flowThemePlaceholderStroke === 'function' && window.flowThemePlaceholderStroke(null)) || '#8a93a3');
+                    rect.setAttribute('stroke-dasharray', '5 3.5');
+                    return;
+                }
+                if (String(d.data.color || '').toLowerCase() !== ASSUMP) return;
+                if (rect) { rect.setAttribute('stroke', ASSUMP_RED); rect.setAttribute('stroke-width', '2.5px'); }
+                const t = this.querySelector(':scope > text > tspan');
+                const m = t && /^(Assumption:)(.*)$/.exec(t.textContent || '');
+                if (!m || t.querySelector('tspan')) return;
+                t.textContent = '';
+                const a = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                a.setAttribute('fill', ASSUMP_RED);
+                a.setAttribute('font-weight', '700');
+                a.textContent = m[1];
+                t.append(a, document.createTextNode(m[2]));
+            });
+        },
+
+        // The "Assumption" colour in a criterion's (or a yellow node's) menu.
+        critAssumpButton(d) {
+            const row = document.getElementById('node-color-btns');
+            if (!row) return;
+            let b = document.getElementById('node-assump-crit-btn');
+            if (!b) {
+                b = document.createElement('button');
+                b.id = 'node-assump-crit-btn';
+                b.type = 'button';
+                b.textContent = 'Assumption';
+                b.title = 'An assumption criterion: yellow with a red outline, "Assumption:" put in front';
+                b.style.cssText = `background:${YELLOW}; color:#1d2430; border:2px solid ${ASSUMP_RED}; border-radius:5px; padding:4px 14px; cursor:pointer;`;
+                b.onmousedown = e => e.preventDefault();
+                b.onclick = () => this.applyAssumptionCriterion();
+                const yellow = Array.from(row.children).find(x => x.textContent === 'Yellow');
+                if (yellow) yellow.after(b); else row.append(b);
+            }
+            const data = d && d.data;
+            const c = String((data && data.color) || '').toLowerCase();
+            b.style.display = data && (data._critId || c === YELLOW || c === ASSUMP) ? '' : 'none';
+        },
+
+        applyAssumptionCriterion() {
+            const cur = this.nodeBeingEdited;
+            if (!cur || !cur.data) return;
+            this._suppressPopupHide = true;
+            this.pushUndo();
+            if (this.isPlaceholderNodeData(cur.data)) this.markNodeAsReal(cur.data);
+            cur.data.name = this.getNodeNameFromInput(ASSUMP);
+            cur.data.color = ASSUMP;
+            this.ensureRightmostPlaceholderNodes(this.rootData);
+            this.updateSimplifyPrefixes(d3.hierarchy(this.rootData));
+            if (this.resyncMorphRows()) this.renderMorphPanel();
+            this.renderFlowchart(this.rootData);
+            this._suppressPopupHide = false;
+            if (typeof this.updateReflectionPanel === 'function') this.updateReflectionPanel(cur);
+            this.hideNodeEditPopup(false);
+            this.autosave();
         },
 
         // `_crit` as saved: criteria that still exist and have something under them.
@@ -135,7 +416,7 @@
             // the Gantt branch (its nodes follow the chart). Kanban nodes can: the
             // board's sync leaves a node's criteria alone (kanban.js).
             for (let a = d; a; a = a.parent) {
-                if (a.data && (a.data._critId || a.data._gantt || a.data._colViewId)) return null;
+                if (a.data && (a.data._critId || a.data._critG || a.data._gantt || a.data._colViewId)) return null;
             }
             // A Kanban card node: its column history (kanban.js) - and criteria.
             const isCard = data._kanban && !/^(col|ck|row|bl):/.test(data._kanban) && data._kanban !== 'root' && typeof this.toggleKbColView === 'function';
@@ -172,7 +453,7 @@
         critEligible(d) {
             if (!d || !d.parent || !d.data || this.isPlaceholderNodeData(d.data)) return false;
             for (let a = d; a; a = a.parent) {
-                if (a.data && (a.data._critId || a.data._gantt || a.data._critTop)) return false;
+                if (a.data && (a.data._critId || a.data._critG || a.data._gantt || a.data._critTop)) return false;
             }
             return true;
         },
@@ -239,6 +520,12 @@
             if (!d || !d.data) return null;
             const data = d.data;
             const keep = ['F', '⊟', '⊞', '↩'];
+            // The global criteria: the blank node holding them takes nothing; a
+            // criterion takes a child (a new option); a node's copy under it
+            // takes children and siblings (new options) and can be deleted.
+            if (data._critG === 'g') return { keep: ['⊟', '⊞'], addChild: false };
+            if (data._critG === 'c') return { keep: ['F', '⊟', '⊞'], addChild: true };
+            if (data._critG === 'm') return { keep: ['F', '⊟', '⊞', '✕'], addChild: true, sides: true };
             if (data._critPivot) return { keep, addChild: false };
             // Column history (kanban.js): the column nodes take children, nothing else.
             if (data._colViewId) return { keep, addChild: true };
@@ -266,7 +553,7 @@
             if (!host._crit || typeof host._crit !== 'object') host._crit = {};
             return this.criteria.map((c) => {
                 if (!Array.isArray(host._crit[c.id])) host._crit[c.id] = [];
-                return { name: c.name || 'Criterion', color: YELLOW, _critId: c.id, children: host._crit[c.id] };
+                return { name: c.name || 'Criterion', color: this.critColorOf(c), _critId: c.id, children: host._crit[c.id] };
             });
         },
 
@@ -279,12 +566,11 @@
                 if (!c || !c._critId) return;
                 host._crit[c._critId] = Array.isArray(c.children) ? c.children : [];
                 const crit = this.criteria.find(x => x.id === c._critId);
-                const nm = (c.name || '').trim();
-                if (crit && nm && nm !== crit.name) {
-                    crit.name = nm;
-                    this.critInlineHosts().forEach(h => (h.children || []).forEach((k) => { if (k && k._critId === crit.id) k.name = nm; }));
-                }
-                if (c.color !== YELLOW) c.color = YELLOW;
+                const nm = plainName(c.name).trim();
+                let changed = false;
+                if (crit && nm && nm !== crit.name) { crit.name = nm; changed = true; }
+                if (crit) { if (this.critTakeColor(crit, c)) changed = true; } else c.color = YELLOW;
+                if (changed) this.critSpread(crit.id);
             });
         },
 
@@ -368,6 +654,7 @@
                 this.openCriteriaEditor(() => this.openCriteriaView(hostData));
                 return;
             }
+            this.critGlobalDetach();
             this.critInlineOffAll();
             const hosts = this.criteriaHosts(hostData);
             if (!hosts.length) return;
@@ -399,7 +686,7 @@
                 // them has anything for starts folded, the others unfolded.
                 const crits = this.criteria.map(c => ({
                     name: c.name || 'Criterion',
-                    color: YELLOW,
+                    color: this.critColorOf(c),
                     _critId: c.id,
                     _critPivot: true,
                     _collapsed: !v.hosts.some(h => has(h, c)),
@@ -421,7 +708,7 @@
                     if (!Array.isArray(h._crit[c.id])) h._crit[c.id] = [];
                     // Several nodes side by side: everything unfolded.
                     if (v.hosts.length > 1) h._crit[c.id].forEach(function open(n) { if (n) { n._collapsed = false; (n.children || []).forEach(open); } });
-                    return { name: c.name || 'Criterion', color: YELLOW, _critId: c.id, children: h._crit[c.id] };
+                    return { name: c.name || 'Criterion', color: this.critColorOf(c), _critId: c.id, children: h._crit[c.id] };
                 })
             }));
             return copies.length === 1 ? copies[0] : { name: '', color: TOP_COLOR, _critTop: true, children: copies };
@@ -436,15 +723,16 @@
             const renamedHosts = new Map();
             const newHosts = [];
             const recolored = new Map();
+            const recolorCrit = new Set();
             const visit = (n) => {
                 if (!n || typeof n !== 'object') return;
                 // Comparing: a criterion node, then one node per picked node, each
                 // holding what that node has for the criterion.
                 if (n._critPivot && n._critId) {
                     const crit = this.criteria.find(x => x.id === n._critId);
-                    const nm = (n.name || '').trim();
+                    const nm = plainName(n.name).trim();
                     if (crit && nm && nm !== crit.name) { crit.name = nm; renamed.set(crit.id, nm); }
-                    if (n.color !== YELLOW) n.color = YELLOW;
+                    if (crit) { if (this.critTakeColor(crit, n)) recolorCrit.add(crit.id); } else n.color = YELLOW;
                     const sibs = n.children || [];
                     sibs.forEach((hc, idx) => {
                         if (!hc || typeof hc._critHost === 'number' || hc._critId || hc._critTop) return;
@@ -487,9 +775,9 @@
                         if (!c || !c._critId) return;
                         host._crit[c._critId] = Array.isArray(c.children) ? c.children : [];
                         const crit = this.criteria.find(x => x.id === c._critId);
-                        const nm = (c.name || '').trim();
+                        const nm = plainName(c.name).trim();
                         if (crit && nm && nm !== crit.name) { crit.name = nm; renamed.set(crit.id, nm); }
-                        if (c.color !== YELLOW) c.color = YELLOW;
+                        if (crit) { if (this.critTakeColor(crit, c)) recolorCrit.add(crit.id); } else c.color = YELLOW;
                     });
                     return;
                 }
@@ -526,6 +814,7 @@
                 };
                 rename(this.rootData);
             }
+            recolorCrit.forEach(id => this.critSpread(id));
         },
 
         exitCriteriaView(render = true) {
@@ -638,7 +927,7 @@
             const old = document.getElementById('crit-popup');
             if (old) old.remove();
             const pop = el('div', { id: 'crit-popup', class: 'cs-popup crit-popup' });
-            const rows = (this.criteria || []).map(c => ({ id: c.id, name: c.name }));
+            const rows = (this.criteria || []).map(c => ({ id: c.id, name: c.name, color: c.color }));
             const list = el('div');
             const close = () => { pop.remove(); document.removeEventListener('keydown', onKey, true); };
             const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
@@ -649,7 +938,7 @@
                     const input = el('input', { class: 'cs-input', type: 'text', value: r.name, placeholder: 'Criterion' });
                     input.addEventListener('input', () => { r.name = input.value; });
                     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); rows.splice(i + 1, 0, { id: uid(), name: '' }); draw(i + 1); } });
-                    list.append(el('div', { class: 'crit-row' }, el('span', { class: 'crit-dot' }), input,
+                    list.append(el('div', { class: 'crit-row' }, el('span', { class: 'crit-dot', style: r.color === ASSUMP ? `box-shadow: 0 0 0 2px ${ASSUMP_RED};` : null }), input,
                         el('button', { class: 'cs-btn', type: 'button', text: '↑', title: 'Move up', disabled: i === 0, onclick: () => { rows.splice(i - 1, 0, rows.splice(i, 1)[0]); draw(); } }),
                         el('button', { class: 'cs-btn', type: 'button', text: '↓', title: 'Move down', disabled: i === rows.length - 1, onclick: () => { rows.splice(i + 1, 0, rows.splice(i, 1)[0]); draw(); } }),
                         el('button', { class: 'cs-btn', type: 'button', text: '✕', title: 'Remove', onclick: () => { rows.splice(i, 1); draw(); } })));
@@ -674,7 +963,7 @@
                         draw();
                     } }) : null));
             const save = async () => {
-                const next = rows.map(r => ({ id: r.id, name: r.name.trim() })).filter(r => r.name);
+                const next = rows.map(r => Object.assign({ id: r.id, name: r.name.trim() }, r.color === ASSUMP ? { color: ASSUMP } : {})).filter(r => r.name);
                 const keep = new Set(next.map(r => r.id));
                 const removed = (this.criteria || []).filter(c => !keep.has(c.id));
                 // Removing a criterion drops what was written under it.
@@ -692,14 +981,16 @@
                 }
                 close();
                 if (this._critView) this.critWriteBack();
+                // The global group's edits first, then it's built again from the new list.
+                this.critGlobalDetach();
                 this.critInlineHosts().forEach(h => this.critInlineWriteBack(h));
                 this.criteria = next;
                 try { this.syncPughCriteria(); if (typeof this.renderPughPanel === 'function') this.renderPughPanel(); } catch (e) { /* drawn next time */ }
                 if (this._critView) {
                     this.renderFlowchart(this.buildCriteriaTree(), { keepTransform: true });
-                } else if (this.critInlineHosts().length) {
-                    this.critInlineRefresh();
-                    this.renderFlowchart(this.rootData);
+                } else {
+                    if (this.critInlineHosts().length) this.critInlineRefresh();
+                    this.renderFlowchart(this.rootData, { keepTransform: true });
                 }
                 this.autosave();
                 if (typeof after === 'function' && next.length) after();
@@ -805,7 +1096,13 @@
     const origRender = proto.renderFlowchart;
     proto.renderFlowchart = function (data, ...rest) {
         if (this._critView && data === this.rootData) this.critWriteBack();
+        // The global criteria: what was done in them goes back first, then
+        // they're built again (always the last of the top row).
+        if (!this._critView && data && data === this.rootData) {
+            try { this.critGlobalWriteBack(); this.critGlobalBuild(); } catch (e) { console.error('Global criteria:', e); }
+        }
         const r = origRender.call(this, data, ...rest);
+        try { this.paintCritGlobal(); } catch (e) { /* drawn next time */ }
         this.paintCritPicks();
         this.updateCritBanner();
         if (this._critView) this.hideCritScaffold();
@@ -838,7 +1135,19 @@
 
     // Saving always writes the real tree: the view's stand-in swapped out, and
     // nodes showing their criteria in place saved with their real children.
+    // The global criteria group out of the tree while fn runs (it's never saved,
+    // exported or matched against).
+    const withoutCritGroup = (app, fn) => {
+        const root = app.rootData;
+        const kids = root && Array.isArray(root.children) ? root.children : null;
+        if (!kids || !kids.some(c => c && c._critG === 'g')) return fn();
+        root.children = kids.filter(c => !(c && c._critG === 'g'));
+        try { return fn(); } finally { if (app.rootData === root) root.children = kids; }
+    };
     const withRealChildren = (app, fn) => {
+        try { app.critGlobalWriteBack(); } catch (e) { console.error('Global criteria:', e); }
+        const inner = fn;
+        fn = () => withoutCritGroup(app, inner);
         const hosts = app.critInlineHosts();
         const shown = hosts.map(h => h.children);
         hosts.forEach((h) => { app.critInlineWriteBack(h); h.children = h._critSaved || []; });
@@ -861,7 +1170,51 @@
     ['resyncMorphRows', 'relinkMorphNodeRefs'].forEach((name) => {
         const orig = proto[name];
         if (!orig) return;
-        proto[name] = function (...args) { return (this._critView || this.critInlineHosts().length) ? false : orig.apply(this, args); };
+        proto[name] = function (...args) { return (this._critView || this.critInlineHosts().length) ? false : withoutCritGroup(this, () => orig.apply(this, args)); };
+    });
+    // Text and AI exports leave the global criteria group out too.
+    ['exportAsText', 'exportToAi', 'convertToTreeDiagram'].forEach((name) => {
+        const orig = proto[name];
+        if (!orig) return;
+        proto[name] = function (...args) { return withoutCritGroup(this, () => orig.apply(this, args)); };
+    });
+
+    // A criterion's menu (or a yellow node's) has the assumption colour too.
+    const origShowPopup = proto.showNodeEditPopup;
+    if (origShowPopup) {
+        proto.showNodeEditPopup = function (d, ...rest) {
+            const r = origShowPopup.call(this, d, ...rest);
+            try { this.critAssumpButton(d); } catch (e) { console.error('Assumption colour:', e); }
+            return r;
+        };
+    }
+
+    // Undo / redo take the options made in the global group with them.
+    const cloneOpts = a => JSON.parse(JSON.stringify(Array.isArray(a) ? a : []));
+    const origPushUndo = proto.pushUndo;
+    if (origPushUndo) {
+        proto.pushUndo = function (...args) {
+            const r = origPushUndo.apply(this, args);
+            const top = this.undoStack && this.undoStack[this.undoStack.length - 1];
+            if (top) top.critOptions = cloneOpts(this.criteriaOptions);
+            return r;
+        };
+    }
+    [['undo', 'undoStack', 'redoStack'], ['redo', 'redoStack', 'undoStack']].forEach(([name, from, to]) => {
+        const orig = proto[name];
+        if (!orig) return;
+        proto[name] = function (...args) {
+            const st = this[from];
+            const next = st && st[st.length - 1];
+            if (!next) return orig.apply(this, args);
+            try { this.critGlobalWriteBack(); } catch (e) { /* as it was */ }
+            const cur = cloneOpts(this.criteriaOptions);
+            if (Array.isArray(next.critOptions)) this.criteriaOptions = cloneOpts(next.critOptions);
+            const r = orig.apply(this, args);
+            const pushed = this[to] && this[to][this[to].length - 1];
+            if (pushed) pushed.critOptions = cur;
+            return r;
+        };
     });
 
     // Opening another flowchart, a new one, the Gantt chart or the Kanban board
@@ -873,7 +1226,7 @@
             if (this._critView && (!onlyWhenOpening || args[0] !== false)) this.exitCriteriaView(false);
             // Another flowchart replaces this one: put its in-place criteria away
             // first, and criteria mode ends.
-            if (!onlyWhenOpening) { this.critInlineOffAll(); this._critMode = false; }
+            if (!onlyWhenOpening) { this.critInlineOffAll(); this._critMode = false; try { this.critGlobalWriteBack(); } catch (e) { /* as it was */ } this._critG = null; }
             return orig.apply(this, args);
         };
     });
@@ -898,6 +1251,8 @@
         e.stopPropagation();
         app._critShiftDown = true;
         if (!d.parent || app.isPlaceholderNodeData(d.data)) return;
+        // (Not the global criteria's own nodes.)
+        for (let a = d; a; a = a.parent) if (a.data && a.data._critG) return;
         if (!app._critPicks) app._critPicks = new Set();
         const picks = app._critPicks;
         // The node already selected counts as the first pick.

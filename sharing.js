@@ -571,6 +571,7 @@
                     this.gantt = null;
                     this.kanban = null;
                     this.criteria = [];
+                    this.criteriaOptions = [];
                     this.events = [];
                     this.renderFlowchart(this.getSampleData());
                     this.currentSlotIndex = 0;

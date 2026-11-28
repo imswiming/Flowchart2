@@ -23,6 +23,7 @@
         '#e75480': '#f2607c', // pink: assumptions
         '#0074d9': '#4db8f0', '#0c66e4': '#4db8f0', '#3d7fd9': '#4db8f0', '#4c9aff': '#8fd0f5', // blue
         '#ffcc00': '#ffcc00', // yellow (requirements), as the criteria bar's button
+        '#ffcc01': '#ffcc00', // ... and an assumption criterion (red outline, criteria.js)
         '#5e6c84': '#4db8f0', // row
         '#6e5dc6': '#a77bea', // card
         '#2e9e5b': '#3fb92c', // done

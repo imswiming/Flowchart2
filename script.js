@@ -1141,6 +1141,7 @@ class FlowchartViewer {
         this.gantt = null;
         this.kanban = null;
         this.criteria = [];
+        this.criteriaOptions = [];
         this.events = [];
         if (typeof this.setupGantt === 'function') this.setupGantt();
 
@@ -3139,6 +3140,7 @@ class FlowchartViewer {
                             this.gantt = null;
                             this.kanban = null;
                             this.criteria = [];
+                            this.criteriaOptions = [];
                             this.events = [];
                             this.renderFlowchart(this.getSampleData());
                             this.currentSlotIndex = 0;
@@ -3185,6 +3187,7 @@ class FlowchartViewer {
         this.gantt = null;
         this.kanban = null;
         this.criteria = [];
+        this.criteriaOptions = [];
         this.events = [];
 
         const defaultData = {
@@ -3317,6 +3320,7 @@ class FlowchartViewer {
                 this.kanban = typeof this.sanitizeKanban === 'function' ? this.sanitizeKanban(parsed.kanban) : (parsed.kanban || null);
                 // ... and its criteria (criteria.js).
                 this.criteria = typeof this.sanitizeCriteria === 'function' ? this.sanitizeCriteria(parsed.criteria) : [];
+                this.criteriaOptions = typeof this.sanitizeCriteriaOptions === 'function' ? this.sanitizeCriteriaOptions(parsed.criteriaOptions) : [];
                 this.events = typeof this.sanitizeEvents === 'function' ? this.sanitizeEvents(parsed.events) : [];
                 // Legacy saves (from before Notes became a rich-text editor) store a
                 // plain-text bullet/checklist format that never starts with "<" -
@@ -4972,7 +4976,8 @@ class FlowchartViewer {
         if (name.endsWith(' (Simplify?)')) {
             name = name.substring(0, name.length - ' (Simplify?)'.length);
         }
-        if (color === '#e75480') {
+        // Pink, and the assumption criterion's yellow (criteria.js), are assumptions.
+        if (color === '#e75480' || color === '#ffcc01') {
             name = 'Assumption: ' + name;
         }
         return name;
@@ -13227,6 +13232,8 @@ class FlowchartViewer {
             kanban: this.kanban || undefined,
             // The criteria every node's criteria view shows (criteria.js).
             criteria: (this.criteria && this.criteria.length) ? this.criteria : undefined,
+            // Options added in the global criteria group (criteria.js).
+            criteriaOptions: typeof this.leanCriteriaOptions === 'function' ? this.leanCriteriaOptions() : undefined,
             // Events and their reminders (events.js).
             events: (this.events && this.events.length) ? this.events : undefined
         }, null, 2);
