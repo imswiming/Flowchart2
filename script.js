@@ -14964,7 +14964,17 @@ class FlowchartViewer {
             toolsW = drawPill(tools, 0, rowY);
         }
         const sides = (!critLock || critLock.sides) && targetDatum.parent;
-        if (sides) {
+        if (sides && !lr) {
+            // Top-down: the new-sibling + right beside the node, as far from it as the
+            // parent's + is above it; the move arrows stay on the row of tools.
+            const sideW = TILE + PAD * 2;
+            const off = toolsW / 2 + 12 + sideW / 2;
+            drawPill([{ icon: '←', label: '←', tone: 'soft', title: 'Move left', activate: () => self.swapNodeWithSibling(-1, targetDatum) }], -off, rowY, true);
+            drawPill([{ icon: '→', label: '→', tone: 'soft', title: 'Move right', activate: () => self.swapNodeWithSibling(1, targetDatum) }], off, rowY, true);
+            const sx = targetDatum._boxWidth / 2 + 12 + 22; // (the + is 44 wide)
+            drawPlus(-sx, 0, activateAddSiblingBefore, 'New sibling before');
+            drawPlus(sx, 0, activateAddSiblingAfter, 'New sibling after');
+        } else if (sides) {
             const sideW = 2 * TILE + GAP + PAD * 2;
             const off = toolsW / 2 + 12 + sideW / 2;
             drawPill([
