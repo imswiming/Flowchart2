@@ -954,7 +954,11 @@
                 return `<li>${esc(names[i])}${its.length ? `<ul>${its.map(sub).join('')}</ul>` : ': -'}</li>`;
             }).join('')}</ul></li>`).join('')}</ul><p>&nbsp;</p>`;
             try {
-                editor.model.change(() => {
+                editor.model.change((writer) => {
+                    // On an empty checklist item (a card's notes): that line becomes the
+                    // comparison, not an item above it.
+                    const blk = editor.model.document.selection.getFirstPosition().parent;
+                    if (blk && blk.is('element', 'heading6') && blk.isEmpty) writer.rename(blk, 'paragraph');
                     const frag = editor.data.toModel(editor.data.processor.toView(html));
                     editor.model.insertContent(frag);
                 });

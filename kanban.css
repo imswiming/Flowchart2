@@ -259,6 +259,9 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
    (growing the card) and only a second tap would reach the button. */
 @media (hover: hover) { .kb-card:hover .kb-cl-add { display: block; } }
 @media (hover: none) { .kb-card.selected .kb-cl-add { display: block; } }
+/* A criteria comparison in a card's notes: its line is the title above its panel (no tick box). */
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content p.kb-cmp-head { display: block !important; box-sizing: border-box; max-width: 640px; margin: 14px 0 4px 14px !important; }
+:is(#notes-editor-wrap, .notes-editor-wrap-el) .ck.ck-content .kb-cmp-head + .kb-cl-first { margin-top: 0 !important; }
 /* + Assumption: like the add box, only while the pointer is over the card (phone: the selected card). */
 .kb-cl-assume { display: none; }
 .kb-cl.adding .kb-cl-assume { display: inline-block; }

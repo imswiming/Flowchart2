@@ -2682,7 +2682,7 @@
             const root = view.document.getRoot();
             if (!root) return;
             const kids = Array.from(root.getChildren()).filter(c => c.is('element'));
-            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead', 'kb-nc-linktop', 'kb-cl-head'];
+            const CLS = ['kb-nc-head', 'kb-nc-body', 'kb-nc-end', 'kb-nc-item', 'kb-nc-card-item', 'kb-nc-title', 'kb-nc-row', 'kb-cl-box', 'kb-cl-first', 'kb-cl-last', 'kb-nc-link', 'kb-nc-linkhead', 'kb-nc-labhead', 'kb-nc-linktop', 'kb-cl-head', 'kb-cmp-head'];
             // Clicking an item's tick box ticks it on the card (once per editor).
             if (isMaster && !editor._kbTickWired) {
                 editor._kbTickWired = true;
@@ -2774,6 +2774,9 @@
                     const mark = el.name === 'h5' ? textOf(el) : '';
                     if (mark.startsWith(ROW_MARK)) { endList(); plan.set(el, [mark.startsWith(TITLE_MARK) ? 'kb-nc-title' : 'kb-nc-row']); return; }
                     if (el.name === 'h4') { top = false; endList(); return; }
+                    // A criteria comparison (criteria.js): its line is the panel's title
+                    // (no tick box), its bullets the panel.
+                    if (el.name === 'p' && textOf(el).startsWith('🎯⁠')) { endList(); plan.set(el, ['kb-cmp-head']); inItem = true; return; }
                     if (top && el.name === 'p' && isLinkLine(textOf(el))) { plan.set(el, textOf(el) === LINKS_TOP ? ['kb-nc-linktop'] : isLinkHead(textOf(el)) ? ['kb-nc-linkhead'].concat(textOf(el).startsWith('🏷') ? ['kb-nc-labhead'] : []) : ['kb-nc-link']); return; }
                     // Each item's heading (with its tick box) stands just above its own panel,
                     // which holds what is written under it.
