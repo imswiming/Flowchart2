@@ -2039,7 +2039,8 @@
             card.checklist.forEach((item) => {
                 const cb = el('input', { type: 'checkbox', checked: item.done, title: item.done ? 'Done - untick' : 'Tick off' });
                 cb.addEventListener('change', () => { item.done = cb.checked; commit(); });
-                const tx = el('input', { class: 'kb-cl-text' + (item.done ? ' done' : ''), type: 'text', value: item.text });
+                // An assumption item (its node made Pink) reads red, as in the notes.
+                const tx = el('input', { class: 'kb-cl-text' + (item.done ? ' done' : ''), type: 'text', value: item.text, style: /^Assumption: /.test(item.text) ? 'color:#d42a2a;' : null });
                 tx.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') { e.preventDefault(); tx.blur(); }
                     if (e.key === 'Escape') { tx.value = item.text; tx.blur(); }
@@ -3471,6 +3472,26 @@
             };
             const pullChecklist = (card, node) => {
                 const kids = real(node);
+                // A parent put in place of a checklist item's node (+ above it):
+                // the node now in the item's place is the item (renamed to it),
+                // the old one an ordinary node under it - its bullets move up.
+                kids.forEach((c) => {
+                    if (!c || c._kanban || this.isPlaceholderNodeData(c) || !strip(c.name)) return;
+                    const old = real(c).find(x => x && typeof x._kanban === 'string' && x._kanban.startsWith('ck:') && card.checklist.some(it => `ck:${it.id}` === x._kanban));
+                    if (!old) return;
+                    c._kanban = old._kanban;
+                    delete old._kanban;
+                    const oldKids = real(old);
+                    const bullets = oldKids.filter(kbIsBulletNode);
+                    if (bullets.length) {
+                        const field = old._critOn ? '_critSaved' : old._kbColView ? '_kbColSaved' : 'children';
+                        old[field] = oldKids.filter(x => !kbIsBulletNode(x));
+                        if (Array.isArray(c.children)) c.children = bullets.concat(c.children);
+                        c._kbBl = true;
+                    }
+                    delete old._kbBl;
+                    changed = true;
+                });
                 kids.forEach((c) => {
                     if (!c) return;
                     if (c._kanban && c._kanban.startsWith('ck:')) {
