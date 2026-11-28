@@ -2087,6 +2087,23 @@
                 now0.checklist.push({ id: uid('ck'), text: typed, done: false });
                 afterClick(() => this.kanbanChanged());
             });
+            // An assumption: a checklist item starting "Assumption: " (a pink node
+            // under the card in the flowchart, an item in the card's notes).
+            const assume = el('button', { class: 'kb-cl-assume', type: 'button', text: '+ Assumption', title: 'Add an assumption to the checklist', style: 'margin:2px 0 4px; padding:2px 8px; border:none; border-radius:4px; background:#e75480; color:#fff; cursor:pointer; font-size:12px;' });
+            assume.addEventListener('mousedown', (e) => { e.stopPropagation(); entered = true; });
+            assume.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                let typed = add.value.trim();
+                add.value = '';
+                entered = false;
+                if (!typed) typed = String((await this.showNameDialog('Assumption', '')) || '').trim();
+                typed = typed.replace(/^Assumption:\s*/i, '');
+                const c = typed && this.kbCard(card.id);
+                if (!c) return;
+                c.checklist.push({ id: uid('ck'), text: `Assumption: ${typed}`, done: false });
+                this.kanbanChanged();
+            });
+            box.prepend(assume);
             box.prepend(add); // at the top, so it stays put
             if (this._kbCardEditing === card.id) {
                 box.classList.add('adding');
@@ -2914,6 +2931,43 @@
                 const last = blocks[blocks.length - 1];
                 const after = last.nextSibling;
                 if (!all && last.parent && last.parent.is('rootElement') && (!after || /^heading4$/.test(after.name))) writer.insertElement('paragraph', last, 'after');
+            });
+            editor.editing.view.focus();
+        },
+
+        // The notes' Assumption button (see buildNotesToolbar below).
+        kbNotesAssumption() {
+            const t = this.getActiveNotesTarget && this.getActiveNotesTarget();
+            const editor = t && t.editor;
+            if (!editor) return;
+            let block = editor.model.document.selection.getFirstPosition().parent;
+            while (block && block.parent && !block.parent.is('rootElement')) block = block.parent;
+            if (!block || !block.is('element')) return;
+            // In a card's notes: under a column's Title (not inside an item's panel)?
+            let asItem = false;
+            if (this.kbInCardNotes()) {
+                for (let b = block; b; b = b.previousSibling) {
+                    if (b.is('element', 'heading6') && b !== block) break;
+                    if (b.is('element', 'heading4')) { asItem = !kbIsMeetHead(b); break; }
+                    if (b.is('element', 'heading5')) break;
+                }
+            }
+            if (/^heading[45]$/.test(block.name)) { this.showNotification('Put the cursor on a line of text first.'); return; }
+            const text = kbModelText(block);
+            const has = /^Assumption:\s*/.test(text);
+            editor.model.change((writer) => {
+                if (asItem) {
+                    ['listItemId', 'listType', 'listIndent', 'todoListChecked', 'noteExtraIndent'].forEach((a) => { if (block.hasAttribute(a)) writer.removeAttribute(a, block); });
+                    if (!block.is('element', 'heading6')) writer.rename(block, 'heading6');
+                    const after = block.nextSibling;
+                    if (!after || /^heading[46]$/.test(after.name)) writer.insertElement('paragraph', block, 'after');
+                } else if (!block.hasAttribute('listItemId')) {
+                    writer.setAttribute('listItemId', `a${Date.now().toString(36)}`, block);
+                    writer.setAttribute('listType', 'bulleted', block);
+                    writer.setAttribute('listIndent', 0, block);
+                }
+                if (!has) writer.insertText('Assumption: ', writer.createPositionAt(block, 0));
+                writer.setSelection(block, 'end');
             });
             editor.editing.view.focus();
         },
@@ -4224,6 +4278,12 @@
                 plain.classList.add('kb-plain-check');
                 plain.dataset.title = plain.title;
             }
+            // Assumption: in a card's notes under a column, the line becomes an
+            // assumption item of the card; anywhere else, an "Assumption:" bullet.
+            const ab = el('button', { class: 'notes-toolbar-btn nt-assumption', type: 'button', text: 'A!', title: 'Assumption - in a card\'s notes: an assumption checklist item (and node in the flowchart); elsewhere an "Assumption:" bullet', style: 'color:#e75480; font-weight:bold;' });
+            ab.addEventListener('mousedown', e => e.preventDefault());
+            ab.addEventListener('click', () => this.kbNotesAssumption());
+            row.appendChild(ab);
             return row;
         };
     }
