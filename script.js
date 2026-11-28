@@ -388,9 +388,10 @@ const NODE_BTN_TONES = {
 const NODE_HIGHLIGHT = '#ffcc00';
 const NODE_BTN_ICONS = {
     // Coloured, solid icons (emoji), like the drawing one.
-    '+': { text: '➕' },
-    '←': { text: '⬅️' },
-    '→': { text: '➡️' },
+    // (The + and the move arrows stay line icons.)
+    '+': { d: 'M12 5v14M5 12h14' },
+    '←': { d: 'M19 12H5M11 18l-6-6 6-6' },
+    '→': { d: 'M5 12h14M13 6l6 6-6 6' },
     fold: { title: 'Fold', text: '🔼' },
     unfold: { title: 'Unfold', text: '🔽' },
     '⊟': { title: 'Fold everything below', text: '⏫' },
