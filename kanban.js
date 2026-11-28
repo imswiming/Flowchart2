@@ -43,6 +43,12 @@
     // (one) and the card's title (two).
     const ROW_MARK = '\u2063';
     const TITLE_MARK = '\u2063\u2063';
+    // The card notes' "Meeting Notes" Title, above the columns' (its own mark, so
+    // it's never taken for a column).
+    const MEET_MARK = '\u2060\u2063';
+    const MEET_TITLE = 'Meeting Notes';
+    const kbModelText = (b) => { let t = ''; for (const ch of b.getChildren()) if (ch.is('$text')) t += ch.data; return t; };
+    const kbIsMeetHead = b => !!(b && b.is && b.is('element', 'heading4') && kbModelText(b).startsWith(MEET_MARK));
     // A link's address: web addresses as they are, file paths as file:// links.
     // (Explorer's "Copy as path" puts quotes round it.)
     const kbPlainUrl = u => String(u || '').trim().replace(/^["']+|["']+$/g, '').trim();
@@ -349,6 +355,8 @@
                     colChecklists: (c.colChecklists && typeof c.colChecklists === 'object') ? Object.fromEntries(Object.entries(c.colChecklists).filter(([kk, v]) => colIds.has(kk) && Array.isArray(v) && v.length).map(([kk, v]) => [kk, v.filter(i => i && typeof i.id === 'string').map(ckItem)])) : undefined,
                     // The card's own notes, per column it has been in (only those with text).
                     notes: (c.notes && typeof c.notes === 'object') ? Object.fromEntries(Object.entries(c.notes).filter(([kk, v]) => colIds.has(kk) && typeof v === 'string' && v)) : undefined,
+                    // What's written under "Meeting Notes" at the top of its notes.
+                    meetingNotes: typeof c.meetingNotes === 'string' && c.meetingNotes ? c.meetingNotes : undefined,
                     created: ts(c.created) || now(), started: ts(c.started), finished: ts(c.finished), moved: ts(c.moved) || ts(c.created) || now()
                 };
             };
@@ -2384,7 +2392,8 @@
         kbFoldAllBut(editor, keep) {
             if (typeof this.toggleTitleFold !== 'function') return;
             Array.from(editor.model.document.getRoot().getChildren()).forEach((h) => {
-                if (!h.is('element', 'heading4')) return;
+                // (The Meeting Notes stay as they are.)
+                if (!h.is('element', 'heading4') || kbIsMeetHead(h)) return;
                 const folded = !!h.getAttribute('folded');
                 if (h === keep && folded) this.toggleTitleFold(editor, h, false);
                 else if (h !== keep && !folded) this.toggleTitleFold(editor, h, true);
@@ -2456,6 +2465,8 @@
             const parts = [`<h5>${TITLE_MARK}${escHtml(kbNorm(card.title))}</h5>`];
             if ((card.desc || '').trim()) parts.push(...card.desc.trim().split(/\n+/).map(x => `<p>${escHtml(x)}</p>`));
             kbNoteLinkLines(card.links).forEach((t) => { parts.push(`<p>${escHtml(t)}</p>`); });
+            // Meeting Notes: a Title of its own, before the columns'.
+            parts.push(`<h4>${MEET_MARK}${MEET_TITLE}</h4>`, card.meetingNotes || '<p>&nbsp;</p>');
             const multi = (this.kanban.rows || []).length > 1;
             let lastRow = null;
             this.kanban.columns.forEach((col) => {
@@ -2501,8 +2512,13 @@
             let newTitle = '';
             let desc = null; // the lines under the title
             let inRows = false;
+            let meet = null; // what's under Meeting Notes (null: its Title isn't there)
+            let inMeet = false;
             const parts = cols.map(() => ({ body: [], items: [] }));
             Array.from(doc.body.childNodes).forEach((n) => {
+                if (n.nodeType === 1 && n.tagName === 'H4' && n.textContent.startsWith(MEET_MARK)) { meet = []; inMeet = true; return; }
+                if (n.nodeType === 1 && (n.tagName === 'H4' || n.tagName === 'H5')) inMeet = false;
+                if (inMeet) { if (n.nodeType === 1 || n.textContent.trim()) meet.push(n); return; }
                 if (n.nodeType === 1 && n.tagName === 'H4') { i++; return; }
                 if (n.nodeType === 1 && n.tagName === 'H5' && n.textContent.startsWith(ROW_MARK)) {
                     if (n.textContent.startsWith(TITLE_MARK)) { newTitle = kbNorm(n.textContent.replace(/\u2063/g, '')); desc = desc || []; } else inRows = true;
@@ -2525,6 +2541,10 @@
             let changed = false;
             let listChanged = false;
             if (newTitle && newTitle !== kbNorm(card.title)) { card.title = newTitle; listChanged = true; }
+            if (meet) {
+                const text = blocksHaveText(meet) ? blocksHtml(meet) : '';
+                if (text !== (card.meetingNotes || '')) { if (text) card.meetingNotes = text; else delete card.meetingNotes; changed = true; }
+            }
             if (newTitle && desc) {
                 const was = (card.desc || '').split(/\n+/).map(x => x.trim()).filter(Boolean).join('\n');
                 if (desc.join('\n') !== was) { card.desc = desc.join('\n'); listChanged = true; }
@@ -2607,7 +2627,7 @@
                     const editor = this.notesEditor;
                     const ok = editor && editor._noteTabRef && editor._noteTabRef.tabId === tab.id;
                     if (!ok) { if (left > 0) setTimeout(() => tryJump(left - 1), 150); return; }
-                    const heads = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4'));
+                    const heads = Array.from(editor.model.document.getRoot().getChildren()).filter(c => c.is('element', 'heading4') && !kbIsMeetHead(c));
                     const target = heads[at];
                     if (!target) return;
                     // Only the card's current column is open; the other titles fold.
@@ -2799,7 +2819,7 @@
                 let colAt = -1;
                 let itemAt = -1;
                 for (const x of all) {
-                    if (x.tagName === 'H4') { colAt++; itemAt = -1; }
+                    if (x.tagName === 'H4') { if (x.textContent.startsWith(MEET_MARK)) { colAt = -1; itemAt = -1; } else { colAt++; itemAt = -1; } }
                     if (x.tagName === 'H6') itemAt++;
                     if (x === h) break;
                 }
@@ -2880,7 +2900,7 @@
             const top = blocks[0];
             let title = null;
             for (let b = top; b; b = b.parent && !b.parent.is('rootElement') ? b.parent : b.previousSibling) if (b.is('element', 'heading4')) { title = b; break; }
-            if (!title) { this.showNotification('Put the cursor under a column\'s title first.'); return; }
+            if (!title || kbIsMeetHead(title)) { this.showNotification('Put the cursor under a column\'s title first.'); return; }
             const all = blocks.every(b => b.is('element', 'heading6'));
             editor.model.change((writer) => {
                 blocks.forEach((b) => {
