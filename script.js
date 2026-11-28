@@ -397,7 +397,7 @@ const NODE_BTN_ICONS = {
     '⊟': { title: 'Fold everything below', text: '⏫' },
     '⊞': { title: 'Unfold everything below', text: '⏬' },
     C: { title: 'Connect to another node', text: '🔌' },
-    M: { title: 'Move to another parent', tone: 'blue', text: '🚚' },
+    M: { title: 'Move to another parent', tone: 'blue', d: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20' },
     '✕': { title: 'Delete with everything under it', tone: 'red', text: '🗑️' },
     P: { title: 'Delete, keeping its children', tone: 'red', text: '✂️' },
     H: { title: 'Highlight the node (yellow outline) - again to take it off', tone: 'yellow', text: '🖍️' },
