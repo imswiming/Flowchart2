@@ -259,6 +259,11 @@ body.kb-dragging-body, body.kb-dragging-body * { cursor: grabbing !important; }
    (growing the card) and only a second tap would reach the button. */
 @media (hover: hover) { .kb-card:hover .kb-cl-add { display: block; } }
 @media (hover: none) { .kb-card.selected .kb-cl-add { display: block; } }
+/* + Assumption: like the add box, only while the pointer is over the card (phone: the selected card). */
+.kb-cl-assume { display: none; }
+.kb-cl.adding .kb-cl-assume { display: inline-block; }
+@media (hover: hover) { .kb-card:hover .kb-cl-assume { display: inline-block; } }
+@media (hover: none) { .kb-card.selected .kb-cl-assume { display: inline-block; } }
 
 /* The card's "show in flowchart" button: faint until the card is hovered. */
 .kb-card-flow { border: none; background: none; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 1; opacity: 0.35; }
