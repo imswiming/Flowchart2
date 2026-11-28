@@ -12,6 +12,7 @@
 const BigStore = (() => {
     const KEYS = new Set([
         'flowchart-list', 'cloud-sync-base-list', 'flowchart-notes-bases', 'flowchart-share-sync',
+        'cloud-sync-known-remote-at', 'flowchart-global-notes-known-remote-at',
         'flowchart-global-notes-media', 'flowchart-global-notes-media-base', 'flowchart-global-notes-base',
         'flowchart-global-notes-tabs', 'flowchart-branch-clipboard'
     ]);
@@ -1215,6 +1216,7 @@ class FlowchartViewer {
         onEnter('cloud-email-input', () => this.sendSignInEmail());
         onEnter('cloud-code-input', () => this.verifyEmailCode());
         onClick('cloud-sign-out-btn', () => this.signOutCloud());
+        onClick('cloud-backup-show-btn', () => this.showServerBackups());
         onClick('cloud-sync-now-btn', () => {
             this.setCloudPopupStatus('Syncing...');
             this.cloudPull().then(() => this.cloudPush()).then((ok) => {
@@ -2315,6 +2317,8 @@ class FlowchartViewer {
                 this._cloudSyncInFlight = false;
                 return false;
             }
+            // The first sync of each day keeps the copy about to be replaced (backups.js).
+            if (typeof this.ensureServerBackup === 'function') await this.ensureServerBackup();
             // Compare-and-swap: only replace the row if it still has the timestamp we
             // just merged against. If another device pushed in the meantime, nothing
             // is written - the retry below merges their change in first.
@@ -2340,6 +2344,7 @@ class FlowchartViewer {
             }
             localStorage.setItem('cloud-sync-known-remote-at', String(updatedAt));
             this.saveSyncBase(strippedList);
+            this._syncedThisSession = true;
             this.saveNotesBasesFromList(this.flowchartList);
             this._lastPushedDataJson = dataJson;
             this.updateCloudSyncStatus('synced');
@@ -2400,7 +2405,9 @@ class FlowchartViewer {
                 return true;
             }
             const remoteUpdatedAt = Number(headRow.updated_at) || 0;
-            const knownRemoteAt = Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0;
+            // Without the saved copy of what the cloud held last time (cleared storage,
+            // a first sign-in), "already seen" can't be trusted: always merge first.
+            const knownRemoteAt = (this.loadSyncBase() || this._syncedThisSession) ? (Number(localStorage.getItem('cloud-sync-known-remote-at')) || 0) : 0;
 
             if (remoteUpdatedAt > knownRemoteAt) {
                 const res = await fetch(`${this.cloudProjectUrl}/rest/v1/${this.CLOUD_TABLE}?id=eq.${encodeURIComponent(this.cloudSyncId)}&select=updated_at,data`, {
@@ -2473,6 +2480,7 @@ class FlowchartViewer {
                     const merged = this.mergeFlowchartLists(base, this.ownFlowcharts(), remoteList, { keepLocalOnly });
                     this.saveNotesBasesFromList(remoteList);
                     this.saveSyncBase(remoteList);
+                    this._syncedThisSession = true;
 
                     this._applyingRemote = true;
                     this.flowchartList = this.withSharedFlowcharts(merged.list);
@@ -2637,10 +2645,24 @@ class FlowchartViewer {
             const remote = JSON.parse(remoteData);
             const baseObj = baseData !== null ? JSON.parse(baseData) : null;
             if (!isPlainObjectForMerge(local) || !isPlainObjectForMerge(remote)) throw new Error('not an object');
-            const mergedObj = FlowchartMerge.mergeData(isPlainObjectForMerge(baseObj) ? baseObj : null, local, remote, {
-                skipKeys: ['notesTabs', 'activeNotesTabId', 'notesPinned', 'notesDrawings', 'notesImages'],
-                localKeys: ['transform']
-            });
+            const skipKeys = ['notesTabs', 'activeNotesTabId', 'notesPinned', 'notesDrawings', 'notesImages'];
+            let mergedObj;
+            if (isPlainObjectForMerge(baseObj)) {
+                mergedObj = FlowchartMerge.mergeData(baseObj, local, remote, { skipKeys, localKeys: ['transform'] });
+            } else {
+                // No record of what the cloud held at the last sync (this device never
+                // synced this flowchart - a new sign-in, an old computer coming back):
+                // nothing says this device's copy is the newer one, and it is far more
+                // likely the older. So both copies' additions are kept, but wherever
+                // the two disagree the CLOUD's version stands - an out-of-date device
+                // can no longer overwrite the others' newer work.
+                mergedObj = FlowchartMerge.mergeData(null, remote, local, { skipKeys: [], localKeys: [] });
+                skipKeys.forEach((k) => {
+                    const v = remote[k] !== undefined ? remote[k] : local[k];
+                    if (v !== undefined) mergedObj[k] = JSON.parse(JSON.stringify(v)); else delete mergedObj[k];
+                });
+                if (local.transform !== undefined) mergedObj.transform = local.transform;
+            }
             // Notes text has its own, finer merge.
             let item = this.mergeFlowchartNotes({ title: remoteItem.title, data: JSON.stringify(mergedObj, null, 2) }, localItem, baseNotesTabs);
             // Put back the pictures this device already has in full.
@@ -8053,6 +8075,7 @@ class FlowchartViewer {
             // for the plugin's very first (pre-interactive) conversion pass, since
             // editor.config.get() deep-clones its value on every read.
             editor.notesApp = this;
+            this.installNotesBackspaceDedent(editor);
 
             // Tab/Shift+Tab indent/outdent the current line - same commands as
             // the Indent/Outdent buttons. CKEditor's List plugin doesn't bind
@@ -8982,6 +9005,35 @@ class FlowchartViewer {
             this.shiftNotesExtraIndent(editor, 1);
         }
         editor.editing.view.focus();
+    }
+
+    // Backspace on an empty bullet / number / checklist item moves it out one level
+    // (the same as Shift+Tab) instead of deleting it; on a top-level one it leaves the
+    // list and becomes a normal line.
+    installNotesBackspaceDedent(editor) {
+        const onEmptyItem = () => {
+            const sel = editor.model.document.selection;
+            if (!sel.isCollapsed) return false;
+            const block = sel.getFirstPosition().parent;
+            return !!(block && block.is('element') && block.hasAttribute('listItemId') && block.isEmpty);
+        };
+        const dedent = (evt, data) => {
+            data.preventDefault();
+            evt.stop();
+            if (!this.shiftNotesExtraIndent(editor, -1)) editor.execute('outdentList');
+        };
+        const doc = editor.editing.view.document;
+        // A keyboard's Backspace key...
+        doc.on('keydown', (evt, data) => {
+            const d = data.domEvent;
+            if (d.key !== 'Backspace' || d.ctrlKey || d.metaKey || d.altKey || d.shiftKey || !onEmptyItem()) return;
+            dedent(evt, data);
+        }, { priority: 'highest' });
+        // ...and a phone keyboard's, which reports only the edit it is about to make.
+        doc.on('beforeinput', (evt, data) => {
+            if (!data.domEvent || data.domEvent.inputType !== 'deleteContentBackward' || !onEmptyItem()) return;
+            dedent(evt, data);
+        }, { priority: 'highest' });
     }
 
     outdentNotesLine() {
@@ -11157,6 +11209,7 @@ class FlowchartViewer {
             this._notesPaneEditors.set(node.paneId, editor);
             // See renderNotesPanel's own editor.notesApp assignment - same reason.
             editor.notesApp = this;
+            this.installNotesBackspaceDedent(editor);
             // Mirrors renderNotesPanel's own clipboardInput listener (see there for
             // why only image data is intercepted) - a full-screen pane never had
             // one of its own, so pasting an image into one fell straight through to

@@ -14,7 +14,7 @@
 // Only this site's own files are touched - cloud sync calls and anything else
 // go straight to the network.
 
-const CACHE_NAME = 'flowchart-v83';
+const CACHE_NAME = 'flowchart-v84';
 
 const IMMUTABLE = [
     'd3.v7.min.js',
@@ -29,6 +29,7 @@ const REFRESHED = [
     'style.css',
     'script.js',
     'sharing.js',
+    'backups.js',
     'gantt.js',
     'kanban.js',
     'kanban.css',

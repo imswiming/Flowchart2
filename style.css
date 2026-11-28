@@ -3077,6 +3077,26 @@ input[type="range"]::-moz-range-progress {
     font-size: 11px;
 }
 
+.cs-backup-list {
+    margin-top: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    font-size: 13px;
+}
+
+.cs-backup-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px 0;
+    border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.cs-backup-info {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .cs-usage {
     margin: 6px 0 10px;
     font-size: 13px;

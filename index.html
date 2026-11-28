@@ -53,6 +53,7 @@
   <script src="cloud-config.js" defer></script>
   <script src="script.js" defer></script>
   <script src="sharing.js" defer></script>
+  <script src="backups.js" defer></script>
   <script src="gantt.js" defer></script>
   <script src="kanban.js" defer></script>
   <script src="criteria.js" defer></script>
@@ -596,6 +597,15 @@ grant execute on function get_db_size() to authenticated;</pre>
           </div>
         </details>
       </div>
+
+      <details id="cloud-backups" class="cs-details">
+        <summary>Server backups</summary>
+        <div class="cs-text">
+          <p>A copy of your flowcharts and global notes is kept on the server once a day for the last two weeks (older ones are overwritten, so they never pile up). If something ever gets overwritten or lost, bring it back from here.</p>
+          <button id="cloud-backup-show-btn" class="cs-btn cs-small-btn" type="button">Show backups</button>
+          <div id="cloud-backup-list" class="cs-backup-list"></div>
+        </div>
+      </details>
 
       <details id="cloud-advanced" class="cs-details">
         <summary>Advanced - project connection and setup</summary>
